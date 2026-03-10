@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, ArrowRight, User, Loader2, Trophy, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Plus, ArrowRight, User, Loader2, Trophy, X, AlertCircle } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
-import { fetchIndicators } from "../../store/slices/indicatorSlice";
+import { fetchIndicators, type IIndicator } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 
 import SuperAdminAssign from "./SuperAdminAssign";
@@ -12,22 +13,26 @@ import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
 interface IndicatorSectionProps {
   perspective: string;
   objective: any;
-  indicators: any[];
+  indicators: IIndicator[];
   userMap: Record<string, any>;
   onAssign: () => void;
-  onSelectAssignment: (indicator: any) => void;
+  onSelectAssignment: (indicator: IIndicator) => void;
+  activeFilter: string;
 }
 
 const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Sync state with URL parameter 'filter'
+  const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
   const { plans, loading: plansLoading } = useAppSelector((state) => state.strategicPlan);
   const { indicators, loading: indicatorsLoading } = useAppSelector((state) => state.indicators);
   const { users, isLoading: usersLoading } = useAppSelector((state) => state.users);
 
-  const [activeFilter, setActiveFilter] = useState("ALL");
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-  const [selectedIndicator, setSelectedIndicator] = useState<any | null>(null);
+  const [selectedIndicator, setSelectedIndicator] = useState<IIndicator | null>(null);
 
   useEffect(() => {
     dispatch(getAllStrategicPlans());
@@ -63,9 +68,48 @@ const SuperAdminIndicators = () => {
     { label: "INTERNAL PROCESS", count: getPerspectiveCount("INTERNAL PROCESS") },
   ];
 
-  const filteredPlans = activeFilter === "ALL"
-    ? plans
-    : plans.filter((p) => p.perspective.toUpperCase().includes(activeFilter.split(" ")[0]));
+  const handleFilterChange = (label: string) => {
+    setSearchParams({ filter: label });
+  };
+
+  const filteredData = useMemo(() => {
+    let filteredPlans = plans;
+
+    // A) Filter by Perspective
+    const perspectiveLabels = filters.map(f => f.label);
+    if (perspectiveLabels.includes(activeFilter) && activeFilter !== "ALL") {
+      filteredPlans = plans.filter((p) => 
+        p.perspective.toUpperCase().includes(activeFilter.split(" ")[0])
+      );
+    }
+
+    // B) Row-level filtering based on Activity Assignment/Status
+    return filteredPlans.map(plan => ({
+      ...plan,
+      objectives: plan.objectives.map((obj: any) => {
+        const objIndicators = indicators.filter(ind => String(ind.objectiveId) === String(obj._id));
+        
+        const filteredActivities = obj.activities.filter((act: any) => {
+          const assignment = objIndicators.find(ind => String(ind.activityId) === String(act._id));
+          
+          switch (activeFilter) {
+            case "ASSIGNED": return !!assignment;
+            case "UNASSIGNED": return !assignment;
+            case "SUBMITTED": return assignment?.status === "Submitted";
+            case "REJECTED": return assignment?.status === "Rejected by Admin";
+            case "REVIEWED": return assignment?.status === "Reviewed";
+            case "PENDING": return assignment?.status === "Pending" || assignment?.status === "Awaiting Super Admin";
+            case "OVERDUE": 
+               return assignment && new Date(assignment.deadline) < new Date() && assignment.status !== "Reviewed";
+            default: return true;
+          }
+        });
+
+        return { ...obj, activities: filteredActivities };
+      }).filter((obj: any) => obj.activities.length > 0)
+    })).filter(plan => plan.objectives.length > 0);
+
+  }, [activeFilter, plans, indicators, filters]);
 
   if ((plansLoading || indicatorsLoading || usersLoading) && plans.length === 0)
     return (
@@ -82,15 +126,25 @@ const SuperAdminIndicators = () => {
         <div>
           <h1 className="text-2xl font-bold text-[#1a3a32] tracking-tight">PMMU Indicators — 2026</h1>
           <p className="text-sm text-gray-500 font-medium">
-            Monitoring {totalActivities} activities across {plans.length} departments • Assign and review evidence.
+            {activeFilter !== "ALL" ? `Filtering by ${activeFilter}` : `Monitoring ${totalActivities} activities`} • Assign and review evidence.
           </p>
         </div>
-        <button 
-          onClick={() => setIsAssignModalOpen(true)}
-          className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all"
-        >
-          <Plus size={16} strokeWidth={3} /> Assign KPI
-        </button>
+        <div className="flex gap-2">
+          {activeFilter !== "ALL" && (
+            <button 
+              onClick={() => handleFilterChange("ALL")}
+              className="bg-white text-[#1a3a32] border border-gray-200 px-4 py-2.5 rounded-lg text-[11px] font-bold uppercase hover:bg-gray-50 transition-all flex items-center gap-2"
+            >
+              <X size={14} /> Clear Filter
+            </button>
+          )}
+          <button 
+            onClick={() => setIsAssignModalOpen(true)}
+            className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all"
+          >
+            <Plus size={16} strokeWidth={3} /> Assign KPI
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -98,7 +152,7 @@ const SuperAdminIndicators = () => {
         {filters.map((f) => (
           <button
             key={f.label}
-            onClick={() => setActiveFilter(f.label)}
+            onClick={() => handleFilterChange(f.label)}
             className={`px-4 py-2 rounded-full text-[11px] font-bold border transition-all flex items-center gap-2 whitespace-nowrap uppercase
               ${activeFilter === f.label ? "bg-[#1a3a32] text-white border-[#1a3a32]" : "bg-white text-gray-400 border-gray-100 hover:border-gray-300"}`}
           >
@@ -127,8 +181,8 @@ const SuperAdminIndicators = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredPlans.map((plan) =>
-                plan.objectives.map((objective) => (
+              {filteredData.length > 0 ? filteredData.map((plan) =>
+                plan.objectives.map((objective: any) => (
                   <IndicatorSection
                     key={objective._id}
                     perspective={plan.perspective}
@@ -137,8 +191,18 @@ const SuperAdminIndicators = () => {
                     userMap={userMap} 
                     onAssign={() => setIsAssignModalOpen(true)}
                     onSelectAssignment={setSelectedIndicator}
+                    activeFilter={activeFilter}
                   />
                 ))
+              ) : (
+                <tr>
+                  <td colSpan={8} className="p-20 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                       <AlertCircle className="text-gray-200" size={48} />
+                       <p className="text-gray-400 font-medium italic">No indicators found for "{activeFilter}"</p>
+                    </div>
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -165,8 +229,13 @@ const SuperAdminIndicators = () => {
 };
 
 const IndicatorSection = ({ perspective, objective, indicators, userMap, onAssign, onSelectAssignment }: IndicatorSectionProps) => {
-  const assignedCount = objective.activities.filter((act: any) => indicators.some(ind => String(ind.activityId) === String(act._id))).length;
-  const total = objective.activities.length;
+  const visibleActivities = objective.activities;
+  const total = visibleActivities.length;
+  
+  // Calculate assigned vs total for the current visible set
+  const assignedCount = visibleActivities.filter((act: any) => 
+    indicators.some(ind => String(ind.activityId) === String(act._id))
+  ).length;
 
   const resolveIds = (assignee: any): string[] => {
     if (!assignee) return [];
@@ -197,17 +266,17 @@ const IndicatorSection = ({ perspective, objective, indicators, userMap, onAssig
         <td className="p-4 align-top text-center text-[12px] font-bold text-gray-300 mt-1">%</td>
         <td className="p-4 align-top">
            <div className="flex -space-x-2 mt-1">
-              {indicators.length > 0 ? indicators.slice(0, 3).map((ind: any, i: number) => (
-                <div key={i} className="h-7 w-7 rounded-full border-2 border-white bg-[#1a3a32] flex items-center justify-center text-[9px] text-white font-bold uppercase shadow-sm">
-                  {userMap[resolveIds(ind.assignee)[0]]?.name?.charAt(0) || <User size={10} />}
-                </div>
-              )) : <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest mt-1">Pending</span>}
+             {indicators.length > 0 ? indicators.slice(0, 3).map((ind, i) => (
+               <div key={i} className="h-7 w-7 rounded-full border-2 border-white bg-[#1a3a32] flex items-center justify-center text-[9px] text-white font-bold uppercase shadow-sm">
+                 {userMap[resolveIds(ind.assignee)[0]]?.name?.charAt(0) || <User size={10} />}
+               </div>
+             )) : <span className="text-[10px] text-gray-300 font-bold uppercase tracking-widest mt-1">Pending</span>}
            </div>
         </td>
         <td className="p-4 align-top text-center">—</td>
         <td className="p-4 align-top">
           <span className="inline-flex items-center gap-1.5 bg-gray-50 text-gray-400 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border border-gray-100 mt-1">
-            In-Progress
+            Active
           </span>
         </td>
         <td className="p-4 align-top text-center">
@@ -218,8 +287,9 @@ const IndicatorSection = ({ perspective, objective, indicators, userMap, onAssig
       </tr>
 
       {objective.activities.map((activity: any) => {
-        const assignment = indicators.find((ind: any) => String(ind.activityId) === String(activity._id));
+        const assignment = indicators.find((ind) => String(ind.activityId) === String(activity._id));
         const ids = resolveIds(assignment?.assignee);
+        
         return (
           <tr key={activity._id} className="bg-white border-b border-gray-50 group/row hover:bg-gray-50/50">
             <td className="p-4 pl-12">
@@ -250,12 +320,18 @@ const IndicatorSection = ({ perspective, objective, indicators, userMap, onAssig
                </div>
             </td>
             <td className="p-4">
-               {assignment?.status === 'SUBMITTED' ? (
-                  <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-emerald-100">
-                    <Trophy size={10} /> Submitted
-                  </span>
+               {assignment?.status === 'Submitted' ? (
+                 <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-emerald-100">
+                   <Trophy size={10} /> Submitted
+                 </span>
+               ) : assignment?.status === 'Rejected by Admin' ? (
+                 <span className="inline-flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-red-100">
+                   Rejected
+                 </span>
                ) : (
-                  <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest pl-2">Open</span>
+                 <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest pl-2">
+                   {assignment?.status || "Open"}
+                 </span>
                )}
             </td>
             <td className="p-4 text-center">
@@ -269,17 +345,11 @@ const IndicatorSection = ({ perspective, objective, indicators, userMap, onAssig
                     Assign <ArrowRight size={12} />
                   </button>
                 )}
-                {!assignment && (
-                  <button className="border border-red-100 text-red-500 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase flex items-center gap-1 hover:bg-red-50">
-                    <X size={12} strokeWidth={3} /> Delete
-                  </button>
-                )}
               </div>
             </td>
           </tr>
         );
       })}
-      {/* Spacer between sections */}
       <tr className="h-4 bg-[#fcfdfb]"></tr>
     </>
   );
