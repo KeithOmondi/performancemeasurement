@@ -6,7 +6,7 @@ export interface User {
   _id: string;
   name: string;
   email: string;
-  role: "user" | "admin" | "superadmin" | "reviewer" | "registrar";
+  role: "user" | "admin" | "superadmin" | "examiner";
   pjNumber: string;
   title: string;
   isActive: boolean;

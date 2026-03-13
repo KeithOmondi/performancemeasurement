@@ -28,6 +28,10 @@ import UserHistory from "./pages/user/UserHistory";
 import AdminRejections from "./pages/admin/AdminRejections";
 import AdminApprovals from "./pages/admin/AdminApprovals";
 import UserApprovals from "./pages/user/userApprovals";
+import SuperAdminSettings from "./pages/superadmin/SuperAdminSettings";
+import SuperAdminExaminers from "./pages/superadmin/SuperAdminExaminers";
+import SuperAdminRegistry from "./pages/superadmin/SuperAdminRegistry";
+import UserTaskIdPage from "./pages/user/UserTaskIdPage";
 
 const App = () => {
   const dispatch = useAppDispatch();
@@ -86,6 +90,9 @@ const App = () => {
             <Route path="/superadmin/submissions" element={<SuperAdminSubmissions />} />
             <Route path="/superadmin/reports" element={<SuperAdminReports />} />
             <Route path="/superadmin/reviewer" element={<SuperAdminReviewer />} />
+            <Route path="/superadmin/settings" element={<SuperAdminSettings />} />
+            <Route path="/superadmin/examiner" element={<SuperAdminExaminers />} />
+            <Route path="/superadmin/registry" element={<SuperAdminRegistry />} />
           </Route>
         </Route>
 
@@ -113,6 +120,7 @@ const App = () => {
             <Route path="/user/rejects" element={<UserRejections />} />
             <Route path="/user/history" element={<UserHistory />} />
             <Route path="/user/approvals" element={<UserApprovals />} />
+            <Route path="/user/assignments/:id" element={<UserTaskIdPage />} />
           </Route>
         </Route>
 

@@ -7,6 +7,7 @@ import userIndicatorsReducer from "./slices/userIndicatorSlice"
 import adminIndicatorsReducer from "./slices/adminIndicatorSlice"
 import reportsReducer from "./slices/reportSlice"
 import dashboardReducer from "./slices/dashboardSlice"
+import registryReducer from "./slices/registrySlice"
 
 export const store = configureStore({
   reducer: {
@@ -17,7 +18,8 @@ export const store = configureStore({
     userIndicators: userIndicatorsReducer,
     adminIndicators: adminIndicatorsReducer,
     reports: reportsReducer,
-    dashboard: dashboardReducer
+    dashboard: dashboardReducer,
+    registry: registryReducer
     // Add other features (e.g., products, cart) here later
   },
   // DevTools is enabled by default in development mode

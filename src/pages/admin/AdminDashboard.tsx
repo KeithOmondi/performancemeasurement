@@ -1,12 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { Loader2,  } from "lucide-react";
+import { Loader2, ArrowRightCircle, AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 
 // Thunks
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import { fetchDashboardStats } from "../../store/slices/dashboardSlice"; 
-import { fetchIndicators } from "../../store/slices/indicatorSlice";
+import { fetchAllAdminIndicators } from "../../store/slices/adminIndicatorSlice";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 
 // Types
@@ -17,37 +17,58 @@ const AdminDashboardPage = () => {
 
   // 1. Selectors
   const { isLoading: uLoad } = useSelector((state: RootState) => state.users);
-  const { indicators, loading: iLoad } = useSelector((state: RootState) => state.indicators); 
+  const { allAssignments: indicators = [], isLoading: iLoad } = useSelector((state: RootState) => state.adminIndicators); 
   const { stats, loading: sLoad } = useSelector((state: RootState) => state.dashboard);
-  const { plans, loading: pLoad } = useSelector((state: RootState) => state.strategicPlan);
+  const { plans = [], loading: pLoad } = useSelector((state: RootState) => state.strategicPlan);
 
   // 2. Data Lifecycle
   useEffect(() => {
     dispatch(fetchAllUsers());
     dispatch(fetchDashboardStats());
-    dispatch(fetchIndicators());
+    dispatch(fetchAllAdminIndicators());
     dispatch(getAllStrategicPlans());
   }, [dispatch]);
 
-  // 3. Derived Logic - Matching SuperAdminIndicators calculation
-  const totalActivities = useMemo(() => 
-    plans.reduce((acc, p) => acc + p.objectives.reduce((oAcc, obj) => oAcc + obj.activities.length, 0), 0),
-    [plans]
-  );
+  // 3. Derived Logic
+  const derivedData = useMemo(() => {
+    const totalActivities = (plans || []).reduce((acc, p) => 
+      acc + (p.objectives?.reduce((oAcc, obj) => oAcc + (obj.activities?.length || 0), 0) || 0), 0
+    );
 
-  const assignedCount = indicators.length;
-  const unassignedCount = totalActivities - assignedCount;
+    const assignedCount = indicators.length;
+    
+    // Updated to include the new "Awaiting Admin Approval" status
+    const awaitingReview = indicators.filter(i => 
+      ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(i.status)
+    ).length;
 
- 
+    // Matches the "Completed" status from your Mongoose static engine
+    const approved = indicators.filter(i => i.status === "Completed").length;
+    
+    const rejected = indicators.filter(i => 
+      ["Rejected by Admin", "Rejected by Super Admin"].includes(i.status)
+    ).length;
+    
+    const overdue = indicators.filter(i => i.isOverdue).length;
 
-
+    return {
+      totalActivities,
+      assignedCount,
+      unassignedCount: Math.max(0, totalActivities - assignedCount),
+      awaitingReview,
+      approved,
+      rejected,
+      overdue
+    };
+  }, [plans, indicators]);
 
   // 4. Loading Guard
-  if ((uLoad || sLoad || iLoad || pLoad) && plans.length === 0) {
+  const isGlobalLoading = uLoad || sLoad || iLoad || pLoad;
+  if (isGlobalLoading && (plans || []).length === 0) {
     return (
       <div className="min-h-screen bg-[#fcfcf7] flex flex-col items-center justify-center p-4">
         <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
-        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 text-center">Syncing Intelligence...</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 text-center">Syncing Registry Intelligence...</p>
       </div>
     );
   }
@@ -55,92 +76,143 @@ const AdminDashboardPage = () => {
   return (
     <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 text-[#1a2c2c] font-sans">
       
-      {/* 🔹 TOP STATS - Derived from actual Plans and Indicators */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        {[
-          { label: "TOTAL SUB-INDICATORS", value: totalActivities, border: "border-[#1d3331]" },
-          { label: `ASSIGNED (OF ${totalActivities})`, value: assignedCount, border: "border-slate-300" },
-          { label: "UNASSIGNED", value: unassignedCount < 0 ? 0 : unassignedCount, border: "border-red-800", text: "text-red-800" },
-          { label: "AWAITING REVIEW", value: stats?.general.awaitingReview || 0, border: "border-yellow-500" },
-          { label: "APPROVED", value: stats?.general.approved || 0, border: "border-[#1d3331]" },
-        ].map((stat, i) => (
-          <div key={i} className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm relative h-32 flex flex-col justify-between">
-            <div className={`text-3xl md:text-4xl font-serif font-bold ${stat.text || "text-[#1d3331]"}`}>{stat.value}</div>
-            <div className="text-[10px] font-bold text-slate-500 tracking-widest uppercase">{stat.label}</div>
-            <div className={`absolute bottom-4 left-4 right-4 h-1 border-b-[3px] ${stat.border}`} />
-          </div>
-        ))}
+      {/* 🔹 HEADER */}
+      <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-serif font-bold text-[#1d3331]">Management Intelligence</h1>
+          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">Institutional Performance Oversight</p>
+        </div>
+        <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm">
+           <p className="text-[9px] text-slate-400 font-bold uppercase">Registry Status</p>
+           <p className="text-[10px] font-black text-emerald-700 uppercase">Operational / Real-time Sync</p>
+        </div>
       </div>
 
-      {/* 🔹 SECONDARY STATS */}
+      {/* 🔹 TOP STATS GRID */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <StatCard label="Total Indicators" value={derivedData.totalActivities} border="border-[#1d3331]" />
+        <StatCard label="Assigned" value={derivedData.assignedCount} border="border-slate-300" />
+        <StatCard label="Unassigned" value={derivedData.unassignedCount} border="border-slate-200" textColor="text-slate-400" />
+        <StatCard label="Pending Action" value={derivedData.awaitingReview} border="border-yellow-500" textColor="text-yellow-600" />
+        <StatCard label="Certified Completed" value={derivedData.approved} border="border-emerald-700" textColor="text-emerald-700" />
+      </div>
+
+      {/* 🔹 CRITICAL AUDIT METRICS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-10">
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm relative h-32 flex flex-col justify-between">
-          <div className="text-4xl font-serif font-bold text-red-800">{stats?.general.overdue || 0}</div>
-          <div className="text-[10px] font-bold text-slate-500 tracking-widest">OVERDUE</div>
-          <div className="absolute bottom-4 left-4 right-4 h-1 border-b-[3px] border-red-800" />
+        <div className="bg-white p-5 rounded-xl border-t-4 border-red-800 shadow-sm flex flex-col justify-between h-32">
+          <div className="text-4xl font-serif font-bold text-red-800">{derivedData.overdue}</div>
+          <div className="text-[10px] font-bold text-slate-500 tracking-[0.2em] uppercase">Overdue & Critical</div>
         </div>
-        <div className="sm:col-span-1 lg:col-span-2 bg-white p-5 rounded-xl border-l-[5px] border-[#1d3331] shadow-sm flex items-center h-32">
-          <span className="text-4xl md:text-5xl font-serif font-bold mr-4 text-[#1d3331]">{stats?.general.approved || 0}</span>
-          <span className="text-[10px] md:text-[11px] font-bold text-slate-500 uppercase tracking-widest leading-tight">REVIEWED & <br className="hidden md:block"/>APPROVED</span>
+        
+        <div className="sm:col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-[#1d3331] shadow-sm flex items-center h-32">
+          <CheckCircle2 size={32} className="text-[#1d3331] mr-4 opacity-20" />
+          <div>
+            <span className="text-4xl font-serif font-bold text-[#1d3331]">{derivedData.approved}</span>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">Verified Final Output</p>
+          </div>
         </div>
-        <div className="sm:col-span-1 lg:col-span-2 bg-white p-5 rounded-xl border-l-[5px] border-red-800 shadow-sm flex items-center h-32">
-          <span className="text-4xl md:text-5xl font-serif font-bold mr-4 text-red-800">{stats?.general.rejected || 0}</span>
-          <span className="text-[10px] md:text-[11px] font-bold text-slate-500 uppercase tracking-widest leading-tight">REVIEWED & <br className="hidden md:block"/>REJECTED</span>
+
+        <div className="sm:col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-orange-600 shadow-sm flex items-center h-32">
+          <AlertCircle size={32} className="text-orange-600 mr-4 opacity-20" />
+          <div>
+            <span className="text-4xl font-serif font-bold text-orange-600">{derivedData.rejected}</span>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">Returned for Correction</p>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        {/* 🔹 ACTIVE ASSIGNMENTS */}
         <div className="lg:col-span-8">
-          <h3 className="text-xl font-serif font-bold mb-0.5">Active Assignments</h3>
-          <p className="text-xs text-slate-400 mb-6">High-priority indicators currently in progress</p>
+          <div className="flex justify-between items-end mb-6">
+            <div>
+              <h3 className="text-xl font-serif font-bold text-[#1d3331]">Pending Verification Queue</h3>
+              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Submissions requiring administrative audit</p>
+            </div>
+            <Link to="/admin/reviewer" className="text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:underline">View All →</Link>
+          </div>
           
           <div className="space-y-3">
-            {indicators.filter(ind => ind.status === "Submitted").slice(0, 4).map((item: any, idx) => (
-              <div key={idx} className="bg-white p-4 rounded-lg border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between shadow-sm gap-4">
-                <div className="flex items-center space-x-4">
-                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500 flex-shrink-0" />
-                  <div className="text-[12px]">
-                    <span className="font-bold">New Submission</span> for <span className="font-bold">{item.activityDescription || item.instructions || "Strategic Task"}</span>
-                    <p className="text-[10px] text-slate-400 mt-1 font-medium">Progress: {item.progress}%</p>
+            {indicators
+              .filter(ind => ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(ind.status))
+              .slice(0, 5)
+              .map((item: any, idx) => (
+                <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between shadow-sm group hover:border-slate-200 transition-all">
+                  <div className="flex items-center space-x-4">
+                    <div className="relative">
+                       <Clock size={18} className={`${item.status === "Awaiting Super Admin" ? "text-emerald-600" : "text-yellow-500"} opacity-40`} />
+                       {item.isResubmission && <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full animate-pulse" />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-[#1d3331] italic leading-snug line-clamp-1">"{item.activityDescription}"</p>
+                      <p className="text-[10px] text-slate-400 mt-1 font-bold uppercase tracking-tighter">
+                         {item.assigneeDisplayName} • <span className={item.status === "Awaiting Super Admin" ? "text-emerald-700" : "text-yellow-600"}>{item.status}</span>
+                         {item.isResubmission && <span className="ml-2 text-red-800">[RESUBMISSION]</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 mt-3 sm:mt-0">
+                    <div className="text-right mr-2">
+                       <span className="block text-[11px] font-black text-[#1d3331]">{item.progress}%</span>
+                       <span className="block text-[8px] text-slate-400 font-bold uppercase">{item.unit}</span>
+                    </div>
+                    <Link to={`/admin/indicators/${item._id}`} className="bg-[#1d3331] text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all shadow-lg">
+                      <ArrowRightCircle size={16} />
+                    </Link>
                   </div>
                 </div>
-                <Link to={`/superadmin/indicators`} className="text-red-800 font-bold hover:underline uppercase text-[10px] tracking-tighter self-end sm:self-center">Review Now →</Link>
+              ))}
+            
+            {derivedData.awaitingReview === 0 && (
+              <div className="py-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
+                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Verification Queue Clear</p>
               </div>
-            ))}
-            {indicators.filter(ind => ind.status === "Submitted").length === 0 && (
-                <p className="text-xs italic text-slate-400">No pending reviews at the moment.</p>
             )}
           </div>
         </div>
 
-        {/* 🔹 PERSPECTIVE PROGRESS */}
+        {/* 🔹 STRATEGIC MATRIX */}
         <div className="lg:col-span-4">
-          <h3 className="text-xl font-serif font-bold mb-6">Real-time Progress</h3>
+          <h3 className="text-xl font-serif font-bold text-[#1d3331] mb-6">Strategic Matrix</h3>
           <div className="space-y-4">
-            {stats && stats.perspectiveStats.length > 0 ? stats.perspectiveStats.map((p, idx) => (
-              <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                <div className="flex justify-between items-center mb-1">
-                  <h4 className="text-[11px] font-bold uppercase tracking-tight">{p.name}</h4>
-                  <span className="text-[11px] font-bold bg-[#fff9e6] border border-[#ffeeba] px-2 py-0.5 rounded text-amber-900">{p.val}%</span>
+            {(stats?.perspectiveStats ?? []).length > 0 ? (
+              stats?.perspectiveStats?.map((p: any, idx: number) => (
+                <div key={idx} className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm group hover:border-[#1d3331]/20 transition-all">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-[#1d3331] transition-colors">{p.name}</h4>
+                    <span className="text-[11px] font-black text-[#1d3331]">{p.val}%</span>
+                  </div>
+                  <div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
+                    <div 
+                      className="bg-[#1d3331] h-full transition-all duration-1000" 
+                      style={{ width: `${p.val}%` }} 
+                    />
+                  </div>
+                  <div className="flex justify-between mt-3">
+                     <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">{p.count} Indicators</p>
+                     <p className="text-[9px] text-[#1d3331] font-black uppercase tracking-tighter cursor-pointer">View Focus →</p>
+                  </div>
                 </div>
-                <p className="text-[10px] text-slate-400 mb-3">{p.count} activities</p>
-                <div className="w-full bg-[#f1f1e8] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#1d3331] h-full transition-all duration-1000" style={{ width: `${p.val}%` }} />
-                </div>
-              </div>
-            )) : (
+              ))
+            ) : (
               <div className="text-center p-8 border-2 border-dashed border-slate-100 rounded-xl">
-                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">No Perspective Data Linked</p>
+                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">No Perspective Data Available</p>
               </div>
             )}
           </div>
         </div>
       </div>
-
-    
     </div>
   );
 };
+
+/* --- SUPPORTING COMPONENTS --- */
+
+const StatCard = ({ label, value, border, textColor }: any) => (
+  <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm relative h-32 flex flex-col justify-between group hover:shadow-md transition-all">
+    <div className={`text-4xl font-serif font-bold ${textColor || "text-[#1d3331]"}`}>{value}</div>
+    <div className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mb-2">{label}</div>
+    <div className={`absolute bottom-4 left-4 right-4 h-1 border-b-[3px] ${border} opacity-70 group-hover:opacity-100 transition-opacity`} />
+  </div>
+);
 
 export default AdminDashboardPage;

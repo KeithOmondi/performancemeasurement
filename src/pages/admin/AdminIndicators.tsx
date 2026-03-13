@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Loader2, ListChecks, Clock, Search, UserCheck,  Users } from "lucide-react";
+import { 
+  Loader2, 
+  Search, 
+  UserCheck,  
+  LayoutGrid,
+  MapPin
+} from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
@@ -13,7 +19,6 @@ import AdminIndicatorModal from "./AdminIndicatorModal";
 const AdminIndicators = () => {
   const dispatch = useAppDispatch();
 
-  // 1. Redux State
   const { plans, loading: plansLoading } = useAppSelector((state) => state.strategicPlan);
   const {
     allAssignments,
@@ -22,12 +27,10 @@ const AdminIndicators = () => {
     selectedIndicator,
   } = useAppSelector((state) => state.adminIndicators);
 
-  // 2. UI State
   const [activeFilter, setActiveFilter] = useState("ALL");
   const [viewMode, setViewMode] = useState<"ALL" | "PENDING">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // 3. Lifecycle
   useEffect(() => {
     const loadRegistryData = async () => {
       try {
@@ -43,13 +46,21 @@ const AdminIndicators = () => {
     loadRegistryData();
   }, [dispatch]);
 
-  // 4. Logic: Normalized Lookup Map
+  // Map activities to their assignments (IAdminIndicator) from the slice
   const indicatorMap = useMemo(() => {
     const pool = viewMode === "ALL" ? allAssignments : pendingReview;
     return new Map(pool.map((ind) => [String(ind.activityId), ind]));
   }, [allAssignments, pendingReview, viewMode]);
 
-  // 5. Logic: Filtering
+  const filterStats = useMemo(() => {
+    const counts: Record<string, number> = { ALL: allAssignments.length };
+    allAssignments.forEach(ind => {
+      const key = ind.perspective?.toUpperCase().split(" ")[0] || "OTHER";
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [allAssignments]);
+
   const filteredPlans = useMemo(() => {
     return plans
       .filter((plan: any) => {
@@ -68,7 +79,8 @@ const AdminIndicators = () => {
                 !searchTerm ||
                 obj.title.toLowerCase().includes(searchLower) ||
                 act.description.toLowerCase().includes(searchLower) ||
-                assignment?.assigneeDisplayName?.toLowerCase().includes(searchLower)
+                assignment?.assigneeDisplayName?.toLowerCase().includes(searchLower) ||
+                assignment?.unit?.toLowerCase().includes(searchLower)
               );
             });
             return { ...obj, activities: filteredActivities };
@@ -79,99 +91,87 @@ const AdminIndicators = () => {
       .filter((plan: any) => plan.objectives.length > 0);
   }, [plans, indicatorMap, activeFilter, searchTerm, viewMode]);
 
-  const stats = useMemo(() => ({
-    total: allAssignments.length,
-    pending: pendingReview.length,
-  }), [allAssignments, pendingReview]);
-
-  const filters = ["ALL", "CORE BUSINESS", "CUSTOMER", "FINANCIAL", "INNOVATION", "INTERNAL PROCESS"];
+  const filters = [
+    { label: "ALL", key: "ALL" },
+    { label: "CORE BUSINESS", key: "CORE" },
+    { label: "CUSTOMER", key: "CUSTOMER" },
+    { label: "FINANCIAL", key: "FINANCIAL" },
+    { label: "INNOVATION", key: "INNOVATION" },
+    { label: "INTERNAL PROCESS", key: "INTERNAL" }
+  ];
 
   if ((plansLoading || adminIndicatorsLoading) && plans.length === 0)
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#fcfdfb]">
-        <Loader2 className="animate-spin text-[#1a3a32]" size={40} />
-        <p className="mt-4 text-[#1a3a32] font-medium animate-pulse">Syncing Admin Registry...</p>
+        <Loader2 className="animate-spin text-[#1a3a32] mb-4" size={48} />
+        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#1a3a32]">Syncing Registry...</p>
       </div>
     );
 
   return (
-    <div className="p-4 md:p-10 bg-[#fcfdfb] min-h-screen font-sans">
-      {/* Header Section */}
-      <div className="flex flex-col xl:flex-row justify-between items-start mb-8 gap-6">
+    <div className="p-6 md:p-10 bg-[#fcfdfb] min-h-screen font-sans text-slate-900">
+      <div className="flex flex-col xl:flex-row justify-between items-start mb-10 gap-8">
         <div>
-          <h1 className="text-2xl font-bold text-[#1a3a32] tracking-tight flex items-center gap-2">
-            ADMIN PANEL — 2026 
-            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold uppercase tracking-wider">Registry</span>
-          </h1>
-          <p className="text-sm text-gray-500 font-medium italic">
-            Monitoring {stats.total} assignments across {plans.length} departments.
+          <h1 className="text-3xl font-black text-[#1a3a32] tracking-tighter uppercase mb-2">Registry 2026</h1>
+          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-tight">
+            Monitoring <span className="text-slate-600">{allAssignments.length} indicators</span>
           </p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-4 w-full xl:w-auto">
-          <div className="relative group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input 
               type="text" 
-              placeholder="Search Objective or Staff..." 
+              placeholder="Search..." 
               value={searchTerm} 
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-white border border-gray-100 rounded-lg text-[11px] font-bold w-full md:w-[250px] outline-none focus:border-[#1a3a32] transition-all shadow-sm"
+              className="pl-11 pr-6 py-3 bg-white border border-slate-200 rounded-2xl text-[11px] font-bold w-full md:w-[320px] outline-none transition-all"
             />
           </div>
-
-          <div className="flex bg-gray-100 p-1 rounded-xl">
-            <button
-              onClick={() => setViewMode("ALL")}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
-                viewMode === "ALL" ? "bg-white text-[#1a3a32] shadow-sm" : "text-gray-400"
-              }`}
-            >
-              <ListChecks size={14} /> Global Workload ({stats.total})
+          <div className="flex bg-slate-100 p-1 rounded-2xl">
+            <button onClick={() => setViewMode("ALL")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "ALL" ? "bg-white text-[#1a3a32] shadow-sm" : "text-slate-400"}`}>
+              Workload
             </button>
-            <button
-              onClick={() => setViewMode("PENDING")}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
-                viewMode === "PENDING" ? "bg-white text-orange-600 shadow-sm" : "text-gray-400"
-              }`}
-            >
-              <Clock size={14} /> Review Queue ({stats.pending})
+            <button onClick={() => setViewMode("PENDING")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "PENDING" ? "bg-white text-orange-600 shadow-sm" : "text-slate-400"}`}>
+              Queue ({pendingReview.length})
             </button>
           </div>
         </div>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex overflow-x-auto pb-4 gap-2 mb-8 no-scrollbar">
+      <div className="flex items-center gap-4 mb-10 overflow-x-auto no-scrollbar pb-2">
         {filters.map((f) => (
           <button
-            key={f}
-            onClick={() => setActiveFilter(f)}
-            className={`px-4 py-2 rounded-full text-[11px] font-bold border transition-all uppercase whitespace-nowrap
-              ${activeFilter === f ? "bg-[#1a3a32] text-white border-[#1a3a32]" : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"}`}
+            key={f.key}
+            onClick={() => setActiveFilter(f.label)}
+            className={`flex items-center gap-3 px-6 py-3 rounded-2xl text-[9px] font-black border transition-all uppercase whitespace-nowrap tracking-widest
+            ${activeFilter === f.label ? "bg-[#1a3a32] text-white border-[#1a3a32]" : "bg-white text-slate-400 border-slate-200"}`}
           >
-            {f}
+            {f.label}
+            <span className={`px-2 py-0.5 rounded-lg text-[8px] ${activeFilter === f.label ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+              {filterStats[f.key] || 0}
+            </span>
           </button>
         ))}
       </div>
 
-      {/* Registry Table */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1200px]">
+          <table className="w-full text-left border-collapse min-w-[1400px]">
             <thead>
-              <tr className="bg-[#1a3a32] text-white text-[10px] uppercase tracking-[0.15em]">
-                <th className="p-4 font-bold w-[30%]">Indicator / Activity</th>
-                <th className="p-4 font-bold">Perspective</th>
-                <th className="p-4 font-bold text-center">Wt.</th>
-                <th className="p-4 font-bold text-center">Target</th>
-                <th className="p-4 font-bold">Assignee</th>
-                <th className="p-4 font-bold text-center">Progress</th>
-                <th className="p-4 font-bold">Status</th>
-                <th className="p-4 font-bold text-center">Action</th>
+              <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                <th className="px-10 py-8 w-[30%]">Indicator / Activity</th>
+                <th className="px-6 py-8">Perspective</th>
+                <th className="px-6 py-8 text-center">Wt.</th>
+                <th className="px-6 py-8">Unit</th>
+                <th className="px-6 py-8">Assignee</th>
+                <th className="px-6 py-8 text-center">Progress</th>
+                <th className="px-6 py-8">Status</th>
+                <th className="px-10 py-8 text-right">Action</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-50">
               {filteredPlans.map((plan: any) =>
                 plan.objectives.map((objective: any) => (
                   <ObjectiveSection
@@ -179,7 +179,10 @@ const AdminIndicators = () => {
                     perspective={plan.perspective}
                     objective={objective}
                     indicatorMap={indicatorMap}
-                    onReview={(id: string) => dispatch(getIndicatorByIdAdmin(id))}
+                    onReview={(id: string) => {
+                        dispatch(clearSelectedIndicator());
+                        dispatch(getIndicatorByIdAdmin(id));
+                    }}
                   />
                 ))
               )}
@@ -188,119 +191,88 @@ const AdminIndicators = () => {
         </div>
       </div>
 
-      {/* Side Slide-over Modal */}
-      <div className={`fixed inset-0 z-[300] transition-all duration-300 ${selectedIndicator ? "visible opacity-100" : "invisible opacity-0"}`}>
-        <div className="absolute inset-0 bg-black/10 backdrop-blur-sm" onClick={() => dispatch(clearSelectedIndicator())} />
-        <div className={`absolute right-0 top-0 h-full w-full md:max-w-[800px] bg-white shadow-2xl transition-transform duration-500 transform ${selectedIndicator ? "translate-x-0" : "translate-x-full"}`}>
-            {selectedIndicator && (
-              <AdminIndicatorModal 
-                indicator={selectedIndicator} 
-                onClose={() => dispatch(clearSelectedIndicator())} 
-              />
-            )}
+      {selectedIndicator && (
+        <div className="fixed inset-0 z-[300] flex justify-end">
+            <div className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm" onClick={() => dispatch(clearSelectedIndicator())} />
+            <div className="relative h-full w-full md:max-w-[800px] bg-white animate-in slide-in-from-right duration-500">
+                <AdminIndicatorModal indicator={selectedIndicator} onClose={() => dispatch(clearSelectedIndicator())} />
+            </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
-/* ---------------- SUB-COMPONENT ---------------- */
-
 const ObjectiveSection = ({ perspective, objective, indicatorMap, onReview }: any) => {
   return (
     <>
-      <tr className="bg-white border-b border-gray-50">
-        <td className="p-4 py-6 align-top">
-          <h3 className="font-bold text-[#1a3a32] text-[15px] leading-tight mb-2">{objective.title}</h3>
-          <span className="text-[10px] font-bold uppercase tracking-tight text-orange-500 bg-orange-50 px-2 py-0.5 rounded">
-            {objective.activities.length} Activities
-          </span>
-        </td>
-        <td className="p-4 align-top">
-          <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
-            {perspective.replace(" PERSPECTIVE", "")}
+      <tr className="bg-slate-50/20">
+        <td className="px-10 py-8 align-top">
+          <div className="flex items-start gap-4">
+             <div className="mt-1 p-1 bg-[#1a3a32] text-white rounded shadow-sm">
+                <LayoutGrid size={12} />
+             </div>
+             <div>
+                <h3 className="font-black text-[#1a3a32] text-[14px] tracking-tighter leading-tight mb-2">{objective.title}</h3>
+                <span className="text-[8px] font-black uppercase tracking-widest text-[#1a3a32] bg-[#1a3a32]/5 px-2 py-1 rounded border border-[#1a3a32]/10">
+                    {objective.activities.length} Tactical Activities
+                </span>
+             </div>
           </div>
         </td>
-        <td className="p-4 align-top text-center">
-          <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-[11px] font-bold border border-amber-100 mt-1 inline-block">
-            {objective.weight || 0}%
-          </span>
+        <td className="px-6 py-8 align-top">
+            <span className="text-[9px] text-slate-500 font-black uppercase tracking-widest">
+                {perspective.replace(" PERSPECTIVE", "")}
+            </span>
         </td>
-        <td colSpan={5} className="p-4"></td>
+        <td colSpan={6} className="px-6 py-8"></td>
       </tr>
 
       {objective.activities.map((act: any) => {
         const assignment = indicatorMap.get(String(act._id));
         return (
-          <tr key={act._id} className="bg-white border-b border-gray-50 hover:bg-gray-50/50 transition-all">
-            <td className="p-4 pl-12">
-              <div className="flex items-start gap-3">
-                <span className="text-amber-400 text-lg leading-none font-bold">↳</span>
-                <span className="italic text-[13px] font-medium text-gray-600 leading-relaxed">
-                  {act.description}
-                </span>
-              </div>
+          <tr key={act._id} className="bg-white hover:bg-slate-50/80 transition-all group">
+            <td className="px-10 py-6 pl-24 text-[13px] font-bold text-slate-500 group-hover:text-[#1a3a32] leading-relaxed">
+                {act.description}
             </td>
-            <td className="p-4"></td>
-            <td className="p-4 text-center">
-               <span className="text-[11px] font-bold text-emerald-800">{assignment?.weight || "—"}</span>
+            <td className="px-6 py-6"></td>
+            <td className="px-6 py-6 text-center text-[11px] font-black text-slate-400">
+                {/* Picked from assignment data (IAdminIndicator) */}
+                {assignment?.weight ? `${assignment.weight}%` : "—"}
             </td>
-            <td className="p-4 text-center">
-               <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#1a3a32]">{assignment?.target || "—"}</span>
-                  <span className="text-[9px] font-bold text-gray-400 uppercase">{assignment?.unit || "Units"}</span>
+            <td className="px-6 py-6">
+                <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                  <MapPin size={12} className="text-emerald-600" />
+                  {/* Picked from assigned unit */}
+                  {assignment?.unit || "Unallocated"}
                </div>
             </td>
-            <td className="p-4">
+            <td className="px-6 py-6">
               {assignment ? (
                 <div className="flex items-center gap-2">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold border-2 border-white shadow-sm ${Array.isArray(assignment.assignee) ? 'bg-blue-600' : 'bg-emerald-600'}`}>
-                      {Array.isArray(assignment.assignee) ? <Users size={12} /> : <UserCheck size={12} />}
-                  </div>
-                  <span className="text-[10px] font-bold text-gray-700 uppercase truncate max-w-[120px]">
-                    {assignment.assigneeDisplayName}
-                  </span>
+                  <div className="w-7 h-7 rounded bg-emerald-600 flex items-center justify-center text-white"><UserCheck size={12} /></div>
+                  <span className="text-[10px] font-black text-slate-800 uppercase tracking-tighter">{assignment.assigneeDisplayName}</span>
                 </div>
-              ) : (
-                <span className="text-[10px] text-gray-200 italic font-bold">Unassigned</span>
-              )}
+              ) : <span className="text-[9px] text-slate-200 font-black uppercase italic">Unassigned</span>}
             </td>
-            <td className="p-4 text-center">
-              <div className="flex flex-col items-center gap-1">
-                <span className="text-[10px] font-bold text-gray-500">{assignment?.progress || 0}%</span>
-                <div className="w-12 h-1 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500" style={{ width: `${assignment?.progress || 0}%` }} />
-                </div>
-              </div>
+            <td className="px-6 py-6 text-center">
+              <span className="text-[11px] font-black text-[#1a3a32]">{assignment?.progress || 0}%</span>
             </td>
-            <td className="p-4">
-              <div className="flex flex-col items-center gap-1">
-                 <span className={`text-[9px] font-bold px-3 py-1 rounded-full border uppercase ${
-                   assignment?.status === "Submitted" ? "bg-orange-50 text-orange-600 border-orange-100" : 
-                   assignment?.status === "Reviewed" ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
-                   "bg-gray-50 text-gray-400 border-gray-100"
-                 }`}>
-                   {assignment?.status || "Open"}
-                 </span>
-                 {assignment?.isOverdue && (
-                   <span className="text-[7px] text-red-500 font-bold uppercase animate-pulse">Overdue</span>
-                 )}
-              </div>
+            <td className="px-6 py-6">
+               <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border ${assignment?.status === "Reviewed" || assignment?.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-50 text-slate-400 border-slate-100"}`}>
+                 {assignment?.status || "Awaiting"}
+               </span>
             </td>
-            <td className="p-4 text-center">
+            <td className="px-10 py-6 text-right">
               {assignment && (
-                <button
-                  onClick={() => onReview(assignment._id)}
-                  className="border border-[#1a3a32] text-[#1a3a32] px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-[#1a3a32] hover:text-white transition-all mx-auto"
-                >
-                  Review <ArrowRight size={12} />
+                <button onClick={() => onReview(assignment._id)} className="bg-[#1a3a32] text-white px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-black transition-all">
+                  Dossier
                 </button>
               )}
             </td>
           </tr>
         );
       })}
-      <tr className="h-4 bg-[#fcfdfb]"></tr>
     </>
   );
 };

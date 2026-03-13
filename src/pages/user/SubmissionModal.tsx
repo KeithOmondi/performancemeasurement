@@ -1,18 +1,16 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   X,
   Upload,
-  FileText,
   CheckCircle2,
   Loader2,
   AlertCircle,
   Trash2,
+  ShieldCheck,
+  FileText,
 } from "lucide-react";
-import {
-  submitIndicatorProgress,
-  resubmitIndicatorProgress,
-} from "../../store/slices/userIndicatorSlice";
+import { submitIndicatorProgress } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
 import toast from "react-hot-toast";
 
@@ -25,18 +23,27 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const dispatch = useDispatch<AppDispatch>();
   const { uploading } = useSelector((state: RootState) => state.userIndicators);
 
-  // Changed from single file to array for multi-upload support
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
-  const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+  
+  // 🔹 Updated: Default to 0 for Annual, otherwise use activeQuarter
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(
+    task?.reportingCycle === "Annual" ? 0 : (task?.activeQuarter || 1)
+  );
+  
   const [success, setSuccess] = useState(false);
 
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [onClose]);
+
+  // 🔹 Updated: Matches the controller's targetQuarter logic
   const currentPeriodSubmission = useMemo(() => {
-    return task?.submissions?.find((s: any) =>
-      task.reportingCycle === "Annual"
-        ? s.quarter === 1
-        : s.quarter === selectedQuarter,
-    );
+    return task?.submissions?.find((s: any) => s.quarter === selectedQuarter);
   }, [task, selectedQuarter]);
 
   const isRejected = currentPeriodSubmission?.reviewStatus === "Rejected";
@@ -59,43 +66,26 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notes.trim() || files.length === 0) {
-      return toast.error(
-        "Please provide both notes and at least one evidence file.",
-      );
+      return toast.error("Provide notes and at least one evidence file.");
     }
 
     const formData = new FormData();
-    // Use the key "evidence" for all files - Multer upload.array("evidence") expects this
-    files.forEach((file) => {
-      formData.append("evidence", file);
-    });
-
+    files.forEach((file) => formData.append("evidence", file));
     formData.append("notes", notes.trim());
-    formData.append(
-      "quarter",
-      task.reportingCycle === "Annual" ? "1" : selectedQuarter.toString(),
+    // 🔹 Explicitly pass selectedQuarter (0 for Annual, 1-4 for Quarterly)
+    formData.append("quarter", selectedQuarter.toString());
+
+    const result = await dispatch(
+      submitIndicatorProgress({ id: task._id, formData }),
     );
 
-    let result;
-    if (isRejected) {
-      result = await dispatch(
-        resubmitIndicatorProgress({
-          indicatorId: task._id,
-          submissionId: currentPeriodSubmission._id,
-          formData,
-        }),
-      );
-    } else {
-      result = await dispatch(
-        submitIndicatorProgress({ id: task._id, formData }),
-      );
-    }
-
-    if (
-      submitIndicatorProgress.fulfilled.match(result) ||
-      resubmitIndicatorProgress.fulfilled.match(result)
-    ) {
+    if (submitIndicatorProgress.fulfilled.match(result)) {
       setSuccess(true);
+      toast.success(
+        isRejected
+          ? "Resubmission successful"
+          : "Evidence submitted successfully",
+      );
       setTimeout(() => {
         onClose();
         setSuccess(false);
@@ -104,82 +94,86 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-[#1d3331]/40 backdrop-blur-md flex items-center justify-center p-4 z-[300] animate-in fade-in duration-200">
-      <div className="bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden shadow-2xl">
-        <div className="p-8 border-b border-slate-50 flex justify-between items-start">
-          <div>
-            <h3 className="text-2xl font-black text-[#1d3331]">
-              {isRejected ? "Fix Resubmission" : "Submit Evidence"}
+    <div className="fixed inset-0 z-[1000] flex justify-end overflow-hidden">
+      <div
+        className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm transition-opacity duration-500"
+        onClick={onClose}
+      />
+
+      <section className="relative w-100 max-w-lg md:max-w-xl bg-[#fcfdfb] h-full shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-500 ease-out">
+        {/* Header */}
+        <div className="px-6 py-5 md:px-8 md:py-6 border-b border-slate-100 bg-white flex justify-between items-center shrink-0">
+          <div className="overflow-hidden text-[#1a3a32]">
+            <h3 className="text-lg md:text-xl font-black uppercase tracking-tighter truncate">
+              {isRejected ? "Registry Correction" : "Submit Evidence"}
             </h3>
-            <p className="text-slate-400 text-sm mt-1">
-              Ref:{" "}
-              <span className="text-emerald-600 font-bold">
-                {task.objectiveTitle}
-              </span>
+            <p className="text-[#c2a336] text-[9px] font-bold uppercase tracking-[0.15em] mt-0.5 truncate">
+              {task.objectiveTitle}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+            className="p-2 hover:bg-slate-50 rounded-full transition-all group shrink-0"
           >
-            <X size={24} className="text-slate-400" />
+            <X
+              size={18}
+              className="text-slate-400 group-hover:rotate-90 group-hover:text-rose-500 transition-all duration-300"
+            />
           </button>
         </div>
 
-        <div className="p-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 no-scrollbar bg-[#f8f9fa]">
           {success ? (
-            <div className="py-12 text-center space-y-4">
-              <div className="bg-emerald-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle2 size={40} className="text-emerald-600" />
+            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 animate-in fade-in zoom-in duration-500">
+              <div className="bg-[#1a3a32] w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-900/20">
+                <CheckCircle2 size={32} className="text-white" />
               </div>
-              <h4 className="text-xl font-bold text-[#1d3331]">
-                Update Received
-              </h4>
-              <p className="text-slate-500">
-                Registry records have been updated for verification.
-              </p>
+              <div>
+                <h4 className="text-lg font-black text-[#1a3a32] uppercase">
+                  Submission Successful
+                </h4>
+                <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mt-1">
+                  Awaiting Registry Audit
+                </p>
+              </div>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-6">
               {isRejected && (
-                <div className="bg-red-50 border border-red-100 rounded-2xl p-4 flex gap-3">
-                  <AlertCircle className="text-red-500 shrink-0" size={18} />
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-red-700 font-black uppercase">
-                      Rejection Feedback
-                    </p>
-                    <p className="text-[12px] text-red-600 leading-tight italic">
-                      "{currentPeriodSubmission.adminComment}"
-                    </p>
-                  </div>
+                <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl space-y-1">
+                  <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2">
+                    <AlertCircle size={12} /> Audit Rejection Notes
+                  </p>
+                  <p className="text-xs text-rose-600 font-medium italic">
+                    "{currentPeriodSubmission?.adminComment || "Please review and resubmit the evidence."}"
+                  </p>
                 </div>
               )}
 
-              {task.reportingCycle === "Quarterly" && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    Select Quarter
+              {/* 🔹 Logic: Only show selector for Quarterly cycles. Annual is implicitly Q0. */}
+              {task.reportingCycle === "Quarterly" ? (
+                <div className="space-y-2.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
+                    Target Period
                   </label>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-4 gap-1.5">
                     {[1, 2, 3, 4].map((q) => {
-                      const sub = task.submissions?.find(
-                        (s: any) => s.quarter === q,
-                      );
-                      const locked =
-                        sub?.reviewStatus === "Pending" ||
-                        sub?.reviewStatus === "Accepted";
+                      const sub = task.submissions?.find((s: any) => s.quarter === q);
+                      const locked = sub?.reviewStatus === "Pending" || sub?.reviewStatus === "Accepted";
+
                       return (
                         <button
                           key={q}
                           type="button"
                           disabled={locked}
                           onClick={() => setSelectedQuarter(q)}
-                          className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                          className={`py-2.5 rounded-lg text-[10px] font-black transition-all border ${
                             locked
-                              ? "bg-slate-50 text-slate-300 border-slate-100"
+                              ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
                               : selectedQuarter === q
-                                ? "bg-emerald-600 text-white border-emerald-600"
-                                : "bg-white border-slate-200 text-slate-600"
+                                ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-md shadow-emerald-900/10"
+                                : "bg-white border-slate-200 text-slate-600 hover:border-[#1a3a32]"
                           }`}
                         >
                           Q{q} {sub?.reviewStatus === "Accepted" && "✓"}
@@ -188,11 +182,19 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                     })}
                   </div>
                 </div>
+              ) : (
+                <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <ShieldCheck className="text-indigo-600" size={18} />
+                      <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">Annual Dossier Open</span>
+                   </div>
+                   <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter text-right">Cumulative Record</span>
+                </div>
               )}
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Evidence (Multiple Allowed)
+              <div className="space-y-2.5">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
+                  File Attachment
                 </label>
                 <div className="relative group">
                   <input
@@ -202,32 +204,34 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                   />
                   <div
-                    className={`border-2 border-dashed rounded-3xl p-6 text-center ${files.length > 0 ? "border-emerald-500 bg-emerald-50" : "border-slate-200"}`}
+                    className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${files.length > 0 ? "border-[#1a3a32] bg-emerald-50/30" : "border-slate-200 hover:border-[#1a3a32]/50 bg-white"}`}
                   >
-                    <Upload className="mx-auto mb-2 text-slate-300" size={24} />
-                    <p className="text-xs font-bold text-slate-600">
+                    <Upload
+                      className={`mx-auto mb-2 transition-colors ${files.length > 0 ? "text-[#1a3a32]" : "text-slate-300 group-hover:text-[#1a3a32]"}`}
+                      size={24}
+                    />
+                    <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
                       {files.length > 0
-                        ? `${files.length} files selected`
-                        : "Upload Documents (Images, PDFs, Video)"}
+                        ? `${files.length} Document(s) Loaded`
+                        : "Upload Registry Evidence"}
                     </p>
                   </div>
                 </div>
-
-                {/* File List Preview */}
                 {files.length > 0 && (
-                  <div className="mt-3 space-y-2">
+                  <div className="grid grid-cols-1 gap-2 mt-3">
                     {files.map((f, i) => (
                       <div
                         key={i}
-                        className="flex items-center justify-between bg-slate-50 p-2 px-4 rounded-xl border border-slate-100"
+                        className="flex items-center justify-between bg-white p-2.5 px-4 rounded-lg border border-slate-100"
                       >
-                        <span className="text-[11px] font-medium text-slate-600 truncate max-w-[80%]">
-                          {f.name}
-                        </span>
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <FileText size={14} className="text-slate-400 shrink-0" />
+                          <span className="text-[10px] font-bold text-slate-600 truncate">{f.name}</span>
+                        </div>
                         <button
                           type="button"
                           onClick={() => removeFile(i)}
-                          className="text-red-400 hover:text-red-600"
+                          className="text-slate-300 hover:text-rose-500"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -237,37 +241,44 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 )}
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Progress Remarks
+              <div className="space-y-2.5">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
+                  Achievement Context
                 </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder={
                     isRejected
-                      ? "Explain the fixes made based on feedback..."
-                      : "Describe achievements..."
+                      ? "Detail the corrections made based on audit findings..."
+                      : "Describe the specific metrics or activities completed..."
                   }
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm min-h-[100px] focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[120px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32]"
                 />
               </div>
-
-              <button
-                disabled={uploading || isPending || isAccepted}
-                className="w-full bg-[#1d3331] text-white py-4 rounded-2xl font-bold hover:bg-emerald-900 transition-all disabled:opacity-50 flex justify-center items-center gap-2"
-              >
-                {uploading ? (
-                  <Loader2 className="animate-spin" size={20} />
-                ) : (
-                  <FileText size={20} />
-                )}
-                {isRejected ? "Update & Resubmit" : "Submit for Approval"}
-              </button>
             </form>
           )}
         </div>
-      </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 flex items-center justify-between shrink-0">
+          <p className="text-[8px] font-black text-slate-300 uppercase tracking-[0.2em] hidden sm:block">
+            Judicial Registry Verification
+          </p>
+          <button
+            onClick={handleSubmit}
+            disabled={uploading || isPending || isAccepted || success}
+            className="w-full sm:w-auto bg-[#1a3a32] text-white px-8 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-black/5"
+          >
+            {uploading ? (
+              <Loader2 className="animate-spin" size={14} />
+            ) : (
+              <ShieldCheck size={14} />
+            )}
+            {isRejected ? "Submit Correction" : "Submit to Registry"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 };

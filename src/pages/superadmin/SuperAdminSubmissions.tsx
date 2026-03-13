@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { 
-  User, Users, ArrowRight, Loader2, Search, 
-  RefreshCcw, Files, Calendar, Hash 
+  ArrowRight, Loader2, Search, 
+  RefreshCcw, Files, Hash,
+  Layers, CalendarDays
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { fetchSubmissionsQueue, fetchIndicators } from '../../store/slices/indicatorSlice';
@@ -10,63 +11,62 @@ import IndicatorsPageIdModal from './IndicatorsPageIdModal';
 const SuperAdminSubmissions = () => {
   const dispatch = useAppDispatch();
   
-  // Selectors from Redux
+  // 1. Redux State
   const { queue = [], indicators = [], loading } = useAppSelector((state) => state.indicators);
   const { users = [] } = useAppSelector((state) => state.users); 
   
+  // 2. Local State
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"PENDING" | "ALL" | "ARCHIVED">("PENDING");
+  const [cycleFilter, setCycleFilter] = useState<"ALL" | "QUARTERLY" | "ANNUAL">("ALL");
 
+  // 3. Initial Load
   useEffect(() => {
     dispatch(fetchSubmissionsQueue());
     dispatch(fetchIndicators());
   }, [dispatch]);
 
+  // 4. Enhanced Data Processing
   const processedQueue = useMemo(() => {
-    // 1. Filter raw queue for ONLY submitted items
-    // We target 'Submitted' or 'Awaiting Super Admin' statuses
-    return queue
-      .filter((qItem) => {
-        const status = qItem.status?.toLowerCase();
-        return status === 'submitted' || status === 'awaiting super admin';
-      })
-      .map((qItem) => {
-        const parentIndicator = indicators.find((ind) => ind._id === qItem._id);
-        
-        // 2. Resolve Submitter Name
-        const submitterObj = users.find((u) => String(u._id) === String(qItem.submittedBy));
-        const resolvedSubmitterName = submitterObj ? submitterObj.name : null;
+    return queue.map((qItem) => {
+      const parentIndicator = indicators.find((ind) => ind._id === qItem._id);
+      
+      return {
+        ...qItem,
+        resolvedName: qItem.submittedBy || parentIndicator?.assigneeDisplayName || "System Registry",
+        currentStatus: qItem.status || parentIndicator?.status || 'Unknown',
+        indicatorTitle: qItem.indicatorTitle || parentIndicator?.activityDescription || "Untitled Indicator",
+        reportingCycle: parentIndicator?.reportingCycle || "Quarterly",
+        fullData: parentIndicator 
+      };
+    });
+  }, [queue, indicators]);
 
-        // 3. Resolve Assignee Names for fallback
-        let resolvedAssigneeNames = "";
-        const assigneeData = qItem.assignee || parentIndicator?.assignee;
-        if (assigneeData) {
-          const ids = Array.isArray(assigneeData) ? assigneeData : [assigneeData];
-          const names = ids
-            .map((id) => users.find((u) => String(u._id) === String(id))?.name)
-            .filter(Boolean);
-          resolvedAssigneeNames = names.join(", ");
-        }
-
-        return {
-          ...qItem,
-          resolvedName: resolvedSubmitterName || resolvedAssigneeNames || "System Registry",
-          currentStatus: qItem.status || parentIndicator?.status || 'Submitted',
-          fullData: parentIndicator 
-        };
-      });
-  }, [queue, indicators, users]);
-
+  // 5. Multi-Layer Filtering
   const filteredQueue = useMemo(() => {
+    const searchLower = searchTerm.toLowerCase();
+    
     return processedQueue.filter((item) => {
-      const searchLower = searchTerm.toLowerCase();
+      // Status Filter Logic
+      const isAwaiting = item.currentStatus.toLowerCase() === 'awaiting super admin';
+      const isFinalized = ['completed', 'partially approved', 'rejected by super admin'].includes(item.currentStatus.toLowerCase());
+      
+      if (statusFilter === "PENDING" && !isAwaiting) return false;
+      if (statusFilter === "ARCHIVED" && !isFinalized) return false;
+
+      // Cycle Filter Logic
+      if (cycleFilter === "QUARTERLY" && item.reportingCycle !== "Quarterly") return false;
+      if (cycleFilter === "ANNUAL" && item.reportingCycle !== "Annual") return false;
+
+      // Search Logic
       return (
         item.indicatorTitle?.toLowerCase().includes(searchLower) ||
         item.resolvedName?.toLowerCase().includes(searchLower) ||
         item._id.toLowerCase().includes(searchLower)
       );
     });
-  }, [processedQueue, searchTerm]);
+  }, [processedQueue, searchTerm, statusFilter, cycleFilter]);
 
   const activeIndicator = indicators.find((ind) => ind._id === selectedId);
 
@@ -74,150 +74,194 @@ const SuperAdminSubmissions = () => {
     <div className="p-6 md:p-12 bg-[#fdfcfc] min-h-screen font-sans">
       
       {/* HEADER SECTION */}
-      <div className="max-w-7xl mx-auto mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-             <div className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
-             <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Live Submissions</span>
+      <div className="max-w-7xl mx-auto mb-10">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+               <div className="w-2 h-2 rounded-full bg-[#c2a336] animate-pulse" />
+               <span className="text-[10px] font-black text-[#c2a336] uppercase tracking-widest">PMMU Certification Authority</span>
+            </div>
+            <h1 className="text-3xl font-black text-[#1d3331] tracking-tighter uppercase">Submissions Audit</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] mt-2">
+              Cross-referencing registry evidence against strategic performance cycles
+            </p>
           </div>
-          <h1 className="text-2xl font-black text-[#1a3a32] tracking-tighter uppercase font-roboto">Submissions Queue</h1>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] mt-2">
-            Evidence awaiting review and approval
-          </p>
+          
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="relative flex-1 md:w-80">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input 
+                type="text"
+                placeholder="Search approved registry..."
+                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-bold outline-none shadow-sm focus:ring-2 focus:ring-[#1d3331]/5 transition-all"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <button 
+              onClick={() => { dispatch(fetchSubmissionsQueue()); dispatch(fetchIndicators()); }}
+              className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 shadow-sm transition-all"
+            >
+              <RefreshCcw size={20} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
-        
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-80">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input 
-              type="text"
-              placeholder="Search by ID, Title, or Submitter..."
-              className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs font-bold outline-none shadow-sm focus:ring-2 focus:ring-[#1a3a32]/5 transition-all"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+
+        {/* DOUBLE FILTER ROW */}
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-2 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/60">
+            {[
+              { id: "PENDING", label: "Awaiting Certification" },
+              { id: "ALL", label: "All Items" },
+              { id: "ARCHIVED", label: "Finalized Records" }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setStatusFilter(tab.id as any)}
+                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  statusFilter === tab.id 
+                  ? "bg-[#1d3331] text-white shadow-md" 
+                  : "text-slate-400 hover:text-[#1d3331]"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <button 
-            onClick={() => { dispatch(fetchSubmissionsQueue()); dispatch(fetchIndicators()); }}
-            className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 shadow-sm transition-all active:scale-95"
-          >
-            <RefreshCcw size={20} className={loading ? 'animate-spin' : ''} />
-          </button>
+
+          <div className="flex items-center gap-2 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/60">
+            <button
+              onClick={() => setCycleFilter("ALL")}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all ${cycleFilter === "ALL" ? "bg-white text-[#1d3331] shadow-sm" : "text-slate-400"}`}
+            >
+              All Cycles
+            </button>
+            <button
+              onClick={() => setCycleFilter("QUARTERLY")}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all flex items-center gap-2 ${cycleFilter === "QUARTERLY" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-blue-600"}`}
+            >
+              <Layers size={12} /> Quarterly
+            </button>
+            <button
+              onClick={() => setCycleFilter("ANNUAL")}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all flex items-center gap-2 ${cycleFilter === "ANNUAL" ? "bg-amber-600 text-white shadow-sm" : "text-slate-400 hover:text-amber-600"}`}
+            >
+              <CalendarDays size={12} /> Annual
+            </button>
+          </div>
         </div>
       </div>
 
       {/* TABLE REGISTRY */}
-      <div className="max-w-7xl mx-auto bg-white rounded-[2.5rem] shadow-xl shadow-slate-200/50 overflow-hidden border border-slate-100">
+      <div className="max-w-7xl mx-auto bg-white rounded-[2rem] shadow-xl shadow-slate-200/40 overflow-hidden border border-slate-100">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-96 gap-4">
-            <Loader2 className="animate-spin text-[#1a3a32]" size={40} />
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Synchronizing Data...</p>
+            <Loader2 className="animate-spin text-[#1d3331]" size={40} />
+            <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Synchronizing Audit Records...</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[1000px]">
+            <table className="w-full text-left border-collapse min-w-[1100px]">
               <thead>
-                <tr className="border-b border-slate-50">
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Reporting Cycle</th>
                   <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Submitted By</th>
                   <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Indicator Detail</th>
-                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Evidence</th>
-                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Timeline</th>
-                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Status</th>
-                  <th className="px-8 py-7 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Final Action</th>
+                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dossier</th>
+                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Timestamp</th>
+                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Audit Status</th>
+                  <th className="px-8 py-7 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Registry Access</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredQueue.map((sub) => (
-                  <tr key={sub._id} className="hover:bg-slate-50/50 transition-colors group">
-                    <td className="px-8 py-6">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-[#1a3a32]/5 flex items-center justify-center text-[#1a3a32] border border-[#1a3a32]/10">
-                          {sub.isTeam ? <Users size={16} /> : <User size={16} />}
+                {filteredQueue.map((sub) => {
+                  const isQuarterly = sub.reportingCycle === "Quarterly";
+                  return (
+                    <tr key={sub._id} className="hover:bg-slate-50/30 transition-colors group">
+                      <td className="px-8 py-6">
+                        <div className={`flex items-center gap-2 text-[9px] font-black uppercase tracking-tighter px-3 py-1.5 rounded-lg w-fit ${isQuarterly ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {isQuarterly ? <Layers size={14} /> : <CalendarDays size={14} />}
+                          {isQuarterly ? `Quarter ${sub.quarter || '?'}` : 'Annual'}
                         </div>
-                        <div>
-                          <p className="text-xs font-black text-[#1a3a32] uppercase truncate max-w-[150px]">
-                            {sub.resolvedName}
+                      </td>
+
+                      <td className="px-8 py-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-[#1d3331] text-[#c2a336] flex items-center justify-center text-[10px] font-black border-2 border-white shadow-sm">
+                            {sub.resolvedName.substring(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-xs font-black text-[#1d3331] uppercase truncate max-w-[140px]">
+                              {sub.resolvedName}
+                            </p>
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Authorized Submitter</p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-8 py-6">
+                        <div className="max-w-xs">
+                          <p className="font-bold text-[#1d3331] text-sm leading-tight mb-1 line-clamp-1 group-hover:text-emerald-700 transition-colors">
+                            {sub.indicatorTitle}
                           </p>
-                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
-                            Verified Personnel
-                          </p>
+                          <span className="flex items-center gap-1 text-[9px] font-mono text-slate-400">
+                            <Hash size={10} /> {sub._id.slice(-8).toUpperCase()}
+                          </span>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="px-8 py-6">
-                      <div className="max-w-xs">
-                        <p className="font-bold text-[#1a3a32] text-sm leading-tight mb-1 line-clamp-1 group-hover:text-emerald-800 transition-colors">
-                          {sub.indicatorTitle}
-                        </p>
-                        <span className="flex items-center gap-1 text-[9px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded w-fit">
-                          <Hash size={8} /> {sub._id.slice(-6).toUpperCase()}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-8 py-6 text-center">
-                      <div className="inline-flex flex-col items-center">
-                        <div className="flex items-center gap-1.5 text-[#1a3a32]">
-                          <Files size={14} />
-                          <span className="text-sm font-black">{sub.documentsCount || 0}</span>
+                      <td className="px-8 py-6 text-center">
+                        <div className="inline-flex flex-col items-center">
+                          <div className="flex items-center gap-1.5 text-[#1d3331]">
+                            <Files size={14} className="opacity-40" />
+                            <span className="text-sm font-black">{sub.documentsCount || 0}</span>
+                          </div>
+                          <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">Files</span>
                         </div>
-                        <span className="text-[8px] font-black text-slate-300 uppercase tracking-tighter">Files Attached</span>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="px-8 py-6 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <div className="flex items-center gap-1 text-slate-600 font-bold text-xs">
-                          <Calendar size={12} className="text-slate-400" />
-                          {new Date(sub.submittedOn).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                      <td className="px-8 py-6 text-center">
+                        <div className="flex flex-col items-center">
+                          <div className="flex items-center gap-1 text-slate-600 font-bold text-xs uppercase">
+                            {sub.submittedOn ? new Date(sub.submittedOn).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : "---"}
+                          </div>
+                          <span className="text-[9px] text-slate-300 font-black">
+                            {sub.submittedOn ? new Date(sub.submittedOn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                          </span>
                         </div>
-                        <span className="text-[9px] text-slate-400 font-black tracking-widest italic">
-                          {new Date(sub.submittedOn).getFullYear()}
-                        </span>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="px-8 py-6 text-center">
-                       <StatusBadge status={sub.currentStatus} />
-                    </td>
+                      <td className="px-8 py-6 text-center">
+                          <StatusBadge status={sub.currentStatus} />
+                      </td>
 
-                    <td className="px-8 py-6 text-right">
-                      <button 
-                        onClick={() => setSelectedId(sub._id)}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-[#1a3a32] text-white text-[9px] font-black uppercase tracking-[0.15em] rounded-xl hover:bg-emerald-900 transition-all shadow-lg shadow-[#1a3a32]/10 group-hover:translate-x-1"
-                      >
-                        Examine Dossier <ArrowRight size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="px-8 py-6 text-right">
+                        <button 
+                          onClick={() => setSelectedId(sub._id)}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#1d3331] text-white text-[9px] font-black uppercase tracking-[0.15em] rounded-xl hover:bg-black transition-all shadow-md group-hover:px-6"
+                        >
+                          Verify Evidence <ArrowRight size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          </div>
-        )}
-        
-        {filteredQueue.length === 0 && !loading && (
-          <div className="py-24 text-center">
-            <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 border border-dashed border-slate-200">
-               <Files className="text-slate-200" size={32} />
-            </div>
-            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">Queue Fully Cleared</h3>
-            <p className="text-[10px] text-slate-300 font-bold uppercase">No pending submissions require certification.</p>
           </div>
         )}
       </div>
 
       {/* MODAL DRAWER OVERLAY */}
       {selectedId && activeIndicator && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-[#1a3a32]/60 backdrop-blur-md animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-50 flex justify-end bg-[#1d3331]/40 backdrop-blur-sm transition-opacity">
           <div className="absolute inset-0" onClick={() => setSelectedId(null)} />
-          <div className="relative w-100 md:max-w-5xl h-full bg-white animate-in slide-in-from-right duration-500 shadow-2xl border-l-8 border-[#1a3a32]">
-             <IndicatorsPageIdModal 
-               indicator={activeIndicator} 
-               allStaff={users || []} 
-               onClose={() => setSelectedId(null)} 
-             />
+          <div className="relative w-full max-w-4xl h-full bg-white shadow-2xl border-l-[12px] border-[#c2a336] animate-in slide-in-from-right duration-500">
+               <IndicatorsPageIdModal 
+                 indicator={activeIndicator} 
+                 allStaff={users || []} 
+                 onClose={() => setSelectedId(null)} 
+               />
           </div>
         </div>
       )}
@@ -228,25 +272,36 @@ const SuperAdminSubmissions = () => {
 /* --- SUB-COMPONENTS --- */
 
 const StatusBadge = ({ status }: { status: string }) => {
+  const s = status?.toLowerCase();
+  
   const config: any = {
-    'Submitted': { 
-      label: 'To Review', 
-      style: 'bg-amber-50 text-amber-700 border-amber-200',
-      dot: 'bg-amber-500' 
+    'awaiting super admin': { 
+      label: 'Admin Verified', 
+      style: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      dot: 'bg-emerald-500' 
     },
-    'Awaiting Super Admin': { 
-      label: 'Cert. Pending', 
-      style: 'bg-blue-50 text-blue-700 border-blue-200',
-      dot: 'bg-blue-500' 
-    }
+    'completed': { 
+      label: 'Finalized', 
+      style: 'bg-[#1d3331]/10 text-[#1d3331] border-[#1d3331]/20',
+      dot: 'bg-[#1d3331]' 
+    },
+    'rejected by super admin': { 
+      label: 'Returned to Registry', 
+      style: 'bg-red-50 text-red-700 border-red-200',
+      dot: 'bg-red-500' 
+    },
+    'awaiting admin approval': { 
+        label: 'Staff Draft', 
+        style: 'bg-slate-50 text-slate-500 border-slate-200',
+        dot: 'bg-slate-300' 
+      }
   };
   
-  // Default to a basic style if status is unexpected
-  const item = config[status] || config['Submitted'];
+  const item = config[s] || { label: status, style: 'bg-slate-50 text-slate-600 border-slate-200', dot: 'bg-slate-400' };
   
   return (
     <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[8px] font-black border tracking-widest uppercase shadow-sm ${item.style}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${item.dot} animate-pulse`} />
+      <span className={`w-1 h-1 rounded-full ${item.dot}`} />
       {item.label}
     </span>
   );

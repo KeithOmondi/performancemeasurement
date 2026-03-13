@@ -2,32 +2,37 @@ import {
   createSlice,
   createAsyncThunk,
   type PayloadAction,
-  type ActionReducerMapBuilder,
 } from "@reduxjs/toolkit";
 import { api } from "../../api/axios";
+import { getAllStrategicPlans } from "./strategicPlan/strategicPlanSlice";
 
 /* ---------------- TYPES ---------------- */
 
+export interface IDocument {
+  evidenceUrl: string;
+  evidencePublicId: string;
+  fileType: "image" | "video" | "raw";
+  fileName?: string;
+}
+
 export interface ISubmission {
   _id: string;
-  quarter: 1 | 2 | 3 | 4;
-  evidenceUrl?: string;
-  evidencePublicId?: string;
-  fileType?: "image" | "video" | "raw";
+  // 🔹 Update: Now accepts 0 for Annual
+  quarter: 0 | 1 | 2 | 3 | 4; 
+  documents: IDocument[];
   notes: string;
   submittedAt: string;
   achievedValue: number;
   isReviewed: boolean;
   reviewStatus: "Pending" | "Accepted" | "Rejected";
   adminComment?: string;
-  submittedBy: string;
-  resubmissionCount?: number;
+  resubmissionCount: number;
 }
 
 export interface IReviewHistory {
-  _id: string;
-  action: string;
+  action: "Approved" | "Rejected" | "Verified" | "Resubmitted" | "Correction Requested";
   reason: string;
+  reviewerRole: "admin" | "superadmin" | "user";
   reviewedBy: string | { _id: string; name: string };
   at: string;
 }
@@ -44,311 +49,232 @@ export interface IIndicator {
   unit: string;
   target: number;
   deadline: string;
+  indicatorTitle?: string; 
   submissions: ISubmission[];
   reviewHistory: IReviewHistory[];
+  currentTotalAchieved: number;
+  progress: number;
+  // 🔹 Update: Now accepts 0 for Annual
+  activeQuarter: 0 | 1 | 2 | 3 | 4; 
   status:
-    | "Active"
     | "Pending"
-    | "Partially Complete"
-    | "Submitted"
+    | "Awaiting Admin Approval"
     | "Rejected by Admin"
     | "Awaiting Super Admin"
-    | "Reviewed";
+    | "Rejected by Super Admin"
+    | "Partially Approved"
+    | "Completed";
   instructions?: string;
   assignedBy: any;
   perspective?: string;
   objectiveTitle?: string;
   activityDescription?: string;
   assigneeDisplayName?: string;
-  progress: number;
-  isResubmission?: boolean;
+  needsAction?: boolean;
 }
 
 export interface IQueueItem {
   _id: string;
   indicatorTitle: string;
   submittedBy: string;
-  isTeam: boolean;
-  documentsCount: number;
   submittedOn: string;
   status: string;
-  latestSubmission: ISubmission;
-  assignee?: string | string[];
+  progress: number;
+  // 🔹 Changed to string/number to handle "Annual" vs "Q1" labels from backend
+  quarter: string | number; 
+  documentsCount?: number;
+  documents?: any[]; 
+  activityDescription?: string;
 }
-
-/* ---------------- HELPER ---------------- */
-
-const getErrorMessage = (error: unknown, defaultMsg: string) =>
-  (error as any)?.response?.data?.message || defaultMsg;
 
 /* ---------------- THUNKS ---------------- */
 
-// 1. Fetch all indicators
+const getErrorMessage = (error: any) =>
+  error.response?.data?.message || "Internal Server Error";
+
 export const fetchIndicators = createAsyncThunk<IIndicator[], void>(
   "indicators/fetchAll",
-  async (_, thunkAPI) => {
+  async (_, { rejectWithValue }) => {
     try {
       const res = await api.get("/indicators");
       return res.data.data;
-    } catch (error) {
-      return thunkAPI.rejectWithValue(
-        getErrorMessage(error, "Failed to fetch indicators"),
-      );
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
-// 2. Fetch submissions queue
 export const fetchSubmissionsQueue = createAsyncThunk<IQueueItem[], void>(
   "indicators/fetchQueue",
-  async (_, thunkAPI) => {
+  async (_, { rejectWithValue }) => {
     try {
       const res = await api.get("/indicators/submissions/queue");
       return res.data.data;
-    } catch (error) {
-      return thunkAPI.rejectWithValue(
-        getErrorMessage(error, "Failed to fetch queue"),
-      );
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
-// 3. NEW: Fetch Indicators specifically rejected by Admin
-export const fetchRejectedOversight = createAsyncThunk<IIndicator[], void>(
-  "indicators/fetchRejected",
-  async (_, thunkAPI) => {
-    try {
-      const res = await api.get("/indicators/rejected-by-admin");
-      return res.data.data;
-    } catch (error) {
-      return thunkAPI.rejectWithValue(
-        getErrorMessage(error, "Failed to fetch rejected list"),
-      );
-    }
-  },
-);
-
-// 4. Initial/Admin Review (Supports Progress Override)
-export const processAdminReview = createAsyncThunk<
+export const processReview = createAsyncThunk<
   IIndicator,
   {
     id: string;
     reviewData: {
       decision: "Approved" | "Rejected";
       reason: string;
-      reviewerRole: string;
       progressOverride?: number;
     };
   }
->("indicators/processReview", async ({ id, reviewData }, thunkAPI) => {
-  try {
-    const res = await api.patch(`/indicators/${id}/review`, reviewData);
-    return res.data.data;
-  } catch (error) {
-    return thunkAPI.rejectWithValue(
-      getErrorMessage(error, "Failed to process review"),
-    );
+>(
+  "indicators/processReview",
+  async ({ id, reviewData }, { dispatch, rejectWithValue }) => {
+    try {
+      const res = await api.patch(`/indicators/${id}/review`, reviewData);
+      dispatch(getAllStrategicPlans());
+      return res.data.data;
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
   }
-});
+);
 
-// 5. Final Super Admin Decision
-export const submitSuperAdminDecision = createAsyncThunk<
+export const superAdminDecision = createAsyncThunk<
   IIndicator,
-  { 
-    id: string; 
-    decisionData: { 
-      decision: "Approve" | "Reject"; 
-      reason: string; 
-      progressOverride?: number;
-      nextDeadline?: string; // <--- ADD THIS LINE
-    } 
+  {
+    id: string;
+    decisionData: {
+      decision: "Approved" | "Rejected";
+      reason: string;
+    };
   }
 >(
   "indicators/superAdminDecision",
-  async ({ id, decisionData }, thunkAPI) => {
+  async ({ id, decisionData }, { dispatch, rejectWithValue }) => {
     try {
-      // The backend will now receive nextDeadline in the request body
       const res = await api.post(`/indicators/super-admin/decision/${id}`, decisionData);
+      dispatch(getAllStrategicPlans());
       return res.data.data;
-    } catch (error) {
-      return thunkAPI.rejectWithValue(getErrorMessage(error, "Failed to finalize decision"));
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
     }
   }
 );
 
-// 6. Standard CRUD & Submission Thunks
-export const createIndicator = createAsyncThunk<
-  IIndicator,
-  Partial<IIndicator>
->("indicators/create", async (data, thunkAPI) => {
-  try {
-    const res = await api.post("/indicators", data);
-    return res.data.data;
-  } catch (error) {
-    return thunkAPI.rejectWithValue(
-      getErrorMessage(error, "Failed to create indicator"),
-    );
-  }
+export const createIndicator = createAsyncThunk<IIndicator, Partial<IIndicator>>(
+  "indicators/create", 
+  async (data, { dispatch, rejectWithValue }) => {
+    try {
+      const res = await api.post("/indicators", data);
+      dispatch(getAllStrategicPlans());
+      return res.data.data;
+    } catch (err) { return rejectWithValue(getErrorMessage(err)); }
 });
 
-export const submitProgress = createAsyncThunk<
-  IIndicator,
-  { id: string; submission: any }
->("indicators/submitProgress", async ({ id, submission }, thunkAPI) => {
-  try {
-    const config =
-      submission instanceof FormData
-        ? { headers: { "Content-Type": "multipart/form-data" } }
-        : {};
-    const res = await api.post(`/indicators/${id}/submit`, submission, config);
-    return res.data.data;
-  } catch (error) {
-    return thunkAPI.rejectWithValue(
-      getErrorMessage(error, "Failed to submit progress"),
-    );
-  }
-});
-
-export const updateIndicator = createAsyncThunk<
-  IIndicator,
-  { id: string; updateData: any }
->("indicators/update", async ({ id, updateData }, thunkAPI) => {
-  try {
-    const res = await api.patch(`/indicators/${id}`, updateData);
-    return res.data.data;
-  } catch (error) {
-    return thunkAPI.rejectWithValue(getErrorMessage(error, "Update failed"));
-  }
+export const updateIndicator = createAsyncThunk<IIndicator, { id: string; data: Partial<IIndicator> }>(
+  "indicators/update", 
+  async ({ id, data }, { dispatch, rejectWithValue }) => {
+    try {
+      const res = await api.patch(`/indicators/${id}`, data);
+      dispatch(getAllStrategicPlans());
+      return res.data.data;
+    } catch (err) { return rejectWithValue(getErrorMessage(err)); }
 });
 
 export const deleteIndicator = createAsyncThunk<string, string>(
-  "indicators/delete",
-  async (id, thunkAPI) => {
+  "indicators/delete", 
+  async (id, { dispatch, rejectWithValue }) => {
     try {
       await api.delete(`/indicators/${id}`);
+      dispatch(getAllStrategicPlans());
       return id;
-    } catch (error) {
-      return thunkAPI.rejectWithValue(
-        getErrorMessage(error, "Failed to delete indicator"),
-      );
-    }
-  },
-);
+    } catch (err) { return rejectWithValue(getErrorMessage(err)); }
+});
 
 /* ---------------- SLICE ---------------- */
 
 interface IndicatorState {
   indicators: IIndicator[];
   queue: IQueueItem[];
-  rejectedOversight: IIndicator[]; // New list for Super Admin oversight
   loading: boolean;
-  isReviewing: boolean;
-  createLoading: boolean;
+  actionLoading: boolean;
   error: string | null;
 }
 
 const initialState: IndicatorState = {
   indicators: [],
   queue: [],
-  rejectedOversight: [],
   loading: false,
-  isReviewing: false,
-  createLoading: false,
+  actionLoading: false,
   error: null,
 };
-
+ 
 const indicatorSlice = createSlice({
   name: "indicators",
   initialState,
   reducers: {
-    clearIndicatorError: (state) => {
-      state.error = null;
-    },
+    clearIndicatorError: (state) => { state.error = null; },
   },
-  extraReducers: (builder: ActionReducerMapBuilder<IndicatorState>) => {
+  extraReducers: (builder) => {
     builder
-      /* --- 1. CASES --- */
-      .addCase(fetchIndicators.pending, (state) => {
-        state.loading = true;
-      })
       .addCase(fetchIndicators.fulfilled, (state, action) => {
         state.loading = false;
         state.indicators = action.payload;
       })
-      .addCase(fetchIndicators.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
-      })
-
       .addCase(fetchSubmissionsQueue.fulfilled, (state, action) => {
-        state.loading = false;
         state.queue = action.payload;
       })
-
-      .addCase(fetchRejectedOversight.fulfilled, (state, action) => {
-        state.loading = false;
-        state.rejectedOversight = action.payload;
-      })
-
-      .addCase(createIndicator.fulfilled, (state, action) => {
-        state.createLoading = false;
-        state.indicators.unshift(action.payload);
-      })
-
       .addCase(deleteIndicator.fulfilled, (state, action) => {
-        state.indicators = state.indicators.filter(
-          (i) => i._id !== action.payload,
-        );
-        state.queue = state.queue.filter((i) => i._id !== action.payload);
-        state.rejectedOversight = state.rejectedOversight.filter(
-          (i) => i._id !== action.payload,
-        );
+          state.indicators = state.indicators.filter((i) => i._id !== action.payload);
+          state.queue = state.queue.filter((q) => q._id !== action.payload);
       })
 
-      /* --- 2. MATCHERS --- */
+      .addMatcher(
+        (action) => action.type.endsWith("/fulfilled"),
+        (state, action: PayloadAction<any>) => {
+          if (action.payload?._id && !Array.isArray(action.payload)) {
+            const updated = action.payload as IIndicator;
 
-      // Global Review Logic
-      .addMatcher(
-        (action: any) =>
-          [
-            processAdminReview.fulfilled.type,
-            submitSuperAdminDecision.fulfilled.type,
-          ].includes(action.type),
-        (state, action: PayloadAction<IIndicator>) => {
-          state.isReviewing = false;
-          // Clean up all possible lists where this indicator might reside
-          state.queue = state.queue.filter((q) => q._id !== action.payload._id);
-          state.rejectedOversight = state.rejectedOversight.filter(
-            (r) => r._id !== action.payload._id,
-          );
+            const index = state.indicators.findIndex((i) => i._id === updated._id);
+            if (index !== -1) { 
+              state.indicators[index] = updated; 
+            } else { 
+              state.indicators.unshift(updated); 
+            }
 
-          const index = state.indicators.findIndex(
-            (i) => i._id === action.payload._id,
-          );
-          if (index !== -1) state.indicators[index] = action.payload;
-        },
+            const stillAwaitingReview = [
+              "Awaiting Admin Approval",
+              "Awaiting Super Admin",
+            ].includes(updated.status);
+
+            if (!stillAwaitingReview) {
+              state.queue = state.queue.filter((q) => q._id !== updated._id);
+            } else {
+              const qIndex = state.queue.findIndex((q) => q._id === updated._id);
+              if (qIndex !== -1) {
+                state.queue[qIndex] = {
+                  ...state.queue[qIndex],
+                  progress: updated.progress,
+                  status: updated.status,
+                  // 🔹 Handling the label mapping for the queue
+                  quarter: updated.activeQuarter === 0 ? "Annual" : `Q${updated.activeQuarter}`,
+                };
+              }
+            }
+          }
+          state.loading = false;
+          state.actionLoading = false;
+        }
       )
-      .addMatcher(
-        (action: any) =>
-          action.type.endsWith("/pending") && action.type.includes("Review"),
-        (state) => {
-          state.isReviewing = true;
-        },
-      )
-      // Generic Update/Submit Success
-      .addMatcher(
-        (action: any) =>
-          [
-            submitProgress.fulfilled.type,
-            updateIndicator.fulfilled.type,
-          ].includes(action.type),
-        (state, action: PayloadAction<IIndicator>) => {
-          const index = state.indicators.findIndex(
-            (i) => i._id === action.payload._id,
-          );
-          if (index !== -1) state.indicators[index] = action.payload;
-        },
-      );
+      .addMatcher((action) => action.type.endsWith("/pending"), (state, action) => {
+        if (!action.type.includes("fetch")) state.actionLoading = true;
+        state.error = null;
+      })
+      .addMatcher((action) => action.type.endsWith("/rejected"), (state, action: any) => {
+        state.loading = false;
+        state.actionLoading = false;
+        state.error = action.payload || "An error occurred";
+      });
   },
 });
 

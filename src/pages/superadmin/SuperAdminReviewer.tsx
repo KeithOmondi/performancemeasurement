@@ -1,19 +1,32 @@
-import { useState, useEffect, useMemo } from 'react';
-import { 
-  Loader2, Search, RefreshCcw, Hourglass, 
-  XCircle, Users,
-  ArrowUpRight, CheckCircle2
-} from 'lucide-react';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { fetchSubmissionsQueue, fetchIndicators } from '../../store/slices/indicatorSlice';
+import { useState, useEffect, useMemo } from "react";
+import {
+  Loader2,
+  Search,
+  RefreshCcw,
+  Hourglass,
+  XCircle,
+  Users,
+  ArrowUpRight,
+  CheckCircle2,
+  FileText,
+  ShieldCheck,
+} from "lucide-react";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import {
+  fetchSubmissionsQueue,
+  fetchIndicators,
+} from "../../store/slices/indicatorSlice";
 
 const SuperAdminReviewer = () => {
   const dispatch = useAppDispatch();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filter, setFilter] = useState<'ALL' | 'Pending' | 'Rejected' | 'Forwarded'>('ALL');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filter, setFilter] = useState<"ALL" | "Pending" | "Rejected" | "Verified">("ALL");
 
-  const { queue = [], indicators = [], loading } = useAppSelector((state) => state.indicators);
-  const { users = [] } = useAppSelector((state) => state.users);
+  const {
+    queue = [],
+    indicators = [],
+    loading,
+  } = useAppSelector((state) => state.indicators);
 
   useEffect(() => {
     dispatch(fetchSubmissionsQueue());
@@ -21,209 +34,245 @@ const SuperAdminReviewer = () => {
   }, [dispatch]);
 
   const derivedData = useMemo(() => {
-    const enrichedQueue = queue.map(qItem => {
-      const parentIndicator = indicators.find(ind => ind._id === qItem._id);
-      const assigneeData = qItem.assignee || parentIndicator?.assignee;
-      let resolvedName = "Registry User";
-      
-      if (assigneeData) {
-        const ids = Array.isArray(assigneeData) ? assigneeData : [assigneeData];
-        const names = ids
-          .map(id => users.find(u => String(u._id) === String(id))?.name)
-          .filter(Boolean);
-        if (names.length > 0) resolvedName = names.join(", ");
-      }
+    // 1. ENRICH THE QUEUE (For Table Display)
+    const enrichedQueue = queue.map((qItem) => {
+      const parentIndicator = indicators.find((ind) => ind._id === qItem._id);
 
-      const normalizedStatus = (qItem.status === 'Accepted' || qItem.status === 'Forwarded') 
-        ? 'Forwarded' 
-        : qItem.status;
+      const resolvedName =
+        parentIndicator?.assigneeDisplayName ||
+        qItem.submittedBy ||
+        "System Registry";
+
+      const rawStatus = (parentIndicator?.status || qItem.status || "").toLowerCase();
+      const progress = parentIndicator?.progress ?? qItem.progress ?? 0;
+
+      let displayStatus: "Pending" | "Rejected" | "Verified" = "Pending";
+      
+      if (rawStatus.includes("rejected")) {
+        displayStatus = "Rejected";
+      } else if (
+        ["completed", "verified", "approved", "partially approved"].includes(rawStatus)
+      ) {
+        displayStatus = "Verified";
+      } else {
+        displayStatus = "Pending";
+      }
 
       return {
         ...qItem,
         resolvedName,
-        normalizedStatus,
-        progress: parentIndicator?.progress || 0,
-        cycle: parentIndicator?.reportingCycle || 'Quarterly',
-        assignmentType: parentIndicator?.assignmentType || 'User'
+        displayStatus,
+        progress,
+        rawStatus: parentIndicator?.status || qItem.status,
+        cycle: parentIndicator?.reportingCycle || "Quarterly",
+        assignmentType: parentIndicator?.assignmentType || "User",
       };
     });
 
+    // 2. GLOBAL METRICS (Synced with Dashboard Logic)
     const metrics = {
-      awaiting: enrichedQueue.filter(item => item.normalizedStatus === 'Pending').length,
-      rejected: enrichedQueue.filter(item => item.normalizedStatus === 'Rejected').length,
-      forwarded: enrichedQueue.filter(item => item.normalizedStatus === 'Forwarded').length,
+      // Awaiting is purely what's currently in the submission queue
+      awaiting: queue.length,
+      
+      // Rejected and Verified are calculated from the total Indicators pool
+      rejected: indicators.filter((ind) => 
+        ind.status?.toLowerCase().includes("rejected")
+      ).length,
+
+      verified: indicators.filter((ind) => 
+        ["completed", "verified", "approved", "partially approved"].includes(ind.status?.toLowerCase())
+      ).length,
     };
 
-    const filteredList = enrichedQueue.filter(item => {
+    // 3. FILTERING & SEARCH
+    const filteredList = enrichedQueue.filter((item) => {
       const searchLower = searchTerm.toLowerCase();
-      const matchesSearch = 
-        (item.indicatorTitle?.toLowerCase().includes(searchLower)) || 
-        (item.resolvedName?.toLowerCase().includes(searchLower));
-      
-      const matchesFilter = filter === 'ALL' || item.normalizedStatus === filter;
+      const matchesSearch =
+        item.indicatorTitle?.toLowerCase().includes(searchLower) ||
+        item.resolvedName?.toLowerCase().includes(searchLower);
+
+      const matchesFilter = filter === "ALL" || item.displayStatus === filter;
       return matchesSearch && matchesFilter;
     });
 
     return { ...metrics, filteredList };
-  }, [queue, indicators, users, searchTerm, filter]);
+  }, [queue, indicators, searchTerm, filter]);
+
+  const handleRefresh = () => {
+    dispatch(fetchSubmissionsQueue());
+    dispatch(fetchIndicators());
+  };
 
   return (
     <div className="p-4 md:p-8 bg-[#fcfcf7] min-h-screen font-sans text-[#1a2c2c]">
-      {/* 🔹 HEADER */}
-      <div className="flex flex-col md:flex-row md:justify-between items-start mb-8 gap-6">
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row md:justify-between items-start mb-10 gap-6">
         <div>
-          <h1 className="text-3xl font-serif font-bold text-[#1d3331] mb-1">Reviewer Dashboard</h1>
-          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
-            Live view of submissions at each stage of your review workflow
-          </p>
+          <h1 className="text-4xl font-serif font-bold text-[#1d3331] mb-2">
+            Reviewer Dashboard
+          </h1>
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-2 h-2 rounded-full bg-emerald-500 ${loading ? "animate-pulse" : ""}`}
+            />
+            <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">
+              Judicial Oversight & Verification Queue
+            </p>
+          </div>
         </div>
-        <div className="flex gap-3 w-full md:w-auto">
-          <button 
-            onClick={() => { dispatch(fetchSubmissionsQueue()); dispatch(fetchIndicators()); }}
-            className="p-3 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-all shadow-sm active:scale-95"
-          >
-            <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="p-4 bg-white border-2 border-slate-100 rounded-2xl text-[#1d3331] hover:bg-slate-50 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+        >
+          <RefreshCcw size={20} className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
 
-      {/* 🔹 METRIC GRID (MATCHING REFERENCE IMAGE) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-        <MetricCard 
-          title="Awaiting My Review" 
-          value={derivedData.awaiting} 
-          accentColor="border-yellow-500" 
-          textColor="text-yellow-700"
+      {/* METRIC GRID */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+        <MetricCard
+          title="Awaiting Review"
+          value={derivedData.awaiting}
+          color="amber"
+          icon={<Hourglass size={20} />}
         />
-        <MetricCard 
-          title="Rejected by Reviewer" 
-          value={derivedData.rejected} 
-          accentColor="border-red-800" 
-          textColor="text-red-800"
+        <MetricCard
+          title="Rejected Dossiers"
+          value={derivedData.rejected}
+          color="red"
+          icon={<XCircle size={20} />}
         />
-        <MetricCard 
-          title="Forwarded to Registrar" 
-          value={derivedData.forwarded} 
-          accentColor="border-[#1d3331]" 
-          textColor="text-[#1d3331]"
+        <MetricCard
+          title="Verified Records"
+          value={derivedData.verified}
+          color="emerald"
+          icon={<ShieldCheck size={20} />}
         />
       </div>
 
-      {/* 🔹 TOOLBAR (FILTER & SEARCH) */}
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-8">
-        <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0">
-          <FilterChip 
-            active={filter === 'ALL'} 
-            label="All" 
-            onClick={() => setFilter('ALL')} 
+      {/* TOOLBAR */}
+      <div className="flex flex-col lg:flex-row gap-6 items-center justify-between mb-8">
+        <div className="flex gap-2 p-1 bg-slate-100/50 rounded-xl w-full lg:w-auto overflow-x-auto">
+          <FilterChip active={filter === "ALL"} label="All Records" onClick={() => setFilter("ALL")} />
+          <FilterChip
+            active={filter === "Pending"}
+            label="Pending"
+            icon={<Hourglass size={14} />}
+            onClick={() => setFilter("Pending")}
+            color="amber"
           />
-          <FilterChip 
-            active={filter === 'Pending'} 
-            label="Awaiting Review" 
-            icon={<Hourglass size={14} className="text-yellow-600" />}
-            onClick={() => setFilter('Pending')} 
-            color="amber" 
+          <FilterChip
+            active={filter === "Rejected"}
+            label="Rejected"
+            icon={<XCircle size={14} />}
+            onClick={() => setFilter("Rejected")}
+            color="red"
           />
-          <FilterChip 
-            active={filter === 'Rejected'} 
-            label="Rejected" 
-            icon={<XCircle size={14} className="text-red-600" />}
-            onClick={() => setFilter('Rejected')} 
-            color="red" 
-          />
-          <FilterChip 
-            active={filter === 'Forwarded'} 
-            label="Forwarded to Registrar" 
-            icon={<CheckCircle2 size={14} className="text-blue-600" />}
-            onClick={() => setFilter('Forwarded')} 
-            color="blue" 
+          <FilterChip
+            active={filter === "Verified"}
+            label="Verified"
+            icon={<CheckCircle2 size={14} />}
+            onClick={() => setFilter("Verified")}
+            color="emerald"
           />
         </div>
-        
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-          <input 
-            type="text" 
-            placeholder="Search indicator or contributor..." 
-            className="w-full pl-12 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-slate-300 transition-all shadow-sm"
+
+        <div className="relative w-full lg:w-96 group">
+          <Search
+            className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-[#1d3331] transition-colors"
+            size={18}
+          />
+          <input
+            type="text"
+            placeholder="Search indicator or contributor..."
+            className="w-full pl-14 pr-6 py-4 bg-white border-2 border-slate-50 rounded-2xl text-xs font-bold outline-none focus:border-[#1d3331]/20 transition-all shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
       </div>
 
-      {/* 🔹 DATA TABLE */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden min-h-[400px]">
+      {/* DATA TABLE */}
+      <div className="bg-white rounded-[2rem] shadow-[0_15px_40px_rgba(0,0,0,0.03)] border border-slate-100 overflow-hidden min-h-[500px]">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-50/50 border-b border-slate-100">
               <tr>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Contributor</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400">Indicator Asset</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Progress</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Audit Status</th>
-                <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Action</th>
+                <th className="pl-10 pr-6 py-7 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 text-center">Assignee</th>
+                <th className="px-6 py-7 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Indicator Asset</th>
+                <th className="px-6 py-7 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 text-center">Progress</th>
+                <th className="px-6 py-7 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 text-center">Status</th>
+                <th className="pr-10 pl-6 py-7 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 text-right">Action</th>
               </tr>
             </thead>
-            
+
             <tbody className="divide-y divide-slate-50">
-              {loading ? (
+              {loading && derivedData.filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-24 text-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <Loader2 className="animate-spin text-[#1d3331] mb-4" size={32} />
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Loading Records...</p>
-                    </div>
+                  <td colSpan={5} className="py-32 text-center">
+                    <Loader2 className="animate-spin text-[#1d3331] mx-auto mb-4" size={40} strokeWidth={1} />
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Synchronizing Registry...</p>
                   </td>
                 </tr>
               ) : derivedData.filteredList.length > 0 ? (
                 derivedData.filteredList.map((item) => (
-                  <tr key={item._id} className="hover:bg-slate-50/30 transition-colors group">
-                    <td className="px-8 py-5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-[#1d3331] text-white flex items-center justify-center text-[10px] font-bold">
-                          {item.assignmentType === 'Team' ? <Users size={14} /> : item.resolvedName.substring(0,2).toUpperCase()}
+                  <tr key={item._id} className="hover:bg-slate-50/50 transition-all group">
+                    <td className="pl-10 pr-6 py-7">
+                      <div className="flex flex-col items-center">
+                        <div className="w-10 h-10 rounded-xl bg-[#1d3331] text-white flex items-center justify-center mb-2 shadow-lg shadow-[#1d3331]/20">
+                          {item.assignmentType === "Team" ? <Users size={18} /> : <FileText size={18} />}
                         </div>
-                        <div>
-                          <p className="text-xs font-bold text-[#1a3a32] uppercase">{item.resolvedName}</p>
-                          <p className="text-[9px] text-slate-400 font-bold">{item.assignmentType === 'Team' ? 'Team' : 'Specialist'}</p>
+                        <p className="text-[11px] font-black text-[#1a3a32] uppercase truncate max-w-[120px] text-center">
+                          {item.resolvedName}
+                        </p>
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-7">
+                      <div className="max-w-md">
+                        <p className="font-serif font-bold text-[#1d3331] text-base leading-snug mb-1 line-clamp-2">
+                          {item.indicatorTitle}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-black text-slate-300 uppercase tracking-tighter">ID: {item._id.slice(-6).toUpperCase()}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-200" />
+                          <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">{item.cycle}</span>
                         </div>
                       </div>
                     </td>
 
-                    <td className="px-8 py-5 max-w-sm">
-                      <p className="text-sm font-bold text-[#1d3331] leading-snug line-clamp-1">{item.indicatorTitle}</p>
-                      <p className="text-[10px] text-slate-400 font-medium">{item.cycle} Cycle</p>
-                    </td>
-
-                    <td className="px-8 py-5">
-                      <div className="flex flex-col items-center gap-1.5">
-                        <span className="text-[10px] font-bold text-[#1d3331]">{Math.round(item.progress)}%</span>
-                        <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-[#1d3331]" style={{ width: `${item.progress}%` }} />
+                    <td className="px-6 py-7">
+                      <div className="flex flex-col items-center gap-2">
+                        <span className={`text-xs font-black ${item.progress === 100 ? 'text-emerald-600' : 'text-[#1d3331]'}`}>
+                          {Math.round(item.progress)}%
+                        </span>
+                        <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-1000 ${item.progress === 100 ? 'bg-emerald-500' : 'bg-emerald-600'}`}
+                            style={{ width: `${item.progress}%` }}
+                          />
                         </div>
                       </div>
                     </td>
 
-                    <td className="px-8 py-5 text-center">
-                      <StatusBadge status={item.normalizedStatus} />
+                    <td className="px-6 py-7 text-center">
+                      <StatusBadge status={item.displayStatus} rawStatus={item.rawStatus} progress={item.progress} />
                     </td>
 
-                    <td className="px-8 py-5 text-right">
-                      <button className="inline-flex items-center gap-2 px-4 py-2 bg-[#1d3331] text-white text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-[#2c4c48] transition-all shadow-sm active:scale-95 group-hover:shadow-md">
-                        Audit <ArrowUpRight size={14} />
+                    <td className="pr-10 pl-6 py-7 text-right">
+                      <button className="inline-flex items-center gap-2 px-6 py-3.5 bg-[#1d3331] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#2c4c48] transition-all shadow-lg shadow-[#1d3331]/10 group-hover:-translate-x-1">
+                        Audit Dossier <ArrowUpRight size={16} />
                       </button>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="py-24 text-center">
-                    <div className="flex flex-col items-center justify-center py-10">
-                      <RefreshCcw size={32} className="text-slate-100 mb-4" />
-                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.2em]">
-                        No records found in this stage
-                      </p>
+                  <td colSpan={5} className="py-32 text-center">
+                    <div className="flex flex-col items-center">
+                      <FileText size={24} className="text-slate-200 mb-4" />
+                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em]">No records match the current criteria</p>
                     </div>
                   </td>
                 </tr>
@@ -238,47 +287,57 @@ const SuperAdminReviewer = () => {
 
 /* --- SHARED COMPONENTS --- */
 
-const MetricCard = ({ title, value, accentColor, textColor }: any) => (
-  <div className={`bg-white p-8 rounded-2xl border-l-[6px] ${accentColor} shadow-sm flex flex-col justify-center h-32`}>
-    <span className={`text-5xl font-serif font-bold ${textColor}`}>
-      {value}
-    </span>
-    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-      {title}
-    </span>
-  </div>
-);
+const MetricCard = ({ title, value, color, icon }: any) => {
+  const colors = {
+    amber: "border-amber-400 text-amber-600 bg-amber-50/50",
+    red: "border-red-700 text-red-800 bg-red-50/50",
+    emerald: "border-[#1d3331] text-[#1d3331] bg-emerald-50/30",
+  };
+  return (
+    <div className={`bg-white p-8 rounded-[2rem] border-b-4 shadow-[0_10px_30px_rgba(0,0,0,0.02)] flex items-center justify-between ${colors[color as keyof typeof colors]}`}>
+      <div>
+        <span className="text-4xl font-serif font-bold block mb-1">{value}</span>
+        <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{title}</span>
+      </div>
+      <div className="p-4 rounded-2xl bg-current/5 opacity-80">{icon}</div>
+    </div>
+  );
+};
 
 const FilterChip = ({ active, label, icon, onClick, color }: any) => {
-  const activeStyles = color === 'amber' 
-    ? 'bg-yellow-50 text-yellow-700 border-yellow-200' 
-    : color === 'red' 
-    ? 'bg-red-50 text-red-700 border-red-200' 
-    : color === 'blue'
-    ? 'bg-blue-50 text-blue-700 border-blue-200'
-    : 'bg-[#1d3331] text-white border-[#1d3331]';
-    
+  const themes = {
+    amber: active ? "bg-amber-500 text-white border-amber-500" : "text-slate-400",
+    red: active ? "bg-red-700 text-white border-red-700" : "text-slate-400",
+    emerald: active ? "bg-[#1d3331] text-white border-[#1d3331]" : "text-slate-400",
+    default: active ? "bg-[#1d3331] text-white border-[#1d3331]" : "text-slate-400",
+  };
+  const theme = color ? themes[color as keyof typeof themes] : themes.default;
   return (
-    <button 
-      onClick={onClick} 
-      className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-[10px] font-bold tracking-widest transition-all ${
-        active ? activeStyles : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
-      }`}
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-6 py-2.5 rounded-lg border text-[10px] font-black tracking-widest transition-all ${active ? theme + " shadow-lg shadow-black/5" : "bg-transparent border-transparent hover:bg-slate-200/50"}`}
     >
       {icon} {label}
     </button>
   );
 };
 
-const StatusBadge = ({ status }: { status: string }) => {
-  const config: any = {
-    'Pending': { label: 'Awaiting Review', style: 'bg-yellow-50 text-yellow-700 border-yellow-100' },
-    'Rejected': { label: 'Rejected', style: 'bg-red-50 text-red-700 border-red-100' },
-    'Forwarded': { label: 'Verified', style: 'bg-blue-50 text-blue-700 border-blue-100' },
+const StatusBadge = ({ status, rawStatus, progress }: { status: "Pending" | "Rejected" | "Verified", rawStatus: string, progress: number }) => {
+  const isAwaitingAction = rawStatus === "Awaiting Super Admin" || rawStatus === "Awaiting Admin Approval";
+  
+  const config = {
+    Pending: { 
+      label: progress === 100 && isAwaitingAction ? "Review Required" : "In Progress", 
+      style: "bg-amber-50 text-amber-700 border-amber-200", 
+      dot: "bg-amber-500" 
+    },
+    Rejected: { label: "Rejected", style: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-600" },
+    Verified: { label: "Verified", style: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-600" },
   };
-  const item = config[status] || config['Pending'];
+  const item = config[status];
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black border ${item.style} uppercase tracking-widest`}>
+    <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-[9px] font-black border ${item.style} uppercase tracking-widest`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${item.dot} ${progress === 100 && isAwaitingAction ? 'animate-ping' : 'animate-pulse'}`} />
       {item.label}
     </span>
   );

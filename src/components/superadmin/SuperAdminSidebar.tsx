@@ -9,6 +9,8 @@ import {
   Users,
   Settings,
   X,
+  Book,
+  Folder,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
@@ -93,6 +95,18 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
       path: "/superadmin/settings",
       icon: <Settings size={18} />,
     },
+    {
+      type: "link",
+      name: "Examiners",
+      path: "/superadmin/examiner",
+      icon: <Book size={18} />,
+    },
+    {
+      type: "link",
+      name: "PMMU Registry",
+      path: "/superadmin/registry",
+      icon: <Folder size={18} />,
+    },
   ];
 
   return (
@@ -127,7 +141,7 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
               <img
                 src="/ORHC LOGO.png"
                 alt="ORHC Logo"
-                className="w-12 h-12 object-contain"
+                className="w-screen h-15 object-contain"
               />
             </div>
           </div>

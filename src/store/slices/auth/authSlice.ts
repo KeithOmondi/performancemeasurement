@@ -9,7 +9,7 @@ interface User {
   id: string;
   name: string;
   email: string;
-  role: "user" | "admin" | "superadmin" | "reviewer";
+  role: "user" | "admin" | "superadmin" | "examiner";
   // Added optional accessToken here in case your backend nests it in the user object
   accessToken?: string; 
 }

@@ -3,10 +3,10 @@ import {
   Search, 
   Loader2,   
   FileText,
-  Target,
   Trophy,
-  ArrowUpRight,
   ShieldCheck,
+  Scale,
+  User,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchMyAssignments, setSelectedIndicator } from "../../store/slices/userIndicatorSlice";
@@ -14,25 +14,23 @@ import { fetchMyAssignments, setSelectedIndicator } from "../../store/slices/use
 const UserApprovals = () => {
   const dispatch = useAppDispatch();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
+  
+  // Access the logged-in user details from your auth slice
+  // Replace 'auth' with your actual auth state slice name if different
+  const { user } = useAppSelector((state) => state.auth); 
+
   const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
   }, [dispatch]);
 
-  /**
-   * UPDATED FILTER LOGIC:
-   * 1. Status must be one of the "Finalized" categories.
-   * 2. Progress must be 100% or higher.
-   * 3. Must match search term.
-   */
   const approvedAssignments = useMemo(() => {
     return myIndicators
       .filter((ind) => {
-        const s = ind.status?.toLowerCase();
-        const isFinalizedStatus = ["reviewed", "awaiting super admin", "approved", "accepted"].includes(s);
+        const s = ind.status;
+        const isFinalizedStatus = s === "Completed" || s === "Partially Approved";
         const isFullyComplete = ind.progress >= 100;
-
         return isFinalizedStatus && isFullyComplete;
       })
       .filter(ind => 
@@ -46,7 +44,7 @@ const UserApprovals = () => {
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
         <Loader2 className="animate-spin text-emerald-600 mb-4" size={40} />
         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 animate-pulse">
-          Fetching Verified Registry...
+          Accessing Verified Registry...
         </p>
       </div>
     );
@@ -57,21 +55,21 @@ const UserApprovals = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
         <div>
-          <h1 className="text-2xl font-bold text-[#1a3a32] tracking-tight flex items-center gap-3">
-            COMPLETED REGISTRY
-            <span className="bg-emerald-600 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-wider">
-              {approvedAssignments.length} Fully Achieved
-            </span>
+          <div className="flex items-center gap-2 mb-1">
+             <div className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+             <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Finalized Records</span>
+          </div>
+          <h1 className="text-3xl font-black text-[#1a3a32] tracking-tighter uppercase">
+            Completed Registry
           </h1>
-          <p className="text-sm text-gray-500 font-medium italic mt-1">Official repository of 100% completed and validated targets.</p>
         </div>
 
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input 
             type="text"
-            placeholder="Search completed records..."
-            className="pl-11 pr-6 py-2.5 bg-white border border-gray-100 rounded-xl text-[11px] font-bold outline-none focus:border-emerald-600 transition-all w-full md:w-80 shadow-sm"
+            placeholder="Filter records..."
+            className="pl-11 pr-6 py-3 bg-white border border-gray-100 rounded-2xl text-[11px] font-bold outline-none focus:ring-4 focus:ring-emerald-600/5 transition-all w-full md:w-80 shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -79,97 +77,102 @@ const UserApprovals = () => {
       </div>
 
       {approvedAssignments.length === 0 ? (
-        <div className="bg-white rounded-[2rem] p-20 text-center border border-dashed border-gray-200">
-          <Trophy className="mx-auto mb-4 text-gray-200" size={48} />
-          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">No 100% Completed Tasks</h2>
-          <p className="text-[10px] text-gray-400 mt-2 uppercase">Tasks move here once fully achieved and verified.</p>
+        <div className="bg-white rounded-[2rem] p-24 text-center border border-dashed border-gray-200 shadow-inner">
+          <Trophy className="mx-auto mb-6 text-gray-100" size={64} />
+          <h2 className="text-sm font-black text-gray-400 uppercase tracking-widest">Archive Empty</h2>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-slate-200/50 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left min-w-[1100px]">
+            <table className="w-full border-collapse text-left min-w-[1300px]">
               <thead>
                 <tr className="bg-[#1a3a32] text-white">
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-[0.15em]">Finalized Activity</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-[0.15em] text-center"><Target size={12} className="inline mr-1"/> Target</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-[0.15em] text-center"><ArrowUpRight size={12} className="inline mr-1"/> Achieved</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-[0.15em] text-center"><Trophy size={12} className="inline mr-1"/> Completion</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-[0.15em]">Verification Log</th>
-                  <th className="px-6 py-4 text-center text-[10px] font-bold uppercase tracking-[0.15em]">Archive</th>
+                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest">Indicator / Activity</th>
+                  <th className="px-4 py-6 text-[9px] font-black uppercase tracking-widest text-center">Perspective</th>
+                  <th className="px-4 py-6 text-[9px] font-black uppercase tracking-widest text-center">Wt.</th>
+                  <th className="px-4 py-6 text-[9px] font-black uppercase tracking-widest text-center">Unit</th>
+                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest">Assignee</th>
+                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest text-center">Progress</th>
+                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest text-center">Status</th>
+                  <th className="px-6 py-6 text-right text-[9px] font-black uppercase tracking-widest">Dossier</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {approvedAssignments.map((indicator) => {
-                  const lastReview = [...(indicator.reviewHistory || [])]
-                    .reverse()
-                    .find(h => h.action.toLowerCase().includes("review") || h.action.toLowerCase().includes("accept"));
+                {approvedAssignments.map((indicator) => (
+                  <tr key={indicator._id} className="hover:bg-emerald-50/30 transition-colors group">
+                    <td className="px-6 py-5">
+                      <div className="max-w-[300px]">
+                        <p className="text-xs font-bold text-[#1a3a32] leading-tight mb-1">
+                          {indicator.activityDescription}
+                        </p>
+                        <p className="text-[9px] font-black text-emerald-600/60 uppercase tracking-tight">
+                          ID: {indicator._id.slice(-6).toUpperCase()}
+                        </p>
+                      </div>
+                    </td>
 
-                  return (
-                    <tr key={indicator._id} className="hover:bg-gray-50/50 transition-colors group">
-                      <td className="px-6 py-5">
-                        <div className="max-w-xs xl:max-w-md">
-                          <p className="text-[13px] font-semibold text-[#1a3a32] leading-relaxed mb-1">
-                            {indicator.activityDescription}
-                          </p>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
-                            {indicator.objectiveTitle}
-                          </p>
+                    <td className="px-4 py-5 text-center">
+                      <span className="inline-block px-3 py-1 rounded-lg bg-slate-100 text-[#1a3a32] text-[9px] font-black uppercase tracking-tighter border border-slate-200">
+                        {indicator.perspective}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-5 text-center">
+                      <div className="flex flex-col items-center">
+                        <Scale size={12} className="text-slate-300 mb-1" />
+                        <span className="text-xs font-black text-slate-700">{indicator.weight}</span>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-5 text-center">
+                      <span className="text-[10px] font-bold text-slate-500 italic">
+                        {indicator.unit}
+                      </span>
+                    </td>
+
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-[#1a3a32] border border-emerald-200">
+                          <User size={14} />
                         </div>
-                      </td>
+                        <div className="flex flex-col">
+                          {/* DYNAMIC USER NAME FROM AUTH STORE */}
+                          <span className="text-[11px] font-black text-[#1a3a32] uppercase tracking-tighter">
+                            {user?.name || "Registry Officer"}
+                          </span>
+                          
+                        </div>
+                      </div>
+                    </td>
 
-                      <td className="px-6 py-5 text-center">
-                        <span className="text-[11px] font-bold text-slate-500">
-                          {indicator.target} <span className="text-[9px] opacity-70">{indicator.unit}</span>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-[10px] font-black text-emerald-600">{indicator.progress}%</span>
+                        <div className="w-16 h-1 bg-emerald-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 w-full" />
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-5 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <ShieldCheck size={16} className="text-emerald-500" />
+                        <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest leading-none">
+                          {indicator.status}
                         </span>
-                      </td>
+                      </div>
+                    </td>
 
-                      <td className="px-6 py-5 text-center">
-                        <span className="text-[11px] font-bold text-emerald-700">
-                          {indicator.currentTotalAchieved} <span className="text-[9px] opacity-70">{indicator.unit}</span>
-                        </span>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <div className="flex flex-col items-center gap-1.5">
-                          <div className="flex items-center gap-1">
-                             <span className="text-[11px] font-black text-emerald-600">{indicator.progress}%</span>
-                             <Trophy size={12} className="text-amber-500" />
-                          </div>
-                          <div className="w-16 h-1 bg-emerald-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-emerald-500 w-full" />
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600 border border-emerald-100 shadow-sm">
-                            <ShieldCheck size={14} />
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-bold text-slate-700 uppercase">
-                              {lastReview?.reviewedBy?.name || "System Verified"}
-                            </p>
-                            <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-tighter">
-                              Official Record
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <div className="flex justify-center">
-                          <button 
-                            onClick={() => dispatch(setSelectedIndicator(indicator._id))}
-                            className="flex items-center gap-2 px-4 py-1.5 bg-[#1a3a32] text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-md"
-                          >
-                            Full Dossier <FileText size={12} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    <td className="px-6 py-5 text-right">
+                      <button 
+                        onClick={() => dispatch(setSelectedIndicator(indicator._id))}
+                        className="p-2.5 bg-[#1a3a32] text-white rounded-lg hover:bg-emerald-900 transition-all shadow-md group-hover:scale-110"
+                      >
+                        <FileText size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
