@@ -16,7 +16,7 @@ import {
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
   fetchMyAssignments, 
-  setSelectedIndicator,
+  setLocalSelectedIndicator, // Fix: Use the correct exported member
   submitIndicatorProgress, 
   type IIndicatorUI
 } from "../../store/slices/userIndicatorSlice";
@@ -27,12 +27,10 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
   const dispatch = useAppDispatch();
   const { uploading } = useAppSelector((state) => state.userIndicators);
   
-  // Local State
   const [file, setFile] = useState<File | null>(null);
   const [notes, setNotes] = useState("");
   const [achievedValue, setAchievedValue] = useState<number>(0);
 
-  // Identify the specific rejected record to correct
   const rejectedSub = useMemo(() => 
     [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected"),
     [indicator]
@@ -68,6 +66,8 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
 
   if (!rejectedSub) return null;
 
+  const periodDisplay = rejectedSub.quarter === 0 ? "Annual Cycle" : `Quarter ${rejectedSub.quarter}`;
+
   return (
     <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-[#0c1a16]/80 backdrop-blur-sm" onClick={onClose} />
@@ -75,13 +75,12 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
         <header className="p-8 border-b flex justify-between items-center bg-slate-50/50">
           <div>
             <h2 className="text-xl font-black text-[#1a3a32] uppercase tracking-tight">Correction Protocol</h2>
-            <p className="text-[10px] font-bold text-rose-500 uppercase mt-1">Registry Re-submission • Quarter {rejectedSub.quarter}</p>
+            <p className="text-[10px] font-bold text-rose-500 uppercase mt-1">Registry Re-submission • {periodDisplay}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20} /></button>
         </header>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-          {/* AUDIT FEEDBACK */}
           <div className="p-5 bg-rose-50 border border-rose-100 rounded-[1.5rem] relative">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle size={14} className="text-rose-500" />
@@ -93,7 +92,6 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-             {/* VALUE CORRECTION */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 <TrendingUp size={14}/> Corrected Value ({indicator.unit})
@@ -107,18 +105,16 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
               />
             </div>
             
-            {/* QUARTER INFO (READ ONLY) */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                 Target Period
               </label>
               <div className="w-full p-4 bg-slate-100/50 border border-slate-100 rounded-2xl text-sm font-black text-slate-400">
-                Quarter {rejectedSub.quarter}
+                {periodDisplay}
               </div>
             </div>
           </div>
 
-          {/* CLARIFICATION */}
           <div className="space-y-3">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
               <MessageSquare size={14}/> Corrective Remarks
@@ -132,7 +128,6 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
             />
           </div>
 
-          {/* EVIDENCE UPLOAD */}
           <div className="space-y-3">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
               <Upload size={14}/> Updated Evidence (Optional)
@@ -151,7 +146,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
           <button 
             disabled={uploading} 
             type="submit" 
-            className="w-full bg-[#1a3a32] text-white py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-xl hover:bg-black transition-all disabled:opacity-50"
+            className="w-full bg-[#1a3a32] text-white py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-xl hover:bg-black transition-all disabled:opacity-50 active:scale-[0.98]"
           >
             {uploading ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={18} />}
             Commit Correction
@@ -228,6 +223,7 @@ const UserRejections = () => {
           rejectedIndicators.map((indicator) => {
             const isViewingHistory = historyViewId === indicator._id;
             const rejectedSub = [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected");
+            const periodText = rejectedSub?.quarter === 0 ? "Annual" : `Quarter ${rejectedSub?.quarter}`;
 
             return (
               <div 
@@ -267,8 +263,8 @@ const UserRejections = () => {
                     <div className="flex flex-col lg:flex-row gap-8 lg:items-center">
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-4">
-                           <span className="bg-rose-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-rose-500/20">Rejected</span>
-                           <span className="text-[9px] font-black text-slate-300 uppercase">Quarter {rejectedSub?.quarter} Assignment</span>
+                            <span className="bg-rose-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-rose-500/20">Rejected</span>
+                            <span className="text-[9px] font-black text-slate-300 uppercase">{periodText} Cycle</span>
                         </div>
                         <h3 className="text-xl font-black text-slate-900 leading-tight mb-2">{indicator.activityDescription}</h3>
                         <p className="text-[9px] font-bold text-[#c2a336] uppercase tracking-widest">{indicator.objectiveTitle}</p>
@@ -286,7 +282,7 @@ const UserRejections = () => {
 
                       <div className="flex flex-col sm:flex-row lg:flex-col gap-3">
                         <button 
-                          onClick={() => dispatch(setSelectedIndicator(indicator._id))} 
+                          onClick={() => dispatch(setLocalSelectedIndicator(indicator._id))} 
                           className="px-8 bg-[#1a3a32] text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-3 shadow-xl active:scale-95"
                         >
                           <RotateCcw size={16} /> Resolve
@@ -310,7 +306,7 @@ const UserRejections = () => {
       {currentIndicator && (
         <ResubmissionModal 
           indicator={currentIndicator} 
-          onClose={() => dispatch(setSelectedIndicator(""))} 
+          onClose={() => dispatch(setLocalSelectedIndicator(""))} 
         />
       )}
     </div>

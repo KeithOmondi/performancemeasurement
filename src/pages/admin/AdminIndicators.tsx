@@ -4,7 +4,7 @@ import {
   Search, 
   UserCheck,  
   LayoutGrid,
-  MapPin
+  MapPin,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
@@ -12,7 +12,7 @@ import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import {
   fetchAllAdminIndicators,
   getIndicatorByIdAdmin,
-  clearSelectedIndicator,
+  setSelectedIndicator,
 } from "../../store/slices/adminIndicatorSlice";
 import AdminIndicatorModal from "./AdminIndicatorModal";
 
@@ -22,13 +22,15 @@ const AdminIndicators = () => {
   const { plans, loading: plansLoading } = useAppSelector((state) => state.strategicPlan);
   const {
     allAssignments,
-    pendingReview,
+    pendingAdminReview,      // Registry specific
+    pendingSuperAdminReview, // Super Admin specific
     isLoading: adminIndicatorsLoading,
     selectedIndicator,
   } = useAppSelector((state) => state.adminIndicators);
 
+  // LOGIC UPDATE: Toggle between specific workload pools
+  const [viewMode, setViewMode] = useState<"ALL" | "REGISTRY" | "SUPER_ADMIN">("ALL");
   const [activeFilter, setActiveFilter] = useState("ALL");
-  const [viewMode, setViewMode] = useState<"ALL" | "PENDING">("ALL");
   const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
@@ -46,11 +48,14 @@ const AdminIndicators = () => {
     loadRegistryData();
   }, [dispatch]);
 
-  // Map activities to their assignments (IAdminIndicator) from the slice
+  // Map activities to their assignments based on the selected queue pool
   const indicatorMap = useMemo(() => {
-    const pool = viewMode === "ALL" ? allAssignments : pendingReview;
-    return new Map(pool.map((ind) => [String(ind.activityId), ind]));
-  }, [allAssignments, pendingReview, viewMode]);
+    let pool = allAssignments;
+    if (viewMode === "REGISTRY") pool = pendingAdminReview;
+    if (viewMode === "SUPER_ADMIN") pool = pendingSuperAdminReview;
+
+    return new Map(pool.map((ind: any) => [String(ind.activityId), ind]));
+  }, [allAssignments, pendingAdminReview, pendingSuperAdminReview, viewMode]);
 
   const filterStats = useMemo(() => {
     const counts: Record<string, number> = { ALL: allAssignments.length };
@@ -72,7 +77,9 @@ const AdminIndicators = () => {
           .map((obj: any) => {
             const filteredActivities = obj.activities.filter((act: any) => {
               const assignment = indicatorMap.get(String(act._id));
-              if (viewMode === "PENDING" && !assignment) return false;
+              
+              // Only show items that exist in the currently selected pool
+              if (viewMode !== "ALL" && !assignment) return false;
 
               const searchLower = searchTerm.toLowerCase();
               return (
@@ -129,17 +136,23 @@ const AdminIndicators = () => {
               className="pl-11 pr-6 py-3 bg-white border border-slate-200 rounded-2xl text-[11px] font-bold w-full md:w-[320px] outline-none transition-all"
             />
           </div>
+          
+          {/* UPDATED: Queue Toggles with original button styling */}
           <div className="flex bg-slate-100 p-1 rounded-2xl">
             <button onClick={() => setViewMode("ALL")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "ALL" ? "bg-white text-[#1a3a32] shadow-sm" : "text-slate-400"}`}>
               Workload
             </button>
-            <button onClick={() => setViewMode("PENDING")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "PENDING" ? "bg-white text-orange-600 shadow-sm" : "text-slate-400"}`}>
-              Queue ({pendingReview.length})
+            <button onClick={() => setViewMode("REGISTRY")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "REGISTRY" ? "bg-white text-orange-600 shadow-sm" : "text-slate-400"}`}>
+              Audit ({pendingAdminReview.length})
+            </button>
+            <button onClick={() => setViewMode("SUPER_ADMIN")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === "SUPER_ADMIN" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400"}`}>
+              Certify ({pendingSuperAdminReview.length})
             </button>
           </div>
         </div>
       </div>
 
+      {/* Filter Chips */}
       <div className="flex items-center gap-4 mb-10 overflow-x-auto no-scrollbar pb-2">
         {filters.map((f) => (
           <button
@@ -180,7 +193,7 @@ const AdminIndicators = () => {
                     objective={objective}
                     indicatorMap={indicatorMap}
                     onReview={(id: string) => {
-                        dispatch(clearSelectedIndicator());
+                        dispatch(setSelectedIndicator(null));
                         dispatch(getIndicatorByIdAdmin(id));
                     }}
                   />
@@ -193,9 +206,9 @@ const AdminIndicators = () => {
 
       {selectedIndicator && (
         <div className="fixed inset-0 z-[300] flex justify-end">
-            <div className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm" onClick={() => dispatch(clearSelectedIndicator())} />
+            <div className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm" onClick={() => dispatch(setSelectedIndicator(null))} />
             <div className="relative h-full w-full md:max-w-[800px] bg-white animate-in slide-in-from-right duration-500">
-                <AdminIndicatorModal indicator={selectedIndicator} onClose={() => dispatch(clearSelectedIndicator())} />
+                <AdminIndicatorModal indicator={selectedIndicator} onClose={() => dispatch(setSelectedIndicator(null))} />
             </div>
         </div>
       )}
@@ -203,21 +216,23 @@ const AdminIndicators = () => {
   );
 };
 
+/* --- Sub-component: RETURNING TO ORIGINAL LAYOUT --- */
+
 const ObjectiveSection = ({ perspective, objective, indicatorMap, onReview }: any) => {
   return (
     <>
       <tr className="bg-slate-50/20">
         <td className="px-10 py-8 align-top">
           <div className="flex items-start gap-4">
-             <div className="mt-1 p-1 bg-[#1a3a32] text-white rounded shadow-sm">
+              <div className="mt-1 p-1 bg-[#1a3a32] text-white rounded shadow-sm">
                 <LayoutGrid size={12} />
-             </div>
-             <div>
+              </div>
+              <div>
                 <h3 className="font-black text-[#1a3a32] text-[14px] tracking-tighter leading-tight mb-2">{objective.title}</h3>
                 <span className="text-[8px] font-black uppercase tracking-widest text-[#1a3a32] bg-[#1a3a32]/5 px-2 py-1 rounded border border-[#1a3a32]/10">
                     {objective.activities.length} Tactical Activities
                 </span>
-             </div>
+              </div>
           </div>
         </td>
         <td className="px-6 py-8 align-top">
@@ -237,13 +252,11 @@ const ObjectiveSection = ({ perspective, objective, indicatorMap, onReview }: an
             </td>
             <td className="px-6 py-6"></td>
             <td className="px-6 py-6 text-center text-[11px] font-black text-slate-400">
-                {/* Picked from assignment data (IAdminIndicator) */}
                 {assignment?.weight ? `${assignment.weight}%` : "—"}
             </td>
             <td className="px-6 py-6">
                 <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-tighter">
                   <MapPin size={12} className="text-emerald-600" />
-                  {/* Picked from assigned unit */}
                   {assignment?.unit || "Unallocated"}
                </div>
             </td>
@@ -259,7 +272,13 @@ const ObjectiveSection = ({ perspective, objective, indicatorMap, onReview }: an
               <span className="text-[11px] font-black text-[#1a3a32]">{assignment?.progress || 0}%</span>
             </td>
             <td className="px-6 py-6">
-               <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border ${assignment?.status === "Reviewed" || assignment?.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-50 text-slate-400 border-slate-100"}`}>
+               <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border ${
+                 assignment?.status === "Reviewed" || assignment?.status === "Completed" 
+                 ? "bg-emerald-50 text-emerald-700 border-emerald-100" 
+                 : assignment?.status === "Awaiting Super Admin"
+                 ? "bg-blue-50 text-blue-700 border-blue-100"
+                 : "bg-slate-50 text-slate-400 border-slate-100"
+               }`}>
                  {assignment?.status || "Awaiting"}
                </span>
             </td>

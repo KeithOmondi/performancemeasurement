@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   PlayCircle,
   ShieldCheck,
-  FileText,
   Clock,
   Activity,
   Hash,
@@ -29,7 +28,7 @@ const UserTasks = () => {
     dispatch(fetchMyAssignments());
   }, [dispatch]);
 
-  // Filter: Keep active tasks and flagged corrections. Hide fully completed.
+  // Filter: Keep active tasks and flagged corrections. Hide fully completed terminal states.
   const filteredTasks = useMemo(() => {
     return myIndicators.filter(
       (item: IIndicatorUI) => item.status !== "Completed",
@@ -38,51 +37,50 @@ const UserTasks = () => {
 
   /**
    * 🔄 LIFECYCLE CONFIGURATION
-   * Maps to the backend hierarchy: Admin -> Super Admin (Registry) -> Completed
+   * Maps backend statuses to UI visual states and labels.
    */
   const getLifecycleConfig = (
     status: string,
     activeQuarter: number,
     cycle: "Quarterly" | "Annual",
   ) => {
-    // 🔹 Handle Quarter 0 (Annual) vs Quarterly Labels
     const periodLabel = cycle === "Annual" || activeQuarter === 0 ? "Annual" : `Q${activeQuarter}`;
 
     switch (status) {
       case "Awaiting Admin Approval":
         return {
-          label: "Admin Review",
-          bg: "bg-amber-50 text-amber-700 border-amber-100/50",
+          label: "Registry Audit",
+          bg: "bg-amber-50 text-amber-700 border-amber-100",
           icon: <Clock size={12} />,
         };
 
       case "Awaiting Super Admin":
         return {
-          label: "Registry Audit", // Locked state for final verification
-          bg: "bg-blue-50 text-blue-700 border-blue-100/50",
+          label: "Final Certification",
+          bg: "bg-blue-50 text-blue-700 border-blue-100",
           icon: <ShieldCheck size={12} />,
         };
 
       case "Rejected by Admin":
       case "Rejected by Super Admin":
         return {
-          label: "Correction Requested",
+          label: "Revision Required",
           bg: "bg-rose-50 text-rose-700 border-rose-100",
           icon: <AlertCircle size={12} />,
         };
 
       case "Partially Approved":
         return {
-          label: "Verified Phase",
-          bg: "bg-emerald-50 text-emerald-700 border-emerald-100/50",
+          label: "Phase Verified",
+          bg: "bg-emerald-50 text-emerald-700 border-emerald-100",
           icon: <CheckCircle2 size={12} />,
         };
 
       case "Pending":
       default:
         return {
-          label: `${periodLabel} Open`,
-          bg: "bg-slate-50 text-slate-500 border-slate-200/50",
+          label: `${periodLabel} Window Open`,
+          bg: "bg-slate-50 text-slate-500 border-slate-200",
           icon: <PlayCircle size={12} />,
         };
     }
@@ -110,7 +108,7 @@ const UserTasks = () => {
         <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-gray-200 pb-12">
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-[#c2a336] text-[10px] font-black uppercase tracking-[0.3em]">
-              <Activity size={16} /> Performance Management Unit
+              <Activity size={16} /> Strategic Performance Unit
             </div>
             <h1 className="text-4xl font-black tracking-tighter leading-tight">
               Active{" "}
@@ -118,14 +116,14 @@ const UserTasks = () => {
             </h1>
           </div>
 
-          <div className="bg-[#1a3a32] text-white p-6 rounded-[1rem] shadow-2xl flex items-center gap-8 min-w-[300px] border border-white/5 relative overflow-hidden group">
+          <div className="bg-[#1a3a32] text-white p-6 rounded-2xl shadow-2xl flex items-center gap-8 min-w-[320px] border border-white/5 relative overflow-hidden group">
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
               <ShieldCheck size={80} />
             </div>
             
             <div className="relative z-10">
               <p className="text-[#c2a336] text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-                Indicator Queue
+                Filing Queue
               </p>
               <p className="text-4xl font-black leading-none tracking-tighter">
                 {filteredTasks.length.toString().padStart(2, '0')}
@@ -133,21 +131,20 @@ const UserTasks = () => {
             </div>
             <div className="h-10 w-[1px] bg-white/10 relative z-10" />
             <div className="relative z-10">
-              <p className="text-xl font-black text-[#c2a336] uppercase tracking-tighter">Status: Active</p>
+              <p className="text-sm font-black text-[#c2a336] uppercase tracking-widest">Portal Active</p>
+              <p className="text-[9px] text-white/40 uppercase font-bold">Awaiting Evidence</p>
             </div>
           </div>
         </header>
 
-        <main className="bg-white rounded-[1rem] border border-gray-100 shadow-sm overflow-hidden">
+        <main className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             {filteredTasks.length > 0 ? (
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
                 <thead>
                   <tr className="bg-gray-50/50 border-b border-gray-100">
                     <th className="px-10 py-6 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                      <div className="flex items-center gap-2">
-                        <FileText size={12} /> Strategic Indicator
-                      </div>
+                      Indicator & Strategic Objective
                     </th>
                     <th className="px-4 py-6 text-[9px] font-black text-gray-400 uppercase tracking-widest text-center">
                       Cycle
@@ -172,34 +169,33 @@ const UserTasks = () => {
                     );
                     
                     const isFlagged = item.status.includes("Rejected");
-                    // 🔹 Prevent updating if currently in audit
-                    const isUnderReview = item.status === "Awaiting Admin Approval" || item.status === "Awaiting Super Admin";
+                    const isUnderReview = item.status.startsWith("Awaiting");
 
                     return (
                       <tr
                         key={item._id}
-                        className="group hover:bg-gray-50/80 transition-all cursor-pointer"
+                        className="group hover:bg-emerald-50/30 transition-all cursor-pointer"
                         onClick={() => navigate(`/user/assignments/${item._id}`)}
                       >
                         <td className="px-10 py-7">
-                          <div>
+                          <div className="max-w-md">
                             <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">
                               {item.perspective}
                             </p>
-                            <p className="text-sm font-bold leading-snug group-hover:text-[#c2a336] transition-colors line-clamp-1">
+                            <p className="text-sm font-bold leading-tight group-hover:text-[#1a3a32] transition-colors">
                               {item.objectiveTitle}
                             </p>
                             <div className="flex items-center gap-3 mt-2">
                               <div className="flex items-center gap-1 opacity-40">
                                 <Hash size={10} />
                                 <span className="text-[9px] font-black uppercase">
-                                  REF-{item._id.slice(-6).toUpperCase()}
+                                  ID: {item._id.slice(-6).toUpperCase()}
                                 </span>
                               </div>
                               {isFlagged && (
-                                <div className="flex items-center gap-1 text-rose-600 animate-pulse">
+                                <div className="flex items-center gap-1 text-rose-600 bg-rose-50 px-2 py-0.5 rounded text-[8px] font-black uppercase animate-pulse border border-rose-100">
                                   <RotateCcw size={10} />
-                                  <span className="text-[9px] font-black uppercase">Requires Action</span>
+                                  <span>Revision Required</span>
                                 </div>
                               )}
                             </div>
@@ -209,7 +205,7 @@ const UserTasks = () => {
                         <td className="px-4 py-7 text-center">
                           <span className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${
                             item.reportingCycle === 'Annual' 
-                              ? 'bg-indigo-50 text-indigo-600 border-indigo-100' 
+                              ? 'bg-blue-50 text-blue-600 border-blue-100' 
                               : 'bg-gray-100 text-gray-500 border-gray-200'
                           }`}>
                             {item.reportingCycle}
@@ -217,7 +213,7 @@ const UserTasks = () => {
                         </td>
 
                         <td className="px-4 py-7 text-center">
-                          <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-[9px] font-black uppercase tracking-widest shadow-sm transition-transform group-hover:scale-105 ${lifecycle.bg}`}>
+                          <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all group-hover:shadow-md ${lifecycle.bg}`}>
                             {lifecycle.icon}
                             {lifecycle.label}
                           </div>
@@ -225,16 +221,16 @@ const UserTasks = () => {
 
                         <td className="px-4 py-7">
                           <div className="flex items-center gap-4">
-                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div
-                                className={`h-full rounded-full transition-all duration-1000 ${
-                                    isFlagged ? 'bg-rose-500' : 'bg-[#1a3a32]'
-                                } group-hover:bg-[#c2a336]`}
-                                style={{ width: `${item.progress}%` }}
+                                className={`h-full transition-all duration-1000 ease-out ${
+                                    isFlagged ? 'bg-rose-500' : 'bg-emerald-600'
+                                }`}
+                                style={{ width: `${Math.min(item.progress, 100)}%` }}
                               />
                             </div>
-                            <span className="text-[11px] font-black tabular-nums">
-                              {item.progress}%
+                            <span className="text-[10px] font-black tabular-nums text-gray-400">
+                              {Math.round(item.progress)}%
                             </span>
                           </div>
                         </td>
@@ -242,14 +238,14 @@ const UserTasks = () => {
                         <td className="px-10 py-7 text-right">
                           <button 
                             disabled={isUnderReview}
-                            className={`p-3 rounded-2xl border transition-all inline-flex items-center gap-3 group/btn hover:shadow-xl ${
+                            className={`p-3 rounded-xl border transition-all inline-flex items-center gap-3 group/btn ${
                               isUnderReview 
                               ? "bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed" 
-                              : "bg-slate-50 text-[#1a3a32] border-slate-100 hover:bg-[#1a3a32] hover:text-white hover:shadow-[#1a3a32]/20"
+                              : "bg-white text-[#1a3a32] border-gray-200 hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32] hover:shadow-lg"
                             }`}
                           >
                             <span className="text-[10px] font-black uppercase tracking-widest">
-                              {isUnderReview ? "In Audit" : isFlagged ? "Resolve" : "Update"}
+                              {isUnderReview ? "In Audit" : isFlagged ? "Resolve" : "View"}
                             </span>
                             <ArrowUpRight
                               size={14}
@@ -264,14 +260,14 @@ const UserTasks = () => {
               </table>
             ) : (
               <div className="py-40 flex flex-col items-center justify-center text-gray-300">
-                <div className="bg-gray-50 p-10 rounded-[3.5rem] border border-gray-100 mb-8">
-                  <Activity size={64} className="opacity-5" />
+                <div className="bg-gray-50 p-12 rounded-[3rem] border border-gray-100 mb-6">
+                  <Activity size={48} className="opacity-10" />
                 </div>
-                <h3 className="text-sm font-black uppercase tracking-[0.3em] mb-3">
-                  Registry Compliant
+                <h3 className="text-xs font-black uppercase tracking-[0.4em] mb-2 text-gray-400">
+                  Registry Clear
                 </h3>
-                <p className="text-[#8c94a4] text-[10px] font-bold uppercase tracking-[0.2em]">
-                  No active assignments requiring data entry.
+                <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gray-400">
+                  All assigned indicators have been finalized for this cycle.
                 </p>
               </div>
             )}

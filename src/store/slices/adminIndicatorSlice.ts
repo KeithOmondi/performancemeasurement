@@ -7,30 +7,59 @@ import { apiPrivate as api } from "../../api/axios";
 
 /* ---------------- TYPES ---------------- */
 
+export interface ISubmission {
+  _id: string;
+  quarter: number;
+  documents: Array<{
+    evidenceUrl: string;
+    fileType: string;
+    fileName?: string;
+  }>;
+  notes: string;
+  achievedValue: number;
+  // UPDATED: Added 'Verified' to the status enum
+  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected";
+  adminComment?: string;
+  adminDescriptionEdit?: string;
+  submittedAt: string;
+  resubmissionCount: number;
+}
+
 export interface IReviewHistoryEntry {
   _id: string;
-  action: "Approved" | "Rejected" | "Verified" | "Resubmitted" | "Reviewed" | "Correction Requested";
-  reason: string;
+  action:
+    | "Approved"
+    | "Rejected"
+    | "Verified"
+    | "Resubmitted"
+    | "Correction Requested";
   reviewerRole: "admin" | "superadmin" | "user";
   reviewedBy: {
     _id: string;
     name: string;
-    title?: string;
   };
+  reason: string;
   at: string;
 }
 
-export interface ISubmissionReview {
+export interface ISubmissionReviewUpdate {
   submissionId: string;
-  reviewStatus: "Accepted" | "Rejected" | "Pending";
+  // UPDATED: Admin sets 'Verified' or 'Rejected'
+  reviewStatus: "Verified" | "Rejected" | "Pending";
   adminComment?: string;
-  achievedValue?: number;
+  adminDescriptionEdit?: string;
 }
 
-export interface IReviewPayload {
-  status: "Awaiting Super Admin" | "Rejected by Admin";
+export interface IAdminReviewPayload {
+  decision: "Verified" | "Rejected";
   adminOverallComments: string;
-  documentReviews: ISubmissionReview[];
+  submissionUpdates: ISubmissionReviewUpdate[];
+}
+
+export interface ISuperAdminCertifyPayload {
+  decision: "Approved" | "Rejected";
+  reason: string;
+  progressOverride?: number;
 }
 
 export interface IAdminIndicator {
@@ -39,38 +68,30 @@ export interface IAdminIndicator {
   objectiveTitle: string;
   activityDescription: string;
   reportingCycle: "Quarterly" | "Annual";
-  weight: number;
-  unit: string;
-  activityId: string;
-  target: number;
-  deadline: string;
   status:
     | "Pending"
     | "Awaiting Admin Approval"
     | "Rejected by Admin"
     | "Awaiting Super Admin"
     | "Rejected by Super Admin"
-    | "Partially Approved"
     | "Completed";
   progress: number;
   currentTotalAchieved: number;
   assigneeDisplayName: string;
-  assignee?: {
-    _id: string;
-    name: string;
-    role?: string;
-  };
   activeQuarter: number;
-  submissions: any[]; 
+  submissions: ISubmission[];
   reviewHistory: IReviewHistoryEntry[];
   isOverdue: boolean;
   updatedAt: string;
   adminOverallComments?: string;
+  target: number;
+  unit: string;
 }
 
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
-  pendingReview: IAdminIndicator[];
+  pendingAdminReview: IAdminIndicator[]; // For Registry Admin
+  pendingSuperAdminReview: IAdminIndicator[]; // For Super Admin
   resubmittedWork: IAdminIndicator[];
   selectedIndicator: IAdminIndicator | null;
   isLoading: boolean;
@@ -80,7 +101,8 @@ interface IAdminIndicatorState {
 
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
-  pendingReview: [],
+  pendingAdminReview: [],
+  pendingSuperAdminReview: [],
   resubmittedWork: [],
   selectedIndicator: null,
   isLoading: false,
@@ -88,18 +110,29 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
-/* ---------------- HELPER: QUEUE REFRESH ---------------- */
+/* ---------------- HELPERS ---------------- */
 
 const refreshQueues = (state: IAdminIndicatorState) => {
-  // Admin only cares about items awaiting their specific level of review
-  state.pendingReview = state.allAssignments.filter((ind) => 
-    ind.status === "Awaiting Admin Approval"
+  // 1. Queue for Registry Admin (Audit Phase)
+  state.pendingAdminReview = state.allAssignments.filter(
+    (ind) => ind.status === "Awaiting Admin Approval",
+  );
+
+  // 2. Queue for Super Admin (Certification Phase)
+  state.pendingSuperAdminReview = state.allAssignments.filter(
+    (ind) => ind.status === "Awaiting Super Admin",
+  );
+
+  // 3. Resubmissions (Priority items)
+  state.resubmittedWork = state.allAssignments.filter((ind) =>
+    ind.submissions.some(
+      (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending",
+    ),
   );
 };
 
 /* ---------------- ASYNC THUNKS ---------------- */
 
-// Updated paths to include '/indicators' to match the backend router prefix
 export const fetchAllAdminIndicators = createAsyncThunk(
   "adminIndicators/fetchAll",
   async (_, { rejectWithValue }) => {
@@ -107,21 +140,11 @@ export const fetchAllAdminIndicators = createAsyncThunk(
       const response = await api.get(`/admin/all`);
       return response.data?.data || [];
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.message || "Failed to sync registry ledger");
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to sync ledger",
+      );
     }
-  }
-);
-
-export const fetchResubmittedIndicators = createAsyncThunk(
-  "adminIndicators/fetchResubmitted",
-  async (_, { rejectWithValue }) => {
-    try {
-      const response = await api.get(`/admin/resubmitted`);
-      return response.data?.data || [];
-    } catch (error: any) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch resubmissions");
-    }
-  }
+  },
 );
 
 export const getIndicatorByIdAdmin = createAsyncThunk(
@@ -131,21 +154,45 @@ export const getIndicatorByIdAdmin = createAsyncThunk(
       const response = await api.get(`/admin/${id}`);
       return response.data?.data;
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.message || "Indicator record not found");
+      return rejectWithValue(
+        error.response?.data?.message || "Record not found",
+      );
     }
-  }
+  },
 );
 
 export const processAdminReview = createAsyncThunk(
   "adminIndicators/processReview",
-  async ({ id, reviewData }: { id: string; reviewData: IReviewPayload }, { rejectWithValue }) => {
+  async (
+    { id, reviewData }: { id: string; reviewData: IAdminReviewPayload },
+    { rejectWithValue },
+  ) => {
     try {
       const response = await api.patch(`/admin/review/${id}`, reviewData);
       return response.data?.data;
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.message || "Registry review submission failed");
+      return rejectWithValue(
+        error.response?.data?.message || "Review submission failed",
+      );
     }
-  }
+  },
+);
+
+export const certifyPerformanceSuperAdmin = createAsyncThunk(
+  "adminIndicators/certifySuperAdmin",
+  async (
+    { id, certData }: { id: string; certData: ISuperAdminCertifyPayload },
+    { rejectWithValue },
+  ) => {
+    try {
+      const response = await api.patch(`/super-admin/certify/${id}`, certData);
+      return response.data?.data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Certification failed",
+      );
+    }
+  },
 );
 
 /* ---------------- SLICE ---------------- */
@@ -154,11 +201,11 @@ const adminIndicatorSlice = createSlice({
   name: "adminIndicators",
   initialState,
   reducers: {
-    setSelectedIndicator: (state, action: PayloadAction<IAdminIndicator | null>) => {
+    setSelectedIndicator: (
+      state,
+      action: PayloadAction<IAdminIndicator | null>,
+    ) => {
       state.selectedIndicator = action.payload;
-    },
-    clearSelectedIndicator: (state) => {
-      state.selectedIndicator = null;
     },
     clearAdminError: (state) => {
       state.error = null;
@@ -169,57 +216,66 @@ const adminIndicatorSlice = createSlice({
     builder
       .addCase(fetchAllAdminIndicators.pending, (state) => {
         state.isLoading = true;
-        state.error = null;
       })
-      .addCase(fetchAllAdminIndicators.fulfilled, (state, action: PayloadAction<IAdminIndicator[]>) => {
-        state.isLoading = false;
-        state.allAssignments = action.payload;
-        refreshQueues(state);
-      })
-      .addCase(fetchResubmittedIndicators.fulfilled, (state, action: PayloadAction<IAdminIndicator[]>) => {
-        state.resubmittedWork = action.payload;
-      })
-      .addCase(getIndicatorByIdAdmin.fulfilled, (state, action: PayloadAction<IAdminIndicator>) => {
-        state.selectedIndicator = action.payload;
-      })
-      .addCase(processAdminReview.fulfilled, (state, action: PayloadAction<IAdminIndicator>) => {
-        state.isReviewing = false;
-        const updated = action.payload;
-        
-        // Update main list
-        const idx = state.allAssignments.findIndex((i) => i._id === updated._id);
-        if (idx !== -1) state.allAssignments[idx] = updated;
-        
-        // Update detail view if open
-        if (state.selectedIndicator?._id === updated._id) {
-          state.selectedIndicator = updated;
-        }
-        
-        refreshQueues(state);
-      })
+      .addCase(
+        fetchAllAdminIndicators.fulfilled,
+        (state, action: PayloadAction<IAdminIndicator[]>) => {
+          state.isLoading = false;
+          state.allAssignments = action.payload;
+          refreshQueues(state);
+        },
+      )
+      .addCase(
+        getIndicatorByIdAdmin.fulfilled,
+        (state, action: PayloadAction<IAdminIndicator>) => {
+          state.selectedIndicator = action.payload;
+        },
+      )
+      /* Matchers for handling shared logic between Admin and Super Admin updates */
       .addMatcher(
-        (action) => action.type.endsWith("/pending") && action.type.includes("processReview"),
-        (state) => { 
-          state.isReviewing = true; 
-          state.error = null; 
-        }
+        (action) =>
+          action.type.endsWith("/processReview/fulfilled") ||
+          action.type.endsWith("/certifySuperAdmin/fulfilled"),
+        (state, action: PayloadAction<IAdminIndicator>) => {
+          state.isReviewing = false;
+          const updated = action.payload;
+          const idx = state.allAssignments.findIndex(
+            (i) => i._id === updated._id,
+          );
+
+          if (idx !== -1) {
+            state.allAssignments[idx] = updated;
+          } else {
+            state.allAssignments.unshift(updated);
+          }
+
+          if (state.selectedIndicator?._id === updated._id) {
+            state.selectedIndicator = updated;
+          }
+          refreshQueues(state);
+        },
+      )
+      .addMatcher(
+        (action) =>
+          action.type.endsWith("/pending") &&
+          (action.type.includes("processReview") ||
+            action.type.includes("certifySuperAdmin")),
+        (state) => {
+          state.isReviewing = true;
+          state.error = null;
+        },
       )
       .addMatcher(
         (action) => action.type.endsWith("/rejected"),
-        (state, action: any) => { 
-          state.isLoading = false; 
-          state.isReviewing = false; 
-          state.error = action.payload || "An unexpected error occurred."; 
-        }
+        (state, action: any) => {
+          state.isLoading = false;
+          state.isReviewing = false;
+          state.error = action.payload || "Operation failed.";
+        },
       );
   },
 });
 
-export const { 
-  setSelectedIndicator, 
-  clearSelectedIndicator, 
-  clearAdminError,
-  resetAdminState
-} = adminIndicatorSlice.actions;
-
+export const { setSelectedIndicator, clearAdminError, resetAdminState } =
+  adminIndicatorSlice.actions;
 export default adminIndicatorSlice.reducer;

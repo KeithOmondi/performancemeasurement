@@ -9,14 +9,11 @@ import {
   User,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { fetchMyAssignments, setSelectedIndicator } from "../../store/slices/userIndicatorSlice";
+import { fetchMyAssignments, setLocalSelectedIndicator } from "../../store/slices/userIndicatorSlice";
 
 const UserApprovals = () => {
   const dispatch = useAppDispatch();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
-  
-  // Access the logged-in user details from your auth slice
-  // Replace 'auth' with your actual auth state slice name if different
   const { user } = useAppSelector((state) => state.auth); 
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -28,10 +25,11 @@ const UserApprovals = () => {
   const approvedAssignments = useMemo(() => {
     return myIndicators
       .filter((ind) => {
-        const s = ind.status;
-        const isFinalizedStatus = s === "Completed" || s === "Partially Approved";
-        const isFullyComplete = ind.progress >= 100;
-        return isFinalizedStatus && isFullyComplete;
+        // Logic: Only show records that have reached the terminal 'Completed' state
+        // and have been fully certified (progress 100%)
+        const isFinalized = ind.status === "Completed";
+        const isCertified = ind.progress >= 100;
+        return isFinalized && isCertified;
       })
       .filter(ind => 
         ind.activityDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -80,6 +78,7 @@ const UserApprovals = () => {
         <div className="bg-white rounded-[2rem] p-24 text-center border border-dashed border-gray-200 shadow-inner">
           <Trophy className="mx-auto mb-6 text-gray-100" size={64} />
           <h2 className="text-sm font-black text-gray-400 uppercase tracking-widest">Archive Empty</h2>
+          <p className="text-[10px] text-slate-400 mt-2 font-bold uppercase tracking-tight">Verified certifications will appear here</p>
         </div>
       ) : (
         <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-xl shadow-slate-200/50 overflow-hidden">
@@ -93,7 +92,7 @@ const UserApprovals = () => {
                   <th className="px-4 py-6 text-[9px] font-black uppercase tracking-widest text-center">Unit</th>
                   <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest">Assignee</th>
                   <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest text-center">Progress</th>
-                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest text-center">Status</th>
+                  <th className="px-6 py-6 text-[9px] font-black uppercase tracking-widest text-center">Certification</th>
                   <th className="px-6 py-6 text-right text-[9px] font-black uppercase tracking-widest">Dossier</th>
                 </tr>
               </thead>
@@ -136,11 +135,9 @@ const UserApprovals = () => {
                           <User size={14} />
                         </div>
                         <div className="flex flex-col">
-                          {/* DYNAMIC USER NAME FROM AUTH STORE */}
                           <span className="text-[11px] font-black text-[#1a3a32] uppercase tracking-tighter">
                             {user?.name || "Registry Officer"}
                           </span>
-                          
                         </div>
                       </div>
                     </td>
@@ -165,7 +162,7 @@ const UserApprovals = () => {
 
                     <td className="px-6 py-5 text-right">
                       <button 
-                        onClick={() => dispatch(setSelectedIndicator(indicator._id))}
+                        onClick={() => dispatch(setLocalSelectedIndicator(indicator._id))}
                         className="p-2.5 bg-[#1a3a32] text-white rounded-lg hover:bg-emerald-900 transition-all shadow-md group-hover:scale-110"
                       >
                         <FileText size={16} />

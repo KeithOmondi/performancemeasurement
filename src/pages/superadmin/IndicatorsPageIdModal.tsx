@@ -11,12 +11,14 @@ import {
   AlertCircle,
   RotateCcw,
   ShieldCheck,
+  History
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   updateIndicator,
-  superAdminDecision,
+  superAdminReview,
   type IIndicator,
+  type ISubmission
 } from "../../store/slices/indicatorSlice";
 import { fetchRegistryStatus } from "../../store/slices/registrySlice";
 import toast from "react-hot-toast";
@@ -30,7 +32,6 @@ interface Props {
 const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
   const dispatch = useAppDispatch();
   const [activeView, setActiveView] = useState<"audit" | "reassign">("audit");
-
   const isProcessing = useAppSelector((state) => state.indicators.actionLoading);
   
   const [assigneeId, setAssigneeId] = useState<string>("");
@@ -39,56 +40,55 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
   const [progressOverride, setProgressOverride] = useState<number>(0);
   const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
 
+  // Match backend logic: Annual uses 0, Quarterly uses activeQuarter
+  const targetQ = useMemo(() => 
+    indicator.reportingCycle === "Annual" ? 0 : indicator.activeQuarter
+  , [indicator]);
+
+  const { activeSubmission, cycleLabel } = useMemo(() => {
+    const label = indicator.reportingCycle === "Annual" ? "Annual" : `Q${indicator.activeQuarter}`;
+    const submission = indicator.submissions?.find((s: ISubmission) => s.quarter === targetQ);
+    return { activeSubmission: submission || null, cycleLabel: label };
+  }, [indicator, targetQ]);
+
   useEffect(() => {
     dispatch(fetchRegistryStatus());
     const initialId = typeof indicator.assignee === "object" ? indicator.assignee?._id : indicator.assignee;
     setAssigneeId(initialId || "");
     setAllocationDeadline(indicator.deadline ? indicator.deadline.split("T")[0] : "");
-    setProgressOverride(indicator.progress || 0);
-    setSelectedQuarter(indicator.activeQuarter || 1);
-  }, [dispatch, indicator]);
-
-  /**
-   * 🔹 Updated Logic to differentiate between Annual and Quarterly
-   */
-  const { activeSubmission, cycleLabel } = useMemo(() => {
-    const isAnnual = indicator.reportingCycle === "Annual";
-    const label = isAnnual ? "Annual" : `Q${indicator.activeQuarter}`;
-
-    if (!indicator.submissions || indicator.submissions.length === 0) {
-      return { activeSubmission: null, cycleLabel: label };
+    
+    // Default the override to the user's submitted value if it exists
+    if (activeSubmission) {
+      setProgressOverride(activeSubmission.achievedValue);
+    } else {
+      setProgressOverride(indicator.progress || 0);
     }
+    
+    setSelectedQuarter(indicator.activeQuarter || 1);
+  }, [dispatch, indicator, activeSubmission]);
 
-    // For Annual, we look for submissions where quarter is 0 or undefined, 
-    // for Quarterly we match the activeQuarter.
-    const submission = indicator.submissions.find((s) => 
-      isAnnual ? (s.quarter === 0 || !s.quarter) : s.quarter === indicator.activeQuarter
-    );
-
-    return { activeSubmission: submission || null, cycleLabel: label };
-  }, [indicator]);
-
-  const isCertified = indicator.status === "Completed" || activeSubmission?.reviewStatus === "Accepted";
+  const isCertified = activeSubmission?.reviewStatus === "Accepted" || indicator.status === "Completed";
 
   const handleFinalCertification = async (decision: "Approved" | "Rejected") => {
     try {
       if (!decisionReason && decision === "Rejected") {
-        return toast.error("Please provide a reason for rejection.");
+        return toast.error("Please provide an audit narrative for rejection.");
       }
 
       await dispatch(
-        superAdminDecision({
+        superAdminReview({
           id: indicator._id,
-          decisionData: {
+          reviewData: {
             decision,
-            reason: decisionReason || `${cycleLabel} certification completed.`,
+            reason: decisionReason || `${cycleLabel} certification validated.`,
+            progressOverride: progressOverride 
           },
         })
       ).unwrap();
 
       toast.success(decision === "Approved" 
-        ? `${cycleLabel} Certified & Locked` 
-        : "Submission Rejected"
+        ? `${cycleLabel} Performance Certified` 
+        : "Submission Returned for Correction"
       );
       
       onClose();
@@ -105,11 +105,12 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
           data: {
             assignee: assigneeId,
             deadline: allocationDeadline,
-            activeQuarter: selectedQuarter as 1 | 2 | 3 | 4,
+            activeQuarter: indicator.reportingCycle === "Annual" ? 0 : selectedQuarter,
           },
         })
       ).unwrap();
-      toast.success(`Governance Updated: Now active for ${indicator.reportingCycle === 'Annual' ? 'Annual Cycle' : `Q${selectedQuarter}`}`);
+      
+      toast.success(`Governance Parameters Updated`);
       setActiveView("audit");
     } catch (err: any) {
       toast.error(err || "Update failed");
@@ -166,6 +167,7 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
           {activeView === "audit" ? (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
+              {/* STATUS BAR */}
               <div className="flex items-center justify-between bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex items-center gap-4">
                   <div className={`p-3 rounded-xl ${isCertified ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
@@ -174,21 +176,30 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Registry Status</p>
                     <p className="text-xs font-black text-[#1d3331] uppercase">
-                      {isCertified ? "CERTIFIED" : indicator.status} — {cycleLabel}
+                      {isCertified ? "CERTIFIED & LOCKED" : indicator.status} — {cycleLabel}
                     </p>
                   </div>
                 </div>
-                <div className="text-right border-l pl-6 border-slate-100">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Current Lead</p>
-                  <p className="text-xs font-black text-[#1d3331]">{indicator.assigneeDisplayName}</p>
+                <div className="flex gap-8">
+                    <div className="text-right border-l pl-6 border-slate-100">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lead Officer</p>
+                      <p className="text-xs font-black text-[#1d3331]">{indicator.assigneeDisplayName}</p>
+                    </div>
+                    {activeSubmission && (
+                      <div className="text-right border-l pl-6 border-slate-100">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Iterations</p>
+                        <p className="text-xs font-black text-[#1d3331]">{activeSubmission.resubmissionCount || 0} Submissions</p>
+                      </div>
+                    )}
                 </div>
               </div>
 
+              {/* STATS GRID */}
               <div className="grid grid-cols-4 gap-4">
                 {[
                   { label: "Target", val: `${indicator.target}${indicator.unit}`, icon: <Target size={12} /> },
-                  { label: "Aggregate Total", val: `${indicator.currentTotalAchieved}${indicator.unit}`, icon: <CheckCircle2 size={12} /> },
-                  { label: "Progress", val: `${indicator.progress}%`, icon: <div className="h-2 w-2 rounded-full bg-[#c2a336]" /> },
+                  { label: "User Achievement", val: `${activeSubmission?.achievedValue || 0}${indicator.unit}`, icon: <CheckCircle2 size={12} /> },
+                  { label: "Overall Progress", val: `${indicator.progress}%`, icon: <div className="h-2 w-2 rounded-full bg-[#c2a336]" /> },
                   { label: "Deadline", val: allocationDeadline, icon: <Calendar size={12} /> },
                 ].map((stat, i) => (
                   <div key={i} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
@@ -201,13 +212,14 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                 ))}
               </div>
 
+              {/* EVIDENCE SECTION */}
               <section className="space-y-4">
                 <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                  <FileText size={14} className="text-[#c2a336]" /> {cycleLabel} Evidence Logs
+                  <FileText size={14} className="text-[#c2a336]" /> {cycleLabel} Submitted Evidence
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {activeSubmission?.documents?.length ? (
-                    activeSubmission.documents.map((doc: any, i: number) => (
+                    activeSubmission.documents.map((doc, i) => (
                       <a
                         key={i}
                         href={doc.evidenceUrl}
@@ -220,7 +232,7 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                             <FileText size={18} />
                           </div>
                           <div className="flex flex-col">
-                            <span className="text-[11px] font-black text-[#1d3331] uppercase">Artifact {i + 1}</span>
+                            <span className="text-[11px] font-black text-[#1d3331] uppercase">{doc.fileName || `Artifact ${i + 1}`}</span>
                             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{doc.fileType} format</span>
                           </div>
                         </div>
@@ -230,12 +242,23 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                   ) : (
                     <div className="col-span-2 py-12 bg-white border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-slate-400 gap-3">
                        <AlertCircle size={24} className="text-slate-200" />
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em]">No data submitted for {cycleLabel}</p>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em]">Waiting for {cycleLabel} submission</p>
                     </div>
                   )}
                 </div>
               </section>
 
+              {/* USER NOTES BOX */}
+              {activeSubmission?.notes && (
+                <div className="bg-blue-50/50 border border-blue-100 p-6 rounded-2xl">
+                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <History size={12} /> Submitter's Remarks
+                    </p>
+                    <p className="text-xs text-blue-900 font-medium leading-relaxed italic">"{activeSubmission.notes}"</p>
+                </div>
+              )}
+
+              {/* AUDIT PANEL */}
               <div className="bg-[#1d3331] p-10 rounded-3xl shadow-2xl text-white space-y-8 border-b-4 border-[#c2a336]">
                 <div className="flex items-center gap-3">
                     <ShieldCheck size={20} className="text-[#c2a336]" />
@@ -244,30 +267,30 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                   <div className="space-y-4">
-                    <label className="text-[10px] font-black text-[#c2a336] uppercase tracking-[0.2em]">Validated Achievement (%)</label>
+                    <label className="text-[10px] font-black text-[#c2a336] uppercase tracking-[0.2em]">Verified Achievement ({indicator.unit})</label>
                     <div className="relative">
                       <select
                         value={progressOverride}
                         onChange={(e) => setProgressOverride(Number(e.target.value))}
                         disabled={isProcessing || isCertified}
-                        className="w-full appearance-none p-5 bg-black/30 border border-white/10 rounded-xl font-black text-lg text-white outline-none focus:border-[#c2a336] disabled:opacity-50"
+                        className="w-full appearance-none p-5 bg-black/30 border border-white/10 rounded-xl font-black text-lg text-white outline-none focus:border-[#c2a336] disabled:opacity-50 transition-all cursor-pointer"
                       >
                         {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((val) => (
-                          <option key={val} value={val} className="text-black">{val}% Achievement</option>
+                          <option key={val} value={val} className="text-black">{val}{indicator.unit} Verified</option>
                         ))}
                       </select>
-                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-[#c2a336]" size={20} />
+                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-[#c2a336] pointer-events-none" size={20} />
                     </div>
                   </div>
 
                   <div className="space-y-4">
-                    <label className="text-[10px] font-black text-[#c2a336] uppercase tracking-[0.2em]">Audit Narrative</label>
+                    <label className="text-[10px] font-black text-[#c2a336] uppercase tracking-[0.2em]">Audit Narrative (Internal Review)</label>
                     <textarea
                       value={decisionReason}
                       onChange={(e) => setDecisionReason(e.target.value)}
                       disabled={isProcessing || isCertified}
                       className="w-full p-6 bg-black/30 border border-white/10 rounded-xl text-sm font-medium outline-none focus:bg-black/40 min-h-[120px] disabled:opacity-50"
-                      placeholder="Add certification notes or grounds for rejection..."
+                      placeholder="Detail the grounds for this certification decision..."
                     />
                   </div>
                 </div>
@@ -276,30 +299,36 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                   <div className="py-6 px-8 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center gap-4">
                     <CheckCircle2 size={20} className="text-emerald-500" />
                     <p className="text-[11px] font-black text-emerald-500 uppercase tracking-widest">
-                      {indicator.reportingCycle} Cycle Certified & Locked.
+                      {indicator.reportingCycle} Performance Verified & Record Locked.
                     </p>
                   </div>
                 ) : (
                   <div className="flex flex-col md:flex-row gap-4">
                     <button
                       onClick={() => handleFinalCertification("Approved")}
-                      disabled={isProcessing}
-                      className="flex-1 py-5 bg-[#c2a336] text-[#1d3331] rounded-xl font-black text-[11px] uppercase tracking-[0.3em] hover:bg-white transition-all flex items-center justify-center gap-3"
+                      disabled={isProcessing || !activeSubmission}
+                      className="flex-1 py-5 bg-[#c2a336] text-[#1d3331] rounded-xl font-black text-[11px] uppercase tracking-[0.3em] hover:bg-white transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                     >
                       <CheckCircle2 size={18} /> Finalize Certification
                     </button>
                     <button
                       onClick={() => handleFinalCertification("Rejected")}
-                      disabled={isProcessing}
-                      className="px-10 py-5 border border-red-500/50 text-red-500 rounded-xl font-black text-[11px] uppercase tracking-[0.3em] hover:bg-red-500 hover:text-white transition-all flex items-center justify-center gap-3"
+                      disabled={isProcessing || !activeSubmission}
+                      className="px-10 py-5 border border-red-500/50 text-red-500 rounded-xl font-black text-[11px] uppercase tracking-[0.3em] hover:bg-red-500 hover:text-white transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                     >
-                      <RotateCcw size={18} /> Reject Phase
+                      <RotateCcw size={18} /> Return for Correction
                     </button>
                   </div>
+                )}
+                {!activeSubmission && !isCertified && (
+                    <p className="text-[10px] text-center text-white/40 font-bold uppercase tracking-widest italic">
+                        Decision disabled: Waiting for user submission.
+                    </p>
                 )}
               </div>
             </div>
           ) : (
+            /* PHASE GOVERNANCE VIEW */
             <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
               <button onClick={() => setActiveView("audit")} className="flex items-center gap-2 text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:opacity-60 transition-opacity">
                 <ChevronDown size={14} className="rotate-90" /> Return to Audit
@@ -325,7 +354,7 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                     >
                       <option value="">Select Officer</option>
                       {allStaff.map((s) => (
-                        <option key={s._id} value={s._id}>{s.name} — {s.role || 'Personnel'}</option>
+                        <option key={s._id} value={s._id}>{s.name} — {s.groupName || 'Personnel'}</option>
                       ))}
                     </select>
                   </div>
@@ -335,7 +364,7 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                         <label className="text-[10px] font-black text-[#1d3331] uppercase ml-1">Active Reporting Cycle</label>
                         {indicator.reportingCycle === "Annual" ? (
                           <div className="w-full p-5 bg-slate-100 border border-slate-200 rounded-2xl font-black text-xs text-slate-500">
-                             ANNUAL CYCLE
+                               ANNUAL CYCLE
                           </div>
                         ) : (
                           <select
@@ -364,12 +393,12 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
                   <div className="pt-4">
                     <button 
                         onClick={handleUpdateGovernance} 
-                        className="w-full py-4 bg-[#1d3331] text-white rounded-[0.5rem] font-black text-[12px] uppercase tracking-[0.4em] hover:bg-[#c2a336] hover:text-[#1d3331] transition-all shadow-lg"
+                        className="w-full py-4 bg-[#1d3331] text-white rounded-xl font-black text-[12px] uppercase tracking-[0.4em] hover:bg-[#c2a336] hover:text-[#1d3331] transition-all shadow-lg"
                     >
-                        SAVE ASSIGNMENTS
+                        SAVE GOVERNANCE UPDATES
                     </button>
                     <p className="text-[9px] text-center text-slate-400 font-bold uppercase mt-6 tracking-widest px-4 leading-relaxed italic">
-                        Warning: Advancing the cycle or resetting the assignee will transition the status back to 'Pending'.
+                        Note: Updating lead officer or cycle will trigger a fresh review cycle and reset status to 'Pending'.
                     </p>
                   </div>
                 </div>
@@ -383,7 +412,7 @@ const IndicatorsPageIdModal = ({ indicator, allStaff, onClose }: Props) => {
         <div className="absolute inset-0 z-[100] bg-[#1d3331]/95 backdrop-blur-md flex flex-col items-center justify-center gap-6">
           <Loader2 className="animate-spin text-[#c2a336]" size={60} />
           <div className="text-center space-y-2">
-            <span className="text-[11px] font-black text-white uppercase tracking-[0.6em] block">Registry Syncing</span>
+            <span className="text-[11px] font-black text-white uppercase tracking-[0.6em] block">Updating Audit Trail</span>
           </div>
         </div>
       )}

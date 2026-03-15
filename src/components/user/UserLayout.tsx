@@ -8,12 +8,14 @@ const UserLayout = () => {
 
   return (
     <div className="min-h-screen bg-[#fcfcf7] flex">
-      {/* Sidebar - receives state to close itself on mobile */}
+      {/* Sidebar: 
+        Now handles its own Z-index and fixed positioning internally 
+      */}
       <UserSidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 md:ml-64">
-        {/* Header - receives toggle function for hamburger menu */}
+      <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+        {/* Header: Sticky at top-0 */}
         <UserHeader onMenuClick={() => setIsSidebarOpen(true)} />
         
         <main className="p-4 md:p-8 animate-in fade-in duration-500">
@@ -22,14 +24,6 @@ const UserLayout = () => {
           </div>
         </main>
       </div>
-
-      {/* Mobile Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
     </div>
   );
 };

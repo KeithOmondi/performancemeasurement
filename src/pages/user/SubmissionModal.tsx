@@ -12,10 +12,11 @@ import {
 } from "lucide-react";
 import { submitIndicatorProgress } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
+import { type IIndicatorUI, type ISubmissionUI } from "../../store/slices/userIndicatorSlice";
 import toast from "react-hot-toast";
 
 interface SubmissionModalProps {
-  task: any | null;
+  task: IIndicatorUI | null;
   onClose: () => void;
 }
 
@@ -26,9 +27,10 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
   
-  // 🔹 Updated: Default to 0 for Annual, otherwise use activeQuarter
+  // 🔹 Sync with Backend: 0 for Annual, otherwise the current activeQuarter
+  const isAnnual = task?.reportingCycle === "Annual";
   const [selectedQuarter, setSelectedQuarter] = useState<number>(
-    task?.reportingCycle === "Annual" ? 0 : (task?.activeQuarter || 1)
+    isAnnual ? 0 : (task?.activeQuarter || 1)
   );
   
   const [success, setSuccess] = useState(false);
@@ -41,9 +43,9 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [onClose]);
 
-  // 🔹 Updated: Matches the controller's targetQuarter logic
+  // 🔹 Check status of existing submission for the selected period
   const currentPeriodSubmission = useMemo(() => {
-    return task?.submissions?.find((s: any) => s.quarter === selectedQuarter);
+    return task?.submissions?.find((s: ISubmissionUI) => s.quarter === selectedQuarter);
   }, [task, selectedQuarter]);
 
   const isRejected = currentPeriodSubmission?.reviewStatus === "Rejected";
@@ -72,8 +74,10 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     const formData = new FormData();
     files.forEach((file) => formData.append("evidence", file));
     formData.append("notes", notes.trim());
-    // 🔹 Explicitly pass selectedQuarter (0 for Annual, 1-4 for Quarterly)
-    formData.append("quarter", selectedQuarter.toString());
+    
+    // 🔹 The controller uses 'achievedValue' - you might want to add an input for this
+    // For now, we default to the target if it's a simple completion, or 0.
+    formData.append("achievedValue", String(task.target)); 
 
     const result = await dispatch(
       submitIndicatorProgress({ id: task._id, formData }),
@@ -83,8 +87,8 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       setSuccess(true);
       toast.success(
         isRejected
-          ? "Resubmission successful"
-          : "Evidence submitted successfully",
+          ? "Correction submitted to Registry"
+          : "Dossier submitted for Audit",
       );
       setTimeout(() => {
         onClose();
@@ -134,7 +138,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                   Submission Successful
                 </h4>
                 <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mt-1">
-                  Awaiting Registry Audit
+                  Status: Awaiting Admin Approval
                 </p>
               </div>
             </div>
@@ -143,33 +147,33 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
               {isRejected && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl space-y-1">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2">
-                    <AlertCircle size={12} /> Audit Rejection Notes
+                    <AlertCircle size={12} /> Registry Rejection Notes
                   </p>
                   <p className="text-xs text-rose-600 font-medium italic">
-                    "{currentPeriodSubmission?.adminComment || "Please review and resubmit the evidence."}"
+                    "{currentPeriodSubmission?.adminComment || "Audit failed. Please re-verify evidence."}"
                   </p>
                 </div>
               )}
 
-              {/* 🔹 Logic: Only show selector for Quarterly cycles. Annual is implicitly Q0. */}
-              {task.reportingCycle === "Quarterly" ? (
+              {/* Target Period Selector */}
+              {!isAnnual ? (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                    Target Period
+                    Reporting Quarter
                   </label>
                   <div className="grid grid-cols-4 gap-1.5">
                     {[1, 2, 3, 4].map((q) => {
-                      const sub = task.submissions?.find((s: any) => s.quarter === q);
-                      const locked = sub?.reviewStatus === "Pending" || sub?.reviewStatus === "Accepted";
+                      const sub = task.submissions?.find((s) => s.quarter === q);
+                      const isLocked = sub?.reviewStatus === "Pending" || sub?.reviewStatus === "Accepted";
 
                       return (
                         <button
                           key={q}
                           type="button"
-                          disabled={locked}
+                          disabled={isLocked}
                           onClick={() => setSelectedQuarter(q)}
                           className={`py-2.5 rounded-lg text-[10px] font-black transition-all border ${
-                            locked
+                            isLocked
                               ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
                               : selectedQuarter === q
                                 ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-md shadow-emerald-900/10"
@@ -186,15 +190,16 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex items-center justify-between">
                    <div className="flex items-center gap-3">
                       <ShieldCheck className="text-indigo-600" size={18} />
-                      <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">Annual Dossier Open</span>
+                      <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">Annual Reporting Cycle</span>
                    </div>
-                   <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter text-right">Cumulative Record</span>
+                   <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-tighter text-right">Cycle 0</span>
                 </div>
               )}
 
+              {/* Upload Section */}
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  File Attachment
+                  Evidence Documentation
                 </label>
                 <div className="relative group">
                   <input
@@ -212,8 +217,8 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                     />
                     <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
                       {files.length > 0
-                        ? `${files.length} Document(s) Loaded`
-                        : "Upload Registry Evidence"}
+                        ? `${files.length} Files Selected`
+                        : "Upload New Evidence"}
                     </p>
                   </div>
                 </div>
@@ -241,17 +246,18 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 )}
               </div>
 
+              {/* Notes */}
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Achievement Context
+                  Submission Narrative
                 </label>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder={
                     isRejected
-                      ? "Detail the corrections made based on audit findings..."
-                      : "Describe the specific metrics or activities completed..."
+                      ? "Address the audit findings and describe evidence updates..."
+                      : "Describe the specific achievements and context for this period..."
                   }
                   className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[120px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32]"
                 />
@@ -263,7 +269,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
         {/* Footer */}
         <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 flex items-center justify-between shrink-0">
           <p className="text-[8px] font-black text-slate-300 uppercase tracking-[0.2em] hidden sm:block">
-            Judicial Registry Verification
+            Registry Audit Pipeline
           </p>
           <button
             onClick={handleSubmit}
@@ -275,7 +281,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
             ) : (
               <ShieldCheck size={14} />
             )}
-            {isRejected ? "Submit Correction" : "Submit to Registry"}
+            {isRejected ? "Submit Correction" : "Submit for Audit"}
           </button>
         </div>
       </section>
