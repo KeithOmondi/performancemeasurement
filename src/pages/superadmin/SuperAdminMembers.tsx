@@ -64,7 +64,8 @@ const SuperAdminMembers = () => {
       <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-8 gap-4">
         <div className="flex items-center space-x-3">
           <h3 className="text-xl md:text-2xl font-serif font-bold text-[#1d3331]">Team Members</h3>
-          <span className="text-[10px] bg-slate-200 px-2.5 py-1 rounded-full font-bold text-slate-600">
+          <br />
+          <span className="text-[10px] bg-slate-200 px-2.5 py-1 rounded-[0.5rem] font-bold text-slate-600">
             {users.length} staff
             <p>Click a member to view their indicators, upload evidence or send a message</p>
           </span>
