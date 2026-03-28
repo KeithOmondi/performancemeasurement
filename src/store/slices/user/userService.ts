@@ -5,9 +5,14 @@ const getUsers = async () => {
   return response.data.users;
 };
 
-// 🆕 Added Create User Service
 const createUser = async (userData: any) => {
   const response = await apiPrivate.post("/users", userData);
+  return response.data.user;
+};
+
+// 🆕 Update full user details
+const updateUser = async (id: string, userData: any) => {
+  const response = await apiPrivate.put(`/users/${id}`, userData);
   return response.data.user;
 };
 
@@ -25,9 +30,17 @@ const toggleUserActive = async (userData: { id: string; isActive: boolean }) => 
   return response.data.user;
 };
 
+// 🆕 Delete user
+const deleteUser = async (id: string) => {
+  const response = await apiPrivate.delete(`/users/${id}`);
+  return response.data.id; // Return ID for UI filtering
+};
+
 export const userService = { 
   getUsers, 
-  createUser, // 🆕 exported
+  createUser, 
+  updateUser, 
   updateUserRole, 
-  toggleUserActive 
+  toggleUserActive,
+  deleteUser
 };
