@@ -95,10 +95,10 @@ const SuperAdminRegistry = () => {
             <div className="bg-[#1d3331] p-2 rounded-lg shadow-xl shadow-[#1d3331]/20">
               <Archive className="text-[#c2a336]" size={20} />
             </div>
-            <h1 className="text-2xl font-black text-[#1d3331] tracking-tight uppercase">Judicial Registry</h1>
+            <h1 className="text-2xl font-black font-serif text-[#1d3331] tracking-tight uppercase">PMMU Registry</h1>
           </div>
           <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] ml-12">
-            Performance Management & Audit Unit
+            All submitted evidence, filed automatically under each indicator
           </p>
         </div>
 
