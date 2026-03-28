@@ -108,7 +108,7 @@ const SuperAdminReviewer = () => {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:justify-between items-start mb-10 gap-6">
         <div>
-          <h1 className="text-4xl font-serif font-bold text-[#1d3331] mb-2">
+          <h1 className="text-2xl font-serif font-bold text-[#1d3331] mb-2">
             Reviewer Dashboard
           </h1>
           <div className="flex items-center gap-2">
@@ -116,7 +116,7 @@ const SuperAdminReviewer = () => {
               className={`w-2 h-2 rounded-full bg-emerald-500 ${loading ? "animate-pulse" : ""}`}
             />
             <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">
-              Judicial Oversight & Verification Queue
+              JLive view of submissions at each stage of your review workflow
             </p>
           </div>
         </div>
@@ -154,10 +154,10 @@ const SuperAdminReviewer = () => {
       {/* TOOLBAR */}
       <div className="flex flex-col lg:flex-row gap-6 items-center justify-between mb-8">
         <div className="flex gap-2 p-1 bg-slate-100/50 rounded-xl w-full lg:w-auto overflow-x-auto">
-          <FilterChip active={filter === "ALL"} label="All Records" onClick={() => setFilter("ALL")} />
+          <FilterChip active={filter === "ALL"} label="All" onClick={() => setFilter("ALL")} />
           <FilterChip
             active={filter === "Pending"}
-            label="Pending"
+            label="Awaiting Review"
             icon={<Hourglass size={14} />}
             onClick={() => setFilter("Pending")}
             color="amber"
@@ -171,7 +171,7 @@ const SuperAdminReviewer = () => {
           />
           <FilterChip
             active={filter === "Verified"}
-            label="Verified"
+            label="Forwarded to Registrar"
             icon={<CheckCircle2 size={14} />}
             onClick={() => setFilter("Verified")}
             color="emerald"

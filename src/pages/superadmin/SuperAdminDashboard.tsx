@@ -135,7 +135,7 @@ const certifiedCount = useMemo(() =>
             <CheckCircle className="text-emerald-600 mr-6 opacity-20" size={48} />
             <div>
               <span className="text-4xl md:text-5xl font-serif font-bold text-emerald-900 leading-none">{certifiedCount}</span>
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Total Verified Registry Records</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Total Verified Records</p>
             </div>
           </Link>
 
@@ -146,7 +146,7 @@ const certifiedCount = useMemo(() =>
             <AlertCircle className="text-red-800 mr-6 opacity-20" size={48} />
             <div>
               <span className="text-4xl md:text-5xl font-serif font-bold text-red-800 leading-none">{stats?.general?.rejected || 0}</span>
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Returned for Evidence Correction</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Returned for Correction</p>
             </div>
           </Link>
         </div>
@@ -158,11 +158,11 @@ const certifiedCount = useMemo(() =>
         <div className="lg:col-span-8">
           <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
             <div>
-              <h3 className="text-xl font-serif font-bold text-[#1d3331]">Certification Pipeline</h3>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold italic">Latest Pending submissions</p>
+              <h3 className="text-xl font-serif font-bold text-[#1d3331]">Recent Activities</h3>
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold italic">Last 7 dys ccross all team members</p>
             </div>
             <Link to="/superadmin/submissions" className="text-[9px] font-black bg-[#1d3331] text-white px-4 py-2 rounded-lg uppercase tracking-[0.1em] hover:bg-[#c2a336] hover:text-[#1d3331] transition-all shadow-sm flex items-center gap-2">
-              Full Queue <ArrowUpRight size={12} />
+              All <ArrowUpRight size={12} />
             </Link>
           </div>
           
@@ -209,7 +209,7 @@ const cycleLabel = item.quarter === "0" ? "Annual" : `Q${item.quarter}`;
             {queue.length === 0 && (
               <div className="text-center py-12 bg-white rounded-3xl border-2 border-dashed border-slate-100">
                 <Target className="mx-auto text-slate-200 mb-2" size={32} />
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">Certification Pipeline Clear</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">No recent activities</p>
               </div>
             )}
           </div>
@@ -218,8 +218,7 @@ const cycleLabel = item.quarter === "0" ? "Annual" : `Q${item.quarter}`;
         {/* 🔹 PERFORMANCE BY PERSPECTIVE */}
         <div className="lg:col-span-4">
           <div className="mb-6 border-b border-slate-100 pb-4">
-            <h3 className="text-xl font-serif font-bold text-[#1d3331]">Strategic Yield</h3>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold italic">By Strategic Perspective</p>
+            <h3 className="text-xl font-serif font-bold text-[#1d3331]">By Perspective</h3>
           </div>
           <div className="space-y-4">
             {stats?.perspectiveStats?.map((p, idx) => (
@@ -248,13 +247,13 @@ const cycleLabel = item.quarter === "0" ? "Annual" : `Q${item.quarter}`;
       <div className="mt-12 pt-8 border-t border-slate-200">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
           <div className="flex items-center space-x-4">
-            <h3 className="text-2xl font-serif font-bold text-[#1d3331]">Registry Custodians</h3>
+            <h3 className="text-2xl font-serif font-bold text-[#1d3331]">Team Overview</h3>
             <span className="text-[10px] bg-[#1d3331] text-white px-3 py-1 rounded-full font-black uppercase tracking-widest">
               {users.length} Total
             </span>
           </div>
           <Link to="/superadmin/team" className="text-[10px] font-black border-2 border-[#1d3331] text-[#1d3331] px-5 py-2 rounded-xl uppercase tracking-[0.2em] flex items-center hover:bg-[#1d3331] hover:text-white transition-all shadow-sm">
-            MANAGE DIRECTORY <ChevronRight size={14} className="ml-2" />
+            VIEW ALL <ChevronRight size={14} className="ml-2" />
           </Link>
         </div>
 
