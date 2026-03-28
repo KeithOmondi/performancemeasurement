@@ -181,7 +181,7 @@ const SuperAdminMembers = () => {
                 className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm relative group hover:border-[#1d3331]/30 hover:shadow-xl transition-all cursor-pointer active:scale-[0.98] flex flex-col"
               >
                 <div className="flex justify-between items-start mb-6">
-                   <div className="w-14 h-14 rounded-2xl bg-[#1d3331] text-white flex items-center justify-center font-bold text-lg shadow-inner">
+                   <div className="w-15 h-15 rounded-full bg-[#1d3331] text-white flex items-center justify-center font-bold text-lg shadow-inner">
                      {getInitials(member.name)}
                    </div>
                    <div className={`px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-tighter ${getRoleColor(member.role)}`}>
