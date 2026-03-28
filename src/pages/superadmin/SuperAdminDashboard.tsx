@@ -50,9 +50,12 @@ const SuperAdminDashboardPage = () => {
 
   const awaitingReviewCount = queue.length;
 
-  const certifiedCount = useMemo(() => 
-    indicators.filter(ind => ind.status === "Completed" || ind.status === "Partially Approved").length, 
-  [indicators]);
+  
+
+// After — only use statuses that exist in PerformanceStatus ✅
+const certifiedCount = useMemo(() => 
+  indicators.filter(ind => ind.status === "Completed").length, 
+[indicators]);
 
   const getInitials = (name: string) => {
     return name ? name.split(" ").map((n) => n[0]).join("").toUpperCase().substring(0, 2) : "??";

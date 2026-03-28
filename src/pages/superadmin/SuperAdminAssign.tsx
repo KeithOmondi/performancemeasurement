@@ -84,10 +84,10 @@ const SuperAdminAssign = ({ onClose }: { onClose: () => void }) => {
 
     try {
       await dispatch(createIndicator(payload)).unwrap();
-      toast.success(`${reportingCycle} KPI Deployed Successfully`);
+      toast.success(`${reportingCycle} assigned Successfully`);
       onClose();
     } catch (error: any) { 
-      toast.error(error || "Deployment failed"); 
+      toast.error(error || "Failed to update the assignment"); 
     }
   };
 

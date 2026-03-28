@@ -102,7 +102,7 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             <img
               src="/ORHC LOGO.png"
               alt="ORHC"
-              className="w-10 h-10 object-contain"
+              className="h-15 w-50 object-contain"
             />
           </div>
 

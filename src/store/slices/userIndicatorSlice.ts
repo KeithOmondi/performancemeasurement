@@ -3,7 +3,7 @@ import {
   createAsyncThunk,
   type PayloadAction,
 } from "@reduxjs/toolkit";
-import { api } from "../../api/axios";
+import { apiPrivate } from "../../api/axios";
 
 /* ---------------- TYPES ---------------- */
 
@@ -23,16 +23,13 @@ export interface IReviewHistoryEntryUI {
     | "Correction Requested";
   reason: string;
   reviewerRole: "admin" | "superadmin" | "user";
-  reviewedBy?: {
-    _id: string;
-    name: string;
-  };
+  reviewedBy?: { _id: string; name: string };
   at: string;
 }
 
 export interface ISubmissionUI {
   _id: string;
-  quarter: 0 | 1 | 2 | 3 | 4;
+  quarter: 1 | 2 | 3 | 4;
   documents: IDocumentUI[];
   notes: string;
   submittedAt: string;
@@ -68,8 +65,10 @@ export interface IIndicatorUI {
   deadline: string;
   instructions?: string;
   currentTotalAchieved: number;
-  activeQuarter: 0 | 1 | 2 | 3 | 4;
+  activeQuarter: 1 | 2 | 3 | 4;
 }
+
+/* ---------------- STATE ---------------- */
 
 interface UserIndicatorState {
   myIndicators: IIndicatorUI[];
@@ -87,73 +86,6 @@ const initialState: UserIndicatorState = {
   error: null,
 };
 
-/* ---------------- THUNKS ---------------- */
-
-/**
- * Fetches all assigned indicators for the logged-in user
- */
-export const fetchMyAssignments = createAsyncThunk(
-  "userIndicators/fetchAll",
-  async (_, thunkAPI) => {
-    try {
-      const response = await api.get("/user-indicators/my-assignments");
-      return response.data.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to load assignments"
-      );
-    }
-  }
-);
-
-/**
- * Fetches specific details for a single indicator/dossier
- */
-export const fetchIndicatorDetails = createAsyncThunk(
-  "userIndicators/fetchDetails",
-  async (id: string, thunkAPI) => {
-    try {
-      const response = await api.get(`/user-indicators/${id}`);
-      const payload = response.data.data;
-      if (!payload) return thunkAPI.rejectWithValue("Dossier data not found");
-      return payload;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to load registry details"
-      );
-    }
-  }
-);
-
-/**
- * Handles multipart/form-data submission of evidence and progress
- * Dispatches a re-fetch on success to trigger backend hook recalculations
- */
-export const submitIndicatorProgress = createAsyncThunk(
-  "userIndicators/submit",
-  async ({ id, formData }: { id: string; formData: FormData }, thunkAPI) => {
-    try {
-      const response = await api.post(
-        `/user-indicators/${id}/submit`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
-
-      if (response.data.success) {
-        // Sync full state including progress % and status via backend hooks
-        thunkAPI.dispatch(fetchIndicatorDetails(id));
-      }
-      return response.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Submission failed"
-      );
-    }
-  }
-);
-
 /* ---------------- HELPERS ---------------- */
 
 const upsertIndicator = (
@@ -162,19 +94,74 @@ const upsertIndicator = (
 ) => {
   if (!indicator?._id) return;
 
-  // 1. Update list view entry
-  const index = state.myIndicators.findIndex((ind) => ind._id === indicator._id);
+  const index = state.myIndicators.findIndex(
+    (ind) => ind._id === indicator._id
+  );
   if (index !== -1) {
     state.myIndicators[index] = { ...state.myIndicators[index], ...indicator };
   } else {
     state.myIndicators.unshift(indicator);
   }
 
-  // 2. Update active detail view if it matches
   if (state.currentIndicator?._id === indicator._id) {
     state.currentIndicator = { ...state.currentIndicator, ...indicator };
   }
 };
+
+/* ---------------- THUNKS ---------------- */
+
+type SubmitArg = { id: string; formData: FormData };
+
+export const fetchMyAssignments = createAsyncThunk(
+  "userIndicators/fetchAll",
+  async (_: void, thunkAPI) => {
+    try {
+      const response = await apiPrivate.get("/user-indicators/my-assignments");
+      return response.data.data as IIndicatorUI[];
+    } catch (error: any) {
+      return thunkAPI.rejectWithValue(
+        error.response?.data?.message || "Failed to load assignments"
+      );
+    }
+  }
+);
+
+export const fetchIndicatorDetails = createAsyncThunk(
+  "userIndicators/fetchDetails",
+  async (id: string, thunkAPI) => {
+    try {
+      const response = await apiPrivate.get(`/user-indicators/${id}`);
+      if (!response.data.data) {
+        return thunkAPI.rejectWithValue("Indicator data not found");
+      }
+      return response.data.data as IIndicatorUI;
+    } catch (error: any) {
+      return thunkAPI.rejectWithValue(
+        error.response?.data?.message || "Failed to load indicator details"
+      );
+    }
+  }
+);
+
+export const submitIndicatorProgress = createAsyncThunk(
+  "userIndicators/submit",
+  async (arg: SubmitArg, thunkAPI) => {
+    try {
+      const response = await apiPrivate.post(
+        `/user-indicators/${arg.id}/submit`,
+        arg.formData,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      // Re-fetch full indicator so progress % and status are up to date
+      thunkAPI.dispatch(fetchIndicatorDetails(arg.id));
+      return response.data;
+    } catch (error: any) {
+      return thunkAPI.rejectWithValue(
+        error.response?.data?.message || "Submission failed"
+      );
+    }
+  }
+);
 
 /* ---------------- SLICE ---------------- */
 
@@ -200,7 +187,7 @@ const userIndicatorSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      /* Fetch All */
+      // ── Fetch all assignments ────────────────────────────────────────────
       .addCase(fetchMyAssignments.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -212,10 +199,15 @@ const userIndicatorSlice = createSlice({
           state.myIndicators = action.payload || [];
         }
       )
+      .addCase(fetchMyAssignments.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      })
 
-      /* Fetch Details */
+      // ── Fetch single indicator ───────────────────────────────────────────
       .addCase(fetchIndicatorDetails.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(
         fetchIndicatorDetails.fulfilled,
@@ -225,27 +217,24 @@ const userIndicatorSlice = createSlice({
           upsertIndicator(state, action.payload);
         }
       )
+      .addCase(fetchIndicatorDetails.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      })
 
-      /* Submit Evidence */
+      // ── Submit progress ──────────────────────────────────────────────────
       .addCase(submitIndicatorProgress.pending, (state) => {
         state.uploading = true;
         state.error = null;
       })
       .addCase(submitIndicatorProgress.fulfilled, (state) => {
         state.uploading = false;
-        // Data is handled by the fetchIndicatorDetails dispatch in the thunk
+        // Updated data comes in via the fetchIndicatorDetails dispatch in thunk
       })
-
-      /* Global Error Matcher */
-      .addMatcher(
-        (action): action is PayloadAction<string> =>
-          action.type.endsWith("/rejected"),
-        (state, action) => {
-          state.uploading = false;
-          state.loading = false;
-          state.error = (action.payload as string) || "A registry error occurred.";
-        }
-      );
+      .addCase(submitIndicatorProgress.rejected, (state, action) => {
+        state.uploading = false;
+        state.error = action.payload as string;
+      });
   },
 });
 

@@ -56,7 +56,7 @@ const AdminPendingReviews = () => {
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
           <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-3xl font-black text-[#1a3a32] tracking-tighter uppercase leading-none">Audit Queue</h1>
+            <h1 className="text-1xl font-serif font-black text-[#1a3a32] tracking-tighter uppercase leading-none">Audit Queue</h1>
             <div className="flex items-center bg-[#1a3a32] text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
               <span className="w-2 h-2 bg-emerald-400 rounded-full mr-2 animate-pulse" />
               {pendingAdminReview.length} PENDING VERIFICATION
@@ -82,15 +82,15 @@ const AdminPendingReviews = () => {
       </div>
 
       {/* MAIN TABLE */}
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
+      <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100">
-                <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dossier Details</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Submission Details</th>
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-center">Cycle</th>
-                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Claimed Progress</th>
-                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Audit Status</th>
+                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Progress</th>
+                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Status</th>
                 <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">Action</th>
               </tr>
             </thead>
@@ -169,13 +169,13 @@ const AdminPendingReviews = () => {
                       <td className="px-8 py-6 text-right">
                         <button 
                           onClick={() => dispatch(getIndicatorByIdAdmin(indicator._id))}
-                          className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                          className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${
                             isResub 
                               ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200" 
                               : "bg-[#1a3a32] text-white hover:bg-black shadow-lg shadow-emerald-900/10"
                           }`}
                         >
-                          <span className="relative z-10">Audit Dossier</span>
+                          <span className="relative z-10">View </span>
                           <ArrowRight size={14} className="relative z-10 group-hover/btn:translate-x-1 transition-transform" />
                         </button>
                       </td>
@@ -201,39 +201,43 @@ const AdminPendingReviews = () => {
           onClick={() => dispatch(setSelectedIndicator(null))} 
         />
         
-        <section className={`absolute inset-y-0 right-0 max-w-full flex transition-transform duration-700 transform ${
-          selectedIndicator ? "translate-x-0" : "translate-x-full"
-        }`}>
-          <div className="w-screen max-w-5xl">
-            <div className="h-full flex flex-col bg-[#fcfdfb] shadow-2xl overflow-hidden border-l border-slate-200">
-              <div className="flex items-center justify-between px-10 py-8 border-b border-slate-100 bg-white">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-[#1a3a32] text-white rounded-2xl shadow-lg">
-                    <ShieldCheck size={24} />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-black text-[#1a3a32] uppercase tracking-tighter">Registry Audit</h2>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                      Verify evidence & escalate to Super Admin
-                    </p>
-                  </div>
-                </div>
-                <button onClick={() => dispatch(setSelectedIndicator(null))} className="p-3 hover:bg-rose-50 rounded-xl transition-all">
-                  <X size={20} className="text-slate-400 hover:text-rose-500" />
-                </button>
-              </div>
-              
-              <div className="flex-1 relative overflow-y-auto no-scrollbar">
-                {selectedIndicator && (
-                  <AdminIndicatorModal 
-                    indicator={selectedIndicator} 
-                    onClose={() => dispatch(setSelectedIndicator(null))} 
-                  />
-                )}
-              </div>
-            </div>
+        {/* Replace the existing section and inner div with this */}
+<section className={`absolute inset-y-0 right-0 w-full max-w-[450px] flex transition-transform duration-700 transform ${
+  selectedIndicator ? "translate-x-0" : "translate-x-full"
+}`}>
+  <div className="w-full h-full"> {/* Removed max-w-5xl and w-screen */}
+    <div className="h-full flex flex-col bg-[#fcfdfb] shadow-2xl overflow-hidden border-l border-slate-200">
+      
+      {/* HEADER: Keep this consistent with the drawer width */}
+      <div className="flex items-center justify-between px-6 py-8 border-b border-slate-100 bg-white shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-[#1a3a32] text-white rounded-xl shadow-lg">
+            <ShieldCheck size={20} />
           </div>
-        </section>
+          <div>
+            <h2 className="text-sm font-black text-[#1a3a32] uppercase tracking-tighter">Registry Audit</h2>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+              Level 01 Escalation
+            </p>
+          </div>
+        </div>
+        <button onClick={() => dispatch(setSelectedIndicator(null))} className="p-2 hover:bg-rose-50 rounded-lg transition-all">
+          <X size={18} className="text-slate-400 hover:text-rose-500" />
+        </button>
+      </div>
+      
+      {/* CONTENT AREA */}
+      <div className="flex-1 relative overflow-y-auto no-scrollbar">
+        {selectedIndicator && (
+          <AdminIndicatorModal 
+            indicator={selectedIndicator} 
+            onClose={() => dispatch(setSelectedIndicator(null))} 
+          />
+        )}
+      </div>
+    </div>
+  </div>
+</section>
       </div>
     </div>
   );

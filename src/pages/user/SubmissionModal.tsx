@@ -88,7 +88,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       toast.success(
         isRejected
           ? "Correction submitted to Registry"
-          : "Dossier submitted for Audit",
+          : "Your submission has been received by the admin 😁",
       );
       setTimeout(() => {
         onClose();

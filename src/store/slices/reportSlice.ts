@@ -1,7 +1,8 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { api } from '../../api/axios';
+import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import { apiPrivate } from "../../api/axios";
 
-// --- Interfaces based on your Controller & Schema ---
+/* ---------------- TYPES ---------------- */
+
 interface SummaryData {
   name: string;
   weight: number;
@@ -14,19 +15,19 @@ interface SummaryData {
 interface ReviewLog {
   _id: string;
   indicatorTitle: string;
-  quarter: number;
+  quarter: 1 | 2 | 3 | 4;
   achievedValue: number;
   reviewStatus: "Accepted" | "Rejected" | "Pending";
   submittedAt: string;
   notes: string;
   adminComment?: string;
-  userDetails: { name: string; pfNumber: string };
+  userDetails: { name: string; pjNumber: string };
 }
 
 interface IndividualPerformance {
   _id: string;
   name: string;
-  pfNumber: string;
+  pjNumber: string;
   role: string;
   subIndicatorsCount: number;
   approved: number;
@@ -35,77 +36,141 @@ interface IndividualPerformance {
 
 interface ReportState {
   summary: { data: SummaryData[]; loading: boolean; error: string | null };
-  reviewLog: { 
-    data: ReviewLog[]; 
-    stats: { approved: number; rejected: number }; 
-    loading: boolean; 
-    error: string | null 
+  reviewLog: {
+    data: ReviewLog[];
+    stats: { approved: number; rejected: number };
+    loading: boolean;
+    error: string | null;
   };
-  individual: { data: IndividualPerformance[]; loading: boolean; error: string | null };
+  individual: {
+    data: IndividualPerformance[];
+    loading: boolean;
+    error: string | null;
+  };
 }
+
+/* ---------------- INITIAL STATE ---------------- */
 
 const initialState: ReportState = {
   summary: { data: [], loading: false, error: null },
-  reviewLog: { data: [], stats: { approved: 0, rejected: 0 }, loading: false, error: null },
+  reviewLog: {
+    data: [],
+    stats: { approved: 0, rejected: 0 },
+    loading: false,
+    error: null,
+  },
   individual: { data: [], loading: false, error: null },
 };
 
-// --- Async Thunks ---
+/* ---------------- THUNKS ---------------- */
 
-export const fetchSummaryReport = createAsyncThunk('reports/fetchSummary', async (_, { rejectWithValue }) => {
-  try {
-    const response = await api.get('/reports/summary');
-    return response.data;
-  } catch (err: any) {
-    return rejectWithValue(err.response.data.message || 'Failed to fetch summary');
+export const fetchSummaryReport = createAsyncThunk(
+  "reports/fetchSummary",
+  async (_: void, { rejectWithValue }) => {
+    try {
+      const response = await apiPrivate.get("/reports/summary");
+      return response.data.data as SummaryData[];
+    } catch (err: any) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch summary report"
+      );
+    }
   }
-});
+);
 
-export const fetchReviewLog = createAsyncThunk('reports/fetchReviewLog', async (status: string, { rejectWithValue }) => {
-  try {
-    const response = await api.get(`/reports/review-log?status=${status}`);
-    return response.data; // Expecting { logs: [], stats: {} }
-  } catch (err: any) {
-    return rejectWithValue(err.response.data.message || 'Failed to fetch review log');
+export const fetchReviewLog = createAsyncThunk(
+  "reports/fetchReviewLog",
+  async (status: string, { rejectWithValue }) => {
+    try {
+      const params = status ? `?status=${status}` : "";
+      const response = await apiPrivate.get(`/reports/review-log${params}`);
+      return response.data as { logs: ReviewLog[]; stats: { approved: number; rejected: number } };
+    } catch (err: any) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch review log"
+      );
+    }
   }
-});
+);
 
-export const fetchIndividualPerformance = createAsyncThunk('reports/fetchIndividual', async (_, { rejectWithValue }) => {
-  try {
-    const response = await api.get('/reports/individual');
-    return response.data;
-  } catch (err: any) {
-    return rejectWithValue(err.response.data.message || 'Failed to fetch staff performance');
+export const fetchIndividualPerformance = createAsyncThunk(
+  "reports/fetchIndividual",
+  async (_: void, { rejectWithValue }) => {
+    try {
+      const response = await apiPrivate.get("/reports/individual");
+      return response.data.data as IndividualPerformance[];
+    } catch (err: any) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch staff performance"
+      );
+    }
   }
-});
+);
 
-// --- Slice ---
+/* ---------------- SLICE ---------------- */
 
 const reportSlice = createSlice({
-  name: 'reports',
+  name: "reports",
   initialState,
-  reducers: {},
+  reducers: {
+    clearReportErrors: (state) => {
+      state.summary.error = null;
+      state.reviewLog.error = null;
+      state.individual.error = null;
+    },
+  },
   extraReducers: (builder) => {
-    // Summary
-    builder.addCase(fetchSummaryReport.pending, (state) => { state.summary.loading = true; });
-    builder.addCase(fetchSummaryReport.fulfilled, (state, action) => {
-      state.summary.loading = false;
-      state.summary.data = action.payload;
-    });
-    // Review Log
-    builder.addCase(fetchReviewLog.pending, (state) => { state.reviewLog.loading = true; });
-    builder.addCase(fetchReviewLog.fulfilled, (state, action) => {
-      state.reviewLog.loading = false;
-      state.reviewLog.data = action.payload.logs;
-      state.reviewLog.stats = action.payload.stats;
-    });
-    // Individual
-    builder.addCase(fetchIndividualPerformance.pending, (state) => { state.individual.loading = true; });
-    builder.addCase(fetchIndividualPerformance.fulfilled, (state, action) => {
-      state.individual.loading = false;
-      state.individual.data = action.payload;
-    });
+    builder
+      // ── Summary ────────────────────────────────────────────────────────
+      .addCase(fetchSummaryReport.pending, (state) => {
+        state.summary.loading = true;
+        state.summary.error = null;
+      })
+      .addCase(
+        fetchSummaryReport.fulfilled,
+        (state, action: PayloadAction<SummaryData[]>) => {
+          state.summary.loading = false;
+          state.summary.data = action.payload;
+        }
+      )
+      .addCase(fetchSummaryReport.rejected, (state, action) => {
+        state.summary.loading = false;
+        state.summary.error = action.payload as string;
+      })
+
+      // ── Review Log ─────────────────────────────────────────────────────
+      .addCase(fetchReviewLog.pending, (state) => {
+        state.reviewLog.loading = true;
+        state.reviewLog.error = null;
+      })
+      .addCase(fetchReviewLog.fulfilled, (state, action) => {
+        state.reviewLog.loading = false;
+        state.reviewLog.data = action.payload.logs;
+        state.reviewLog.stats = action.payload.stats;
+      })
+      .addCase(fetchReviewLog.rejected, (state, action) => {
+        state.reviewLog.loading = false;
+        state.reviewLog.error = action.payload as string;
+      })
+
+      // ── Individual Performance ─────────────────────────────────────────
+      .addCase(fetchIndividualPerformance.pending, (state) => {
+        state.individual.loading = true;
+        state.individual.error = null;
+      })
+      .addCase(
+        fetchIndividualPerformance.fulfilled,
+        (state, action: PayloadAction<IndividualPerformance[]>) => {
+          state.individual.loading = false;
+          state.individual.data = action.payload;
+        }
+      )
+      .addCase(fetchIndividualPerformance.rejected, (state, action) => {
+        state.individual.loading = false;
+        state.individual.error = action.payload as string;
+      });
   },
 });
 
+export const { clearReportErrors } = reportSlice.actions;
 export default reportSlice.reducer;

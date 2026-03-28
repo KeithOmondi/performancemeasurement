@@ -204,19 +204,21 @@ const SuperAdminIndicators = () => {
 
       {isAssignModalOpen && <SuperAdminAssign onClose={() => setIsAssignModalOpen(false)} />}
 
-      {/* Modal Drawer */}
-      <div className={`fixed inset-0 z-[300] transition-all duration-300 ${selectedIndicator ? "visible opacity-100" : "invisible opacity-0"}`}>
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedIndicator(null)} />
-        <div className={`absolute right-0 top-0 h-full w-full md:max-w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${selectedIndicator ? "translate-x-0" : "translate-x-full"}`}>
-            {selectedIndicator && (
-                <IndicatorsPageIdModal 
-                    indicator={selectedIndicator} 
-                    allStaff={users} 
-                    onClose={() => setSelectedIndicator(null)} 
-                />
-            )}
-        </div>
-      </div>
+      {/* Modal Drawer Wrapper */}
+<div className={`fixed inset-0 z-[300] transition-all duration-300 ${selectedIndicator ? "visible opacity-100" : "invisible opacity-0"}`}>
+  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedIndicator(null)} />
+  
+  {/* CHANGE: Ensure this sits at the very edge of the viewport */}
+  <div className={`fixed right-0 top-0 h-full w-full md:w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${selectedIndicator ? "translate-x-0" : "translate-x-full"}`}>
+      {selectedIndicator && (
+          <IndicatorsPageIdModal 
+              indicator={selectedIndicator} 
+              allStaff={users} 
+              onClose={() => setSelectedIndicator(null)} 
+          />
+      )}
+  </div>
+</div>
     </div>
   );
 };

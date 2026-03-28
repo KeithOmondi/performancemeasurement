@@ -1,5 +1,5 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { api } from "../../api/axios";
+import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import { apiPrivate } from "../../api/axios";
 
 interface IDashboardStats {
   general: {
@@ -32,12 +32,14 @@ const initialState: DashboardState = {
 
 export const fetchDashboardStats = createAsyncThunk(
   "dashboard/fetchStats",
-  async (_, thunkAPI) => {
+  async (_: void, { rejectWithValue }) => {
     try {
-      const response = await api.get("/indicators/dashboard-stats");
-      return response.data.data;
+      const response = await apiPrivate.get("/indicators/dashboard-stats");
+      return response.data.data as IDashboardStats;
     } catch (error: any) {
-      return thunkAPI.rejectWithValue(error.response?.data?.message || "Failed to load stats");
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to load dashboard stats"
+      );
     }
   }
 );
@@ -45,16 +47,24 @@ export const fetchDashboardStats = createAsyncThunk(
 const dashboardSlice = createSlice({
   name: "dashboard",
   initialState,
-  reducers: {},
+  reducers: {
+    clearDashboardError: (state) => {
+      state.error = null;
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchDashboardStats.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
-      .addCase(fetchDashboardStats.fulfilled, (state, action) => {
-        state.loading = false;
-        state.stats = action.payload;
-      })
+      .addCase(
+        fetchDashboardStats.fulfilled,
+        (state, action: PayloadAction<IDashboardStats>) => {
+          state.loading = false;
+          state.stats = action.payload;
+        }
+      )
       .addCase(fetchDashboardStats.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload as string;
@@ -62,4 +72,5 @@ const dashboardSlice = createSlice({
   },
 });
 
+export const { clearDashboardError } = dashboardSlice.actions;
 export default dashboardSlice.reducer;
