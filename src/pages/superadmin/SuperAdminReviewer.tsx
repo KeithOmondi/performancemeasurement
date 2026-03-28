@@ -132,19 +132,19 @@ const SuperAdminReviewer = () => {
       {/* METRIC GRID */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         <MetricCard
-          title="Awaiting Review"
+          title="Awaiting My Review"
           value={derivedData.awaiting}
           color="amber"
           icon={<Hourglass size={20} />}
         />
         <MetricCard
-          title="Rejected Dossiers"
+          title="Rejected By Reviewer"
           value={derivedData.rejected}
           color="red"
           icon={<XCircle size={20} />}
         />
         <MetricCard
-          title="Verified Records"
+          title="Forwarded to Registrar"
           value={derivedData.verified}
           color="emerald"
           icon={<ShieldCheck size={20} />}

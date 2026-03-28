@@ -152,7 +152,7 @@ const SuperAdminReports = () => {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:justify-between items-start mb-8 gap-6">
         <div>
-          <h1 className="text-3xl font-serif font-bold text-[#1d3331] mb-1">Performance Reports</h1>
+          <h1 className="text-2xl font-serif font-bold text-[#1d3331] mb-1">Performance Reports</h1>
           <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Summary, review log and individual staff performance</p>
         </div>
         <div className="flex gap-3 w-full md:w-auto">

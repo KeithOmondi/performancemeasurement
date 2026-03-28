@@ -124,7 +124,7 @@ const SuperAdminIndicators = () => {
     <div className="p-4 md:p-10 bg-[#fcfdfb] min-h-screen font-sans">
       <div className="flex flex-col md:flex-row justify-between items-start mb-8 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-[#1a3a32] tracking-tight">PMMU Indicators — 2026</h1>
+          <h1 className="text-2xl font-serif font-bold text-[#1a3a32] tracking-tight">PMMU Indicators — 2025/2026</h1>
           <p className="text-sm text-gray-500 font-medium">
             {activeFilter !== "ALL" ? `Viewing ${activeFilter}` : `Monitoring ${totalActivities} activities`}
           </p>

@@ -79,11 +79,10 @@ const SuperAdminSubmissions = () => {
           <div>
             <div className="flex items-center gap-2 mb-1">
                <div className="w-2 h-2 rounded-full bg-[#c2a336] animate-pulse" />
-               <span className="text-[10px] font-black text-[#c2a336] uppercase tracking-widest">PMMU Certification Authority</span>
             </div>
-            <h1 className="text-3xl font-black text-[#1d3331] tracking-tighter uppercase">Submissions Audit</h1>
+            <h1 className="text-2xl font-serif font-black text-[#1d3331] tracking-tighter uppercase">Submissions Queue</h1>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] mt-2">
-              Cross-referencing registry evidence against strategic performance cycles
+              Evidence awaiting review and approval
             </p>
           </div>
           
