@@ -136,9 +136,9 @@ const SuperAdminMembers = () => {
       {/* 🔹 Header Section */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-start mb-6 gap-4">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-[#1d3331]">Team Directory</h2>
+          <h2 className="text-2xl font-serif font-bold text-[#1d3331]">Team Members</h2>
           <p className="text-[11px] text-slate-500 font-medium mt-1 uppercase tracking-wider">
-            Managing {users.length} authenticated personnel
+            {users.length} staff - Click a member to view their indicators, upload evidence or send a message
           </p>
         </div>
 
@@ -159,7 +159,7 @@ const SuperAdminMembers = () => {
             placeholder="Search name, email, role or PJ number..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm focus:outline-none focus:ring-4 focus:ring-[#1d3331]/5 transition-all shadow-sm"
+            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-[0.5rem] text-sm focus:outline-none focus:ring-4 focus:ring-[#1d3331]/5 transition-all shadow-sm"
           />
         </div>
       </div>
@@ -350,7 +350,7 @@ const SuperAdminMembers = () => {
       {/* 🔹 Profile Side Panel / Modal */}
       {selectedMember && !isFormModalOpen && !isDeleteConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in zoom-in duration-150">
-          <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-[2rem] shadow-2xl overflow-hidden flex flex-col">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-[0.5rem] shadow-2xl overflow-hidden flex flex-col">
             <div className="bg-[#1d3331] p-6 flex justify-between items-center text-white">
               <h3 className="font-serif font-bold text-lg px-2">Staff Profile Card</h3>
               <button onClick={() => setSelectedMember(null)} className="p-2 hover:bg-white/10 rounded-full">
@@ -361,7 +361,7 @@ const SuperAdminMembers = () => {
             <div className="flex-1 overflow-y-auto p-10">
               <div className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
                 <div className="flex items-center space-x-6">
-                  <div className="w-20 h-20 rounded-3xl bg-[#1d3331] text-white flex items-center justify-center font-bold text-2xl shadow-lg">
+                  <div className="w-15 h-15 rounded-full bg-[#1d3331] text-white flex items-center justify-center font-bold text-1xl shadow-lg">
                     {getInitials(selectedMember.name)}
                   </div>
                   <div>
@@ -373,7 +373,7 @@ const SuperAdminMembers = () => {
                   </div>
                 </div>
                 <button className="flex items-center justify-center px-6 py-3 bg-[#1d3331] text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-[#2a4542] shadow-lg">
-                  <MessageSquare size={16} className="mr-2" /> Direct Message
+                  <MessageSquare size={16} className="mr-2" /> Send Message
                 </button>
               </div>
 
