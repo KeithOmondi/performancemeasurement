@@ -10,19 +10,36 @@ import {
   Edit3, 
   Target, 
   Search, 
-  Plus 
+  Plus,
+  UserPlus,
+  Mail,
+  ShieldCheck,
+  Briefcase
 } from "lucide-react";
-import { fetchAllUsers } from "../../store/slices/user/userSlice";
+import { fetchAllUsers, registerUser, clearUserMessages } from "../../store/slices/user/userSlice";
 import { fetchIndicators } from "../../store/slices/indicatorSlice";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import type { AppDispatch, RootState } from "../../store/store";
 
 const SuperAdminMembers = () => {
   const dispatch = useDispatch<AppDispatch>();
+  
+  // 🔹 State
   const [selectedMember, setSelectedMember] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  
+  // 🔹 Form State
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    pjNumber: "",
+    title: "",
+    role: "user",
+    password: "Password123!" // Initial default password
+  });
 
-  const { users, isLoading: usersLoading } = useSelector((state: RootState) => state.users);
+  const { users, isLoading: usersLoading, isError, message } = useSelector((state: RootState) => state.users);
   const { indicators, loading: indicatorsLoading } = useSelector((state: RootState) => state.indicators);
   const { plans } = useSelector((state: RootState) => state.strategicPlan);
 
@@ -40,6 +57,17 @@ const SuperAdminMembers = () => {
       u.title?.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [users, searchTerm]);
+
+  // 🔹 Handlers
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const result = await dispatch(registerUser(formData));
+    if (registerUser.fulfilled.match(result)) {
+      setIsAddModalOpen(false);
+      setFormData({ name: "", email: "", pjNumber: "", title: "", role: "user", password: "Password123!" });
+      // Optional: Add a success toast here
+    }
+  };
 
   const getInitials = (name: string) => {
     if (!name) return "??";
@@ -82,27 +110,30 @@ const SuperAdminMembers = () => {
           </div>
         </div>
 
-        <button className="flex items-center bg-[#1d3331] text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-[#2a4542] transition-all shadow-md">
-          <Plus size={16} className="mr-1" /> Add Member
+        <button 
+          onClick={() => setIsAddModalOpen(true)}
+          className="flex items-center bg-[#1d3331] text-white px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-[#2a4542] transition-all shadow-lg shadow-[#1d3331]/10 active:scale-95"
+        >
+          <Plus size={18} className="mr-1" /> Add Member
         </button>
       </div>
 
       {/* 🔹 Search Bar Area */}
       <div className="mb-10 max-w-sm">
         <div className="relative group">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 group-focus-within:text-[#1d3331]" size={18} />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 group-focus-within:text-[#1d3331] transition-colors" size={18} />
           <input 
             type="text"
             placeholder="Search by name, role or PF number..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-[#f5f5ee] border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-slate-300 placeholder:text-slate-400"
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1d3331]/5 focus:border-[#1d3331] placeholder:text-slate-400 shadow-sm transition-all"
           />
         </div>
       </div>
 
       {/* 🔹 Grid Area */}
-      {isLoading ? (
+      {isLoading && users.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32">
           <Loader2 className="animate-spin text-[#1d3331] mb-4" size={32} />
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Synchronizing...</p>
@@ -130,7 +161,7 @@ const SuperAdminMembers = () => {
                 </p>
 
                 <div className="text-[11px] text-slate-500 space-y-0.5 mb-5">
-                  <p><span className="font-bold">PF:</span> {member.pjNumber || "N/A"} · {member.email}</p>
+                  <p><span className="font-bold">PF:</span> {member.pjNumber || "N/A"} · <span className="lowercase">{member.email}</span></p>
                 </div>
 
                 <div className="w-full border-t border-slate-50 pt-4">
@@ -145,7 +176,117 @@ const SuperAdminMembers = () => {
         </div>
       )}
 
-      {/* 🔹 Profile Modal */}
+      {/* 🔹 Add Member Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[#1d3331]/40 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-4 duration-300">
+            <div className="bg-[#1d3331] p-6 text-white flex justify-between items-center">
+              <div>
+                <h3 className="font-serif font-bold text-xl">New Member</h3>
+                <p className="text-[10px] text-emerald-200 uppercase tracking-widest font-bold">Registration Portal</p>
+              </div>
+              <button 
+                onClick={() => { setIsAddModalOpen(false); dispatch(clearUserMessages()); }}
+                className="p-2 hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddMember} className="p-8 space-y-5">
+              {isError && (
+                <div className="p-3 bg-red-50 border border-red-100 text-red-600 text-xs rounded-lg font-medium">
+                  {message}
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Full Name</label>
+                <div className="relative">
+                  <UserPlus className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <input 
+                    required
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#1d3331]/5 focus:border-[#1d3331] outline-none transition-all"
+                    placeholder="e.g. Hon. John Kamau"
+                    value={formData.name}
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">PF Number</label>
+                  <input 
+                    required
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-[#1d3331] outline-none transition-all"
+                    placeholder="43244"
+                    value={formData.pjNumber}
+                    onChange={(e) => setFormData({...formData, pjNumber: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Job Title</label>
+                  <div className="relative">
+                    <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                    <input 
+                      required
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-[#1d3331] outline-none transition-all"
+                      placeholder="Registrar"
+                      value={formData.title}
+                      onChange={(e) => setFormData({...formData, title: e.target.value})}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <input 
+                    required
+                    type="email"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-[#1d3331] outline-none transition-all"
+                    placeholder="staff@judiciary.go.ke"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">System Role</label>
+                <div className="relative">
+                  <ShieldCheck className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                  <select 
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:border-[#1d3331] outline-none transition-all appearance-none cursor-pointer"
+                    value={formData.role}
+                    onChange={(e) => setFormData({...formData, role: e.target.value})}
+                  >
+                    <option value="user">Standard User</option>
+                    <option value="examiner">Examiner</option>
+                    <option value="admin">Admin</option>
+                    <option value="superadmin">Super Admin</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button 
+                  type="submit"
+                  disabled={usersLoading}
+                  className="w-full bg-[#1d3331] text-white py-4 rounded-2xl font-bold uppercase tracking-[0.2em] text-[10px] hover:bg-[#2a4542] transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shadow-xl shadow-[#1d3331]/20"
+                >
+                  {usersLoading ? <Loader2 className="animate-spin mr-2" size={16} /> : "Initialize Account"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 🔹 Profile Modal (Existing) */}
       {selectedMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200">

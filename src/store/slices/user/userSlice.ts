@@ -32,9 +32,19 @@ export const fetchAllUsers = createAsyncThunk(
     try {
       return await userService.getUsers();
     } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+      return thunkAPI.rejectWithValue(error.response?.data?.message || error.message);
+    }
+  }
+);
+
+// 🆕 Create User Thunk
+export const registerUser = createAsyncThunk(
+  "users/register",
+  async (userData: any, thunkAPI) => {
+    try {
+      return await userService.createUser(userData);
+    } catch (error: any) {
+      return thunkAPI.rejectWithValue(error.response?.data?.message || error.message);
     }
   }
 );
@@ -45,9 +55,7 @@ export const changeUserRole = createAsyncThunk(
     try {
       return await userService.updateUserRole(data);
     } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+      return thunkAPI.rejectWithValue(error.response?.data?.message || error.message);
     }
   }
 );
@@ -58,9 +66,7 @@ export const toggleStatus = createAsyncThunk(
     try {
       return await userService.toggleUserActive(data);
     } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+      return thunkAPI.rejectWithValue(error.response?.data?.message || error.message);
     }
   }
 );
@@ -88,29 +94,33 @@ export const userSlice = createSlice({
         state.isError = true;
         state.message = action.payload as string;
       })
-      // Shared pending for mutations
+      // 🆕 Handle newly created user
+      .addCase(registerUser.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.users.unshift(action.payload); // Add to beginning of list
+        state.message = "User created successfully";
+      })
+      // Shared pending for all mutations (Create, Role Change, Toggle)
       .addMatcher(
-        isAnyOf(changeUserRole.pending, toggleStatus.pending),
+        isAnyOf(registerUser.pending, changeUserRole.pending, toggleStatus.pending),
         (state) => {
           state.isLoading = true;
         }
       )
-      // Shared fulfilled for mutations — update the user in-place
+      // Shared fulfilled for existing user updates (Role Change, Toggle)
       .addMatcher(
         isAnyOf(changeUserRole.fulfilled, toggleStatus.fulfilled),
         (state, action) => {
           state.isLoading = false;
-          const index = state.users.findIndex(
-            (u) => u._id === action.payload._id
-          );
+          const index = state.users.findIndex((u) => u._id === action.payload._id);
           if (index !== -1) {
             state.users[index] = action.payload;
           }
         }
       )
-      // Shared rejected for mutations
+      // Shared rejected for all mutations
       .addMatcher(
-        isAnyOf(changeUserRole.rejected, toggleStatus.rejected),
+        isAnyOf(registerUser.rejected, changeUserRole.rejected, toggleStatus.rejected),
         (state, action) => {
           state.isLoading = false;
           state.isError = true;

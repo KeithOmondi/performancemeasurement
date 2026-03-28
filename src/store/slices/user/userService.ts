@@ -5,6 +5,12 @@ const getUsers = async () => {
   return response.data.users;
 };
 
+// 🆕 Added Create User Service
+const createUser = async (userData: any) => {
+  const response = await apiPrivate.post("/users", userData);
+  return response.data.user;
+};
+
 const updateUserRole = async (userData: { id: string; role: string }) => {
   const response = await apiPrivate.patch(`/users/${userData.id}/role`, {
     role: userData.role,
@@ -19,4 +25,9 @@ const toggleUserActive = async (userData: { id: string; isActive: boolean }) => 
   return response.data.user;
 };
 
-export const userService = { getUsers, updateUserRole, toggleUserActive };
+export const userService = { 
+  getUsers, 
+  createUser, // 🆕 exported
+  updateUserRole, 
+  toggleUserActive 
+};
