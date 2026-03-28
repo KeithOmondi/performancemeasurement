@@ -16,7 +16,7 @@ import {
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
   fetchMyAssignments, 
-  setLocalSelectedIndicator, // Fix: Use the correct exported member
+  setLocalSelectedIndicator,
   submitIndicatorProgress, 
   type IIndicatorUI
 } from "../../store/slices/userIndicatorSlice";
@@ -31,6 +31,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
   const [notes, setNotes] = useState("");
   const [achievedValue, setAchievedValue] = useState<number>(0);
 
+  // Find the most recent rejected submission to pre-fill the form
   const rejectedSub = useMemo(() => 
     [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected"),
     [indicator]
@@ -66,7 +67,9 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
 
   if (!rejectedSub) return null;
 
-  const periodDisplay = rejectedSub.quarter === 0 ? "Annual Cycle" : `Quarter ${rejectedSub.quarter}`;
+  // FIX: Use reportingCycle to determine label instead of comparing 1|2|3|4 to 0
+  const isAnnual = indicator.reportingCycle === "Annual";
+  const periodDisplay = isAnnual ? "Annual Cycle" : `Quarter ${rejectedSub.quarter}`;
 
   return (
     <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
@@ -81,7 +84,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
         </header>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-          <div className="p-5 bg-rose-50 border border-rose-100 rounded-[1.5rem] relative">
+          <div className="p-5 bg-rose-50 border border-rose-100 rounded-[1.5rem]">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle size={14} className="text-rose-500" />
               <span className="text-[9px] font-black text-rose-600 uppercase">Auditor's Findings</span>
@@ -170,7 +173,7 @@ const UserRejections = () => {
 
   const rejectedIndicators = useMemo(() => {
     return myIndicators.filter((ind) => {
-      const isStatusRejected = ind.status.toLowerCase().includes("rejected");
+      const isStatusRejected = ind.status.includes("Rejected");
       const hasRejectedSub = ind.submissions.some(sub => sub.reviewStatus === "Rejected");
       
       const matchesSearch = 
@@ -223,7 +226,10 @@ const UserRejections = () => {
           rejectedIndicators.map((indicator) => {
             const isViewingHistory = historyViewId === indicator._id;
             const rejectedSub = [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected");
-            const periodText = rejectedSub?.quarter === 0 ? "Annual" : `Quarter ${rejectedSub?.quarter}`;
+            
+            // FIX: Consistent "Annual" vs "Quarter" logic
+            const isAnnual = indicator.reportingCycle === "Annual";
+            const periodText = isAnnual ? "Annual" : `Quarter ${rejectedSub?.quarter ?? ''}`;
 
             return (
               <div 
@@ -254,7 +260,7 @@ const UserRejections = () => {
                               <span className="text-[9px] font-bold text-slate-400">{new Date(log.at).toLocaleDateString()}</span>
                             </div>
                             <p className="text-xs text-slate-600 font-semibold italic leading-relaxed">"{log.reason}"</p>
-                            <p className="text-[8px] font-black text-slate-300 mt-4 uppercase">By: {log.reviewerRole}</p>
+                            <p className="text-[8px] font-black text-slate-300 mt-4 uppercase">Role: {log.reviewerRole}</p>
                           </div>
                         ))}
                       </div>
@@ -306,7 +312,7 @@ const UserRejections = () => {
       {currentIndicator && (
         <ResubmissionModal 
           indicator={currentIndicator} 
-          onClose={() => dispatch(setLocalSelectedIndicator(""))} 
+          onClose={() => dispatch(setLocalSelectedIndicator(null))} 
         />
       )}
     </div>

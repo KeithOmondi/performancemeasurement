@@ -12,7 +12,11 @@ import {
   ShieldAlert
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { fetchAllAdminIndicators } from "../../store/slices/adminIndicatorSlice";
+import { 
+  fetchAllAdminIndicators, 
+  setSelectedIndicator 
+} from "../../store/slices/adminIndicatorSlice";
+import { type IAdminIndicator } from "../../store/slices/adminIndicatorSlice";
 
 const AdminRejections = () => {
   const dispatch = useAppDispatch();
@@ -21,16 +25,23 @@ const AdminRejections = () => {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
 
   useEffect(() => {
-    dispatch(fetchAllAdminIndicators());
+    // Fetch specifically with a rejected status or fetch all and filter client-side
+    dispatch(fetchAllAdminIndicators("all"));
   }, [dispatch]);
 
-  // Filter for indicators explicitly marked as Rejected
+  // Filter for indicators explicitly marked as Rejected at any admin level
   const rejectedItems = allAssignments.filter((ind) => 
-    ind.status === "Rejected by Admin"
+    ind.status === "Rejected by Admin" || ind.status === "Rejected by Super Admin"
   ).filter(ind => 
     ind.activityDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
     ind.assigneeDisplayName.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const handleSelectIndicator = (indicator: IAdminIndicator) => {
+    dispatch(setSelectedIndicator(indicator));
+    // Optional: navigate to a detail view if you have one
+    // navigate(`/admin/indicators/${indicator._id}`);
+  };
 
   if (isLoading && allAssignments.length === 0) {
     return (
@@ -78,7 +89,9 @@ const AdminRejections = () => {
         <div className="space-y-6">
           {rejectedItems.map((indicator) => {
             const isViewingHistory = selectedHistoryId === indicator._id;
-            const latestRejection = [...indicator.submissions]
+            
+            // Look for the specific submission that caused the rejection
+            const latestRejection = [...(indicator.submissions || [])]
               .reverse()
               .find(s => s.reviewStatus === "Rejected");
 
@@ -122,7 +135,8 @@ const AdminRejections = () => {
                                   </span>
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className="text-[9px] font-bold text-gray-500 flex items-center gap-1">
-                                      <User size={10}/> {log.reviewedBy.name}
+                                      <User size={10}/> 
+                                      {typeof log.reviewedBy === 'object' ? log.reviewedBy.name : 'System/Admin'}
                                     </span>
                                   </div>
                                 </div>
@@ -145,7 +159,9 @@ const AdminRejections = () => {
                       <div className="p-6 lg:w-1/3 bg-gray-50/30">
                         <div className="flex items-center gap-2 mb-4">
                           <AlertOctagon size={14} className="text-red-600" />
-                          <span className="text-[10px] font-bold text-red-600 uppercase tracking-widest">Correction Required</span>
+                          <span className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
+                            {indicator.status.replace(/by/g, 'By')}
+                          </span>
                         </div>
                         <h3 className="text-sm font-bold text-slate-800 leading-snug mb-4">
                           {indicator.activityDescription}
@@ -171,17 +187,21 @@ const AdminRejections = () => {
                         </div>
                         <div className="bg-white border border-red-50 p-4 rounded-xl shadow-inner">
                           <p className="text-[12px] text-red-900 font-medium italic leading-relaxed">
-                            "{latestRejection?.adminComment || "Documentation provided does not align with the statutory reporting guidelines for this period."}"
+                            "{indicator.adminOverallComments || latestRejection?.adminComment || "Documentation provided does not align with the statutory reporting guidelines."}"
                           </p>
                         </div>
                         <div className="mt-4 flex gap-6">
                            <div>
+                             <p className="text-[8px] font-bold text-gray-400 uppercase">Target / Unit</p>
+                             <p className="text-xs font-bold text-slate-700">{indicator.target} {indicator.unit}</p>
+                           </div>
+                           <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Deficiency Quarter</p>
-                             <p className="text-xs font-bold text-red-600">Q{latestRejection?.quarter || '—'}</p>
+                             <p className="text-xs font-bold text-red-600">Q{latestRejection?.quarter || indicator.activeQuarter}</p>
                            </div>
                            <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Review Cycle</p>
-                             <p className="text-xs font-bold text-red-600">Attempt #{latestRejection?.resubmissionCount || 1}</p>
+                             <p className="text-xs font-bold text-red-600">Attempt #{latestRejection?.resubmissionCount ?? 1}</p>
                            </div>
                         </div>
                       </div>
@@ -195,6 +215,7 @@ const AdminRejections = () => {
                           <HistoryIcon size={14} /> Audit History
                         </button>
                         <button 
+                          onClick={() => handleSelectIndicator(indicator)}
                           className="w-full bg-white border border-gray-200 text-gray-500 py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
                         >
                           View Dossier <ChevronRight size={14} />
