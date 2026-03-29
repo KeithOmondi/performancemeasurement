@@ -69,12 +69,15 @@ const SuperAdminReviewer = () => {
       };
     });
 
-    // 2. GLOBAL METRICS (Synced with Dashboard Logic)
+    // 2. GLOBAL METRICS (FIXED: Derived from Indicators to ensure "Awaiting" clears on completion)
     const metrics = {
-      // Awaiting is purely what's currently in the submission queue
-      awaiting: queue.length,
+      // 🔹 FIX: Only count as 'awaiting' if status is an 'Awaiting' state AND not yet completed/verified
+      awaiting: indicators.filter((ind) => {
+        const s = ind.status?.toLowerCase() || "";
+        return (s.includes("awaiting") || s === "pending") && 
+               !["completed", "verified", "approved"].includes(s);
+      }).length,
       
-      // Rejected and Verified are calculated from the total Indicators pool
       rejected: indicators.filter((ind) => 
         ind.status?.toLowerCase().includes("rejected")
       ).length,
@@ -116,7 +119,7 @@ const SuperAdminReviewer = () => {
               className={`w-2 h-2 rounded-full bg-emerald-500 ${loading ? "animate-pulse" : ""}`}
             />
             <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">
-              JLive view of submissions at each stage of your review workflow
+              Live view of submissions at each stage of your review workflow
             </p>
           </div>
         </div>
@@ -171,7 +174,7 @@ const SuperAdminReviewer = () => {
           />
           <FilterChip
             active={filter === "Verified"}
-            label="Forwarded to Registrar"
+            label="Forwarded"
             icon={<CheckCircle2 size={14} />}
             onClick={() => setFilter("Verified")}
             color="emerald"
@@ -261,8 +264,8 @@ const SuperAdminReviewer = () => {
                     </td>
 
                     <td className="pr-10 pl-6 py-7 text-right">
-                      <button className="inline-flex items-center gap-2 px-6 py-3.5 bg-[#1d3331] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#2c4c48] transition-all shadow-lg shadow-[#1d3331]/10 group-hover:-translate-x-1">
-                        Audit Dossier <ArrowUpRight size={16} />
+                      <button className="inline-flex items-center gap-2 px-7 py-3 bg-[#1d3331] text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-[#2c4c48] transition-all shadow-lg shadow-[#1d3331]/10 group-hover:-translate-x-1">
+                        View <ArrowUpRight size={16} />
                       </button>
                     </td>
                   </tr>
@@ -272,7 +275,7 @@ const SuperAdminReviewer = () => {
                   <td colSpan={5} className="py-32 text-center">
                     <div className="flex flex-col items-center">
                       <FileText size={24} className="text-slate-200 mb-4" />
-                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em]">No records match the current criteria</p>
+                      <p className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em]">No records found</p>
                     </div>
                   </td>
                 </tr>
@@ -323,7 +326,8 @@ const FilterChip = ({ active, label, icon, onClick, color }: any) => {
 };
 
 const StatusBadge = ({ status, rawStatus, progress }: { status: "Pending" | "Rejected" | "Verified", rawStatus: string, progress: number }) => {
-  const isAwaitingAction = rawStatus === "Awaiting Super Admin" || rawStatus === "Awaiting Admin Approval";
+  const s = rawStatus?.toLowerCase() || "";
+  const isAwaitingAction = s.includes("awaiting") || s === "pending";
   
   const config = {
     Pending: { 

@@ -171,8 +171,8 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       {/* --- FOOTER --- */}
       <div className="p-6 bg-slate-50 border-t border-slate-100">
         <div className="flex justify-between items-center mb-4">
-            <span className="text-[10px] font-black text-slate-400 uppercase">Weightage: {indicator.weight}%</span>
-            <span className="text-[10px] font-black text-slate-400 uppercase">Target: {indicator.target} {indicator.unit}</span>
+            <span className="text-[10px] font-black text-slate-400 uppercase">Weight: {indicator.weight}%</span>
+            <span className="text-[10px] font-black text-slate-400 uppercase">UoM: {indicator.unit}</span>
         </div>
         <button className="w-full py-3 bg-[#1d3331] text-white rounded-xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg hover:shadow-xl transition-all active:scale-[0.98]">
           Generate Summary Audit

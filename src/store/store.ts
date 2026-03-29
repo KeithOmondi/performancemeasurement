@@ -8,6 +8,7 @@ import adminIndicatorsReducer from "./slices/adminIndicatorSlice"
 import reportsReducer from "./slices/reportSlice"
 import dashboardReducer from "./slices/dashboardSlice"
 import registryReducer from "./slices/registrySlice"
+import streamFileReducer from "./slices/streamSlice"
 
 export const store = configureStore({
   reducer: {
@@ -19,7 +20,8 @@ export const store = configureStore({
     adminIndicators: adminIndicatorsReducer,
     reports: reportsReducer,
     dashboard: dashboardReducer,
-    registry: registryReducer
+    registry: registryReducer,
+    streamFile: streamFileReducer
     // Add other features (e.g., products, cart) here later
   },
   // DevTools is enabled by default in development mode
