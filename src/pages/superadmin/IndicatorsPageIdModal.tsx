@@ -9,8 +9,9 @@ import {
   type IIndicator,
   type ISubmission
 } from "../../store/slices/indicatorSlice";
-import FilePreviewModal from "../PreviewModal"; // ✅ adjust path as needed
+import FilePreviewModal from "../PreviewModal";
 import toast from "react-hot-toast";
+import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 
 export interface Props {
   indicator: IIndicator;
@@ -22,13 +23,19 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const dispatch = useAppDispatch();
   const isProcessing = useAppSelector((state) => state.indicators.actionLoading);
 
+  // ✅ Pull strategic plans from store to resolve perspective/objective/activity
+  const { plans } = useAppSelector((state) => state.strategicPlan);
+
   const [decisionReason, setDecisionReason] = useState("");
   const [progressOverride, setProgressOverride] = useState<number>(0);
   const [nextDeadline, setNextDeadline] = useState<string>("");
   const [showRejectReason, setShowRejectReason] = useState(false);
-
-  // ✅ Preview state
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+
+  // ✅ Fetch plans if not already loaded
+  useEffect(() => {
+    if (plans.length === 0) dispatch(getAllStrategicPlans());
+  }, [dispatch, plans.length]);
 
   const targetQ = useMemo(() => indicator.activeQuarter, [indicator]);
 
@@ -38,6 +45,40 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     const last = indicator.reportingCycle === "Annual" || targetQ === 4;
     return { activeSubmission: submission || null, cycleLabel: label, isLastQuarter: last };
   }, [indicator, targetQ]);
+
+  // ✅ Resolve perspective, objectiveTitle, activityDescription from strategic plans
+  // Falls back to fields already on indicator (populated by backend transformer)
+  const { perspective, objectiveTitle, activityDescription } = useMemo(() => {
+    // If the indicator already has these fields (from transformer), use them directly
+    if (indicator.perspective && indicator.objectiveTitle && indicator.activityDescription) {
+      return {
+        perspective: indicator.perspective,
+        objectiveTitle: indicator.objectiveTitle,
+        activityDescription: indicator.activityDescription,
+      };
+    }
+
+    // Otherwise resolve from the strategic plans store
+    const planId = typeof indicator.strategicPlanId === "object"
+      ? indicator.strategicPlanId?._id
+      : indicator.strategicPlanId;
+
+    const plan = plans.find((p) => p._id === planId);
+
+    const objective = plan?.objectives?.find(
+      (obj) => obj._id === indicator.objectiveId
+    );
+
+    const activity = objective?.activities?.find(
+      (act) => act._id === indicator.activityId
+    );
+
+    return {
+      perspective: plan?.perspective || indicator.perspective || "N/A",
+      objectiveTitle: objective?.title || indicator.objectiveTitle || "Strategic Objective",
+      activityDescription: activity?.description || indicator.activityDescription || "No description provided",
+    };
+  }, [indicator, plans]);
 
   useEffect(() => {
     setProgressOverride(activeSubmission?.achievedValue ?? indicator.currentTotalAchieved ?? 0);
@@ -56,12 +97,10 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       setShowRejectReason(true);
       return;
     }
-
     if (decision === "Rejected" && !decisionReason.trim()) {
       toast.error("Please provide a reason for rejecting this submission.");
       return;
     }
-
     if (
       decision === "Approved" &&
       indicator.reportingCycle === "Quarterly" &&
@@ -103,6 +142,8 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   return (
     <div className="bg-[#fcfcf7] w-full h-full flex flex-col shadow-2xl overflow-hidden font-sans relative">
+
+      {/* ✅ Header — now uses resolved perspective, objectiveTitle, activityDescription */}
       <header className="bg-[#1d3331] px-8 py-7 flex justify-between items-start shrink-0 border-b-4 border-[#c2a336]">
         <div className="flex items-start gap-5">
           <div className={`h-12 w-12 rounded-xl flex items-center justify-center border transition-all mt-1 ${
@@ -112,29 +153,41 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           }`}>
             {isCertified ? <ShieldCheck size={26} /> : <FileText size={24} />}
           </div>
+
           <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-[10px] font-black uppercase text-[#c2a336] tracking-[0.2em]">
-                CORE BUSINESS / MANDATE
-              </p>
-            </div>
+            {/* ✅ Perspective — replaces hardcoded "CORE BUSINESS / MANDATE" */}
+            <p className="text-[10px] font-black uppercase text-[#c2a336] tracking-[0.2em]">
+              {perspective}
+            </p>
+
+            {/* ✅ Objective title */}
+            <p className="text-[9px] font-black uppercase text-white/50 tracking-widest">
+              {objectiveTitle}
+            </p>
+
+            {/* ✅ Activity description — the main heading */}
             <h2 className="text-lg font-bold text-white font-serif leading-tight max-w-xl uppercase tracking-tight">
-              {indicator.activityDescription}
+              {activityDescription}
             </h2>
+
             <div className="flex flex-wrap gap-2 pt-1">
               <span className="bg-[#c2a336] text-[9px] text-[#1d3331] px-3 py-1 rounded-full font-black uppercase">
                 {indicator.status?.replace(/-/g, " ") || "Pending"}
               </span>
               <div className="bg-white/10 text-[9px] text-white px-3 py-1 rounded-full font-black uppercase flex items-center gap-1.5 border border-white/10">
-                <User size={10} className="text-[#c2a336]" /> {indicator.assigneeDisplayName || "Registry Team"}
+                <User size={10} className="text-[#c2a336]" />
+                {indicator.assigneeDisplayName || "Registry Team"}
               </div>
               <div className="bg-white/10 text-[9px] text-white px-3 py-1 rounded-full font-black uppercase flex items-center gap-1.5 border border-white/10">
                 <Calendar size={10} className="text-[#c2a336]" />
-                {indicator.deadline ? new Date(indicator.deadline).toISOString().split("T")[0] : "2026-06-30"}
+                {indicator.deadline
+                  ? new Date(indicator.deadline).toISOString().split("T")[0]
+                  : "2026-06-30"}
               </div>
             </div>
           </div>
         </div>
+
         <button onClick={onClose} className="text-white/30 hover:text-white p-2 bg-white/5 rounded-lg transition-colors">
           <X size={20} />
         </button>
@@ -151,7 +204,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             <div className="grid grid-cols-2 gap-y-8">
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Weight</p>
-                <p className="text-base font-black text-[#1d3331]">{indicator.weight || "5%"}%</p>
+                <p className="text-base font-black text-[#1d3331]">{indicator.weight || "5"}%</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unit</p>
@@ -159,11 +212,11 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Target 2025/26</p>
-                <p className="text-base font-black text-[#1d3331]">{indicator.target || "100%"}%</p>
+                <p className="text-base font-black text-[#1d3331]">{indicator.target || "100"}%</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Progress</p>
-                <p className="text-base font-black text-[#1d3331]">{indicator.progress || "60%"}%</p>
+                <p className="text-base font-black text-[#1d3331]">{indicator.progress || "0"}%</p>
               </div>
             </div>
           </section>
@@ -185,7 +238,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Deadline</label>
                 <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#1d3331] flex items-center gap-3">
                   <Calendar size={16} className="text-slate-400" />
-                  {indicator.deadline ? new Date(indicator.deadline).toLocaleDateString() : "03/31/2026"}
+                  {indicator.deadline
+                    ? new Date(indicator.deadline).toLocaleDateString()
+                    : "03/31/2026"}
                 </div>
               </div>
             </div>
@@ -194,14 +249,13 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             </button>
           </section>
 
-          {/* ✅ Evidence Section — shows uploaded docs if they exist, upload area otherwise */}
+          {/* Evidence */}
           <section className="space-y-6 pb-20">
             <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em] border-b border-slate-100 pb-3">
               Evidence / Supporting Documents
             </h3>
 
             {activeSubmission?.documents && activeSubmission.documents.length > 0 ? (
-              // ✅ Show uploaded documents as previewable buttons
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {activeSubmission.documents.map((doc: any, i: number) => (
                   <button
@@ -220,7 +274,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                 ))}
               </div>
             ) : (
-              // Upload area shown when no documents yet
               <div className="py-12 bg-[#fcfcf7] border-2 border-dashed border-emerald-100 rounded-3xl flex flex-col items-center justify-center text-center group cursor-pointer hover:border-[#c2a336]/40 transition-all">
                 <div className="mb-4 text-slate-400 group-hover:scale-110 transition-transform">
                   <Paperclip size={32} strokeWidth={1.5} />
@@ -241,7 +294,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           } text-white`}>
             <div className="flex items-center gap-4">
               <div className={`p-2 rounded-lg ${isCertified ? "bg-emerald-500/20" : "bg-white/10"}`}>
-                {isCertified ? <ShieldCheck size={24} className="text-emerald-400" /> : <Lock size={24} className={canAct ? "text-[#c2a336]" : "text-white/20"} />}
+                {isCertified
+                  ? <ShieldCheck size={24} className="text-emerald-400" />
+                  : <Lock size={24} className={canAct ? "text-[#c2a336]" : "text-white/20"} />}
               </div>
               <h3 className="text-[11px] font-black uppercase tracking-[0.3em]">
                 {isCertified ? "Record Certified" : canAct ? "Certification Verdict" : "Not Ready for Certification"}
@@ -252,7 +307,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               <div className="space-y-6 animate-in fade-in duration-700">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c2a336]">Verified Value ({indicator.unit})</label>
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c2a336]">
+                      Verified Value ({indicator.unit})
+                    </label>
                     <input
                       type="number"
                       value={progressOverride}
@@ -262,7 +319,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                   </div>
                   {!isLastQuarter && (
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Next Q Deadline</label>
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">
+                        Next Q Deadline
+                      </label>
                       <input
                         type="date"
                         min={todayStr}
@@ -276,7 +335,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
                 {showRejectReason && (
                   <div className="space-y-3 animate-in slide-in-from-top-4 duration-500">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-400">Rejection Feedback</label>
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-400">
+                      Rejection Feedback
+                    </label>
                     <textarea
                       value={decisionReason}
                       onChange={(e) => setDecisionReason(e.target.value)}
@@ -292,16 +353,20 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     disabled={isProcessing || !activeSubmission}
                     className="flex-[2] py-5 bg-[#c2a336] text-[#1d3331] rounded-2xl font-black text-[11px] uppercase tracking-[0.25em] hover:bg-white hover:scale-[1.02] transition-all flex items-center justify-center gap-3 disabled:opacity-30"
                   >
-                    <CheckCircle2 size={18} /> {isLastQuarter ? "Certify Performance" : "Approve & Open Next Period"}
+                    <CheckCircle2 size={18} />
+                    {isLastQuarter ? "Certify Performance" : "Approve & Open Next Period"}
                   </button>
                   <button
                     onClick={() => handleCertification("Rejected")}
                     disabled={isProcessing || !activeSubmission}
                     className={`flex-1 py-5 border rounded-2xl font-black text-[11px] uppercase tracking-[0.25em] transition-all flex items-center justify-center gap-3 ${
-                      showRejectReason ? "bg-rose-600 border-rose-600 text-white" : "border-rose-500/50 text-rose-400 hover:bg-rose-600 hover:text-white"
+                      showRejectReason
+                        ? "bg-rose-600 border-rose-600 text-white"
+                        : "border-rose-500/50 text-rose-400 hover:bg-rose-600 hover:text-white"
                     }`}
                   >
-                    <RotateCcw size={18} /> {showRejectReason ? "Confirm Rejection" : "Reject"}
+                    <RotateCcw size={18} />
+                    {showRejectReason ? "Confirm Rejection" : "Reject"}
                   </button>
                 </div>
               </div>
@@ -310,7 +375,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
         </div>
       </main>
 
-      {/* ✅ FilePreviewModal */}
       {previewFile && (
         <FilePreviewModal
           url={previewFile.url}
@@ -322,7 +386,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       {isProcessing && (
         <div className="absolute inset-0 z-[100] bg-[#1d3331]/95 backdrop-blur-xl flex flex-col items-center justify-center gap-8">
           <Loader2 className="animate-spin text-[#c2a336]" size={70} />
-          <span className="text-[12px] font-black text-white uppercase tracking-[0.8em] animate-pulse">Syncing Registry...</span>
+          <span className="text-[12px] font-black text-white uppercase tracking-[0.8em] animate-pulse">
+            Syncing Registry...
+          </span>
         </div>
       )}
     </div>
