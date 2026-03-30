@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'; // Added Fragment
+import { useState, useEffect, useMemo, Fragment } from 'react'; 
 import { 
   FileDown, Loader2, Search, CheckCircle2, RefreshCcw, ChevronDown, ChevronUp, History
 } from 'lucide-react';
@@ -47,7 +47,7 @@ const SuperAdminReports = () => {
     // 2. REGISTRY FILTERS
     const filteredByReview = indicators.filter(i => {
         const matchesSearch = i.activityDescription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                             i.assigneeDisplayName?.toLowerCase().includes(searchTerm.toLowerCase());
+                              i.assignee?.name?.toLowerCase().includes(searchTerm.toLowerCase());
         
         if (!matchesSearch) return false;
         if (reviewFilter === 'ALL') return true;
@@ -89,9 +89,8 @@ const SuperAdminReports = () => {
         if (!acc[staffId]) {
           acc[staffId] = {
             id: staffId,
-            name: indicator.assigneeDisplayName || "Unassigned",
-            role: indicator.assignee?.title || "Staff",
-            pf: indicator.assignee?.pjNumber || "N/A",
+            name: indicator.assignee?.name || "Unassigned",
+            pf: indicator.assignee?.pjNumber || "N/A", // Updated to use .pjNumber
             assigned: 0,
             approved: 0,
             overdue: 0,
@@ -180,7 +179,7 @@ const SuperAdminReports = () => {
             <div className="space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <MetricCard title="Overall Completion" value={`${derivedData.institutionalCompletion}%`} progress={derivedData.institutionalCompletion} accentColor="border-[#1d3331]" />
-                <MetricCard title="Current Quarter" value={indicators.length} subtext="Jan 2026 – Mar 2026" accentColor="border-slate-300" />
+                <MetricCard title="Current Indicators" value={indicators.length} subtext="Active Indicators" accentColor="border-slate-300" />
                 <MetricCard title="Overdue Indicators" value={derivedData.overdueCount} subtext="Requires immediate attention" accentColor="border-red-800" isCritical={derivedData.overdueCount > 0} />
               </div>
 
@@ -259,7 +258,7 @@ const SuperAdminReports = () => {
                                         <p className="text-sm font-bold text-[#1d3331] line-clamp-1">{item.activityDescription}</p>
                                         <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">{item.perspective}</p>
                                     </td>
-                                    <td className="px-6 py-5 text-xs font-semibold text-slate-600">{item.assigneeDisplayName}</td>
+                                    <td className="px-6 py-5 text-xs font-semibold text-slate-600">{item.assignee?.name}</td>
                                     <td className="px-6 py-5">
                                         <div className="flex items-center gap-2 justify-center">
                                             <span className="text-[10px] font-black text-[#1d3331]">{item.progress}%</span>
@@ -312,7 +311,7 @@ const SuperAdminReports = () => {
                        const isExpanded = expandedStaff === staff.id;
                        
                        return (
-                        <Fragment key={staff.id}> {/* Changed from React.Fragment */}
+                        <Fragment key={staff.id}>
                           <tr className={`hover:bg-slate-50/30 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`} onClick={() => setExpandedStaff(isExpanded ? null : staff.id)}>
                             <td className="px-8 py-5">
                               <div className="flex items-center gap-3">
