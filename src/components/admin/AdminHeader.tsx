@@ -71,7 +71,7 @@ const AdminHeader = ({ onMenuClick }: HeaderProps) => {
             </p>
 
             <p className="text-[9px] text-emerald-600 font-bold uppercase mt-1">
-              {user?.role || "Registry"}
+              {user?.role || "ORHC"}
             </p>
           </div>
 
