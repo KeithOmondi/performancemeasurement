@@ -19,6 +19,7 @@ export interface ISubmission {
   quarter: 1 | 2 | 3 | 4;
   documents: IDocument[];
   notes: string;
+  submittedBy: string | { _id: string; name: string };
   adminDescriptionEdit?: string;
   submittedAt: string;
   achievedValue: number;
@@ -55,7 +56,7 @@ export interface IIndicator {
   strategicPlanId: any;
   objectiveId: string;
   activityId: string;
-  assignee: any;
+  assignee: { _id: string; name: string; email?: string; pjNumber?: string };
   assignmentType: "User" | "Team";
   reportingCycle: "Quarterly" | "Annual";
   weight: number;
@@ -116,18 +117,19 @@ const initialState: IndicatorState = {
 const getErrorMessage = (error: any): string =>
   error.response?.data?.message || "An unexpected error occurred";
 
-/* ---------------- THUNK ARG TYPES ---------------- */
+const updateIndicatorInState = (
+  state: IndicatorState,
+  updatedInd: IIndicator,
+) => {
+  const idx = state.indicators.findIndex(
+    (i: IIndicator) => i._id === updatedInd._id,
+  );
+  if (idx !== -1) state.indicators[idx] = updatedInd;
 
-type UpdateIndicatorArg = { id: string; data: Partial<IIndicator> };
-
-type SuperAdminReviewArg = {
-  id: string;
-  reviewData: {
-    decision: "Approved" | "Rejected";
-    reason: string;                // Required by backend — always send
-    progressOverride?: number;     // Sets currentSub.achievedValue for this quarter
-    nextDeadline?: string;         // ISO string — required for Quarterly Q1-Q3 approvals
-  };
+  const rejIdx = state.rejectedByAdmin.findIndex(
+    (i: IIndicator) => i._id === updatedInd._id,
+  );
+  if (rejIdx !== -1) state.rejectedByAdmin[rejIdx] = updatedInd;
 };
 
 /* ---------------- THUNKS ---------------- */
@@ -184,7 +186,10 @@ export const createIndicator = createAsyncThunk(
 
 export const updateIndicator = createAsyncThunk(
   "indicators/update",
-  async (arg: UpdateIndicatorArg, { rejectWithValue }) => {
+  async (
+    arg: { id: string; data: Partial<IIndicator> },
+    { rejectWithValue },
+  ) => {
     try {
       const res = await apiPrivate.patch(`/indicators/${arg.id}`, arg.data);
       return res.data.data as IIndicator;
@@ -208,7 +213,7 @@ export const deleteIndicator = createAsyncThunk(
 
 export const superAdminReview = createAsyncThunk(
   "indicators/superAdminReview",
-  async (arg: SuperAdminReviewArg, { rejectWithValue }) => {
+  async (arg: { id: string; reviewData: any }, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.patch(
         `/indicators/${arg.id}/review`,
@@ -233,6 +238,7 @@ const indicatorSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      // All .addCase calls MUST come first
       .addCase(fetchIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -248,11 +254,6 @@ const indicatorSlice = createSlice({
         state.loading = false;
         state.error = action.payload as string;
       })
-
-      .addCase(fetchSubmissionsQueue.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
       .addCase(
         fetchSubmissionsQueue.fulfilled,
         (state, action: PayloadAction<IQueueItem[]>) => {
@@ -260,14 +261,6 @@ const indicatorSlice = createSlice({
           state.queue = action.payload;
         },
       )
-      .addCase(fetchSubmissionsQueue.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
-      })
-
-      .addCase(fetchRejectedByAdmin.pending, (state) => {
-        state.loading = true;
-      })
       .addCase(
         fetchRejectedByAdmin.fulfilled,
         (state, action: PayloadAction<IIndicator[]>) => {
@@ -275,15 +268,6 @@ const indicatorSlice = createSlice({
           state.rejectedByAdmin = action.payload;
         },
       )
-      .addCase(fetchRejectedByAdmin.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
-      })
-
-      .addCase(createIndicator.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
       .addCase(
         createIndicator.fulfilled,
         (state, action: PayloadAction<IIndicator>) => {
@@ -291,59 +275,38 @@ const indicatorSlice = createSlice({
           state.indicators.unshift(action.payload);
         },
       )
-      .addCase(createIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-
-      .addCase(updateIndicator.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(
-        updateIndicator.fulfilled,
-        (state, action: PayloadAction<IIndicator>) => {
-          state.actionLoading = false;
-          const index = state.indicators.findIndex(
-            (i) => i._id === action.payload._id,
-          );
-          if (index !== -1) state.indicators[index] = action.payload;
-        },
-      )
-
       .addCase(
         deleteIndicator.fulfilled,
         (state, action: PayloadAction<string>) => {
           state.actionLoading = false;
           state.indicators = state.indicators.filter(
-            (i) => i._id !== action.payload,
+            (i: IIndicator) => i._id !== action.payload,
           );
-          state.queue = state.queue.filter((q) => q._id !== action.payload);
+          state.queue = state.queue.filter(
+            (q: IQueueItem) => q._id !== action.payload,
+          );
           state.rejectedByAdmin = state.rejectedByAdmin.filter(
-            (i) => i._id !== action.payload,
+            (i: IIndicator) => i._id !== action.payload,
           );
         },
       )
-
-      .addCase(superAdminReview.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(
-        superAdminReview.fulfilled,
+      // Matcher MUST come after all addCase calls
+      .addMatcher(
+        (action) =>
+          [
+            updateIndicator.fulfilled.type,
+            superAdminReview.fulfilled.type,
+          ].includes(action.type),
         (state, action: PayloadAction<IIndicator>) => {
           state.actionLoading = false;
-          const index = state.indicators.findIndex(
-            (i) => i._id === action.payload._id,
-          );
-          if (index !== -1) state.indicators[index] = action.payload;
-          state.queue = state.queue.filter((q) => q._id !== action.payload._id);
+          updateIndicatorInState(state, action.payload);
+          if (action.type === superAdminReview.fulfilled.type) {
+            state.queue = state.queue.filter(
+              (q: IQueueItem) => q._id !== action.payload._id,
+            );
+          }
         },
-      )
-      .addCase(superAdminReview.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
+      );
   },
 });
 

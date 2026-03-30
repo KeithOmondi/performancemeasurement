@@ -26,8 +26,8 @@ const AdminHeader = ({ onMenuClick }: HeaderProps) => {
             className="h-8 md:h-10 object-contain"
           />
 
-          <h1 className="font-bold text-[10px] md:text-sm uppercase hidden sm:block text-slate-800">
-            Judicial Registry
+          <h1 className="font-bold font-serif text-[10px] md:text-sm uppercase hidden sm:block text-slate-800">
+            OFFICE OF THE REGISTRAR HIGH COURT
           </h1>
         </div>
       </div>

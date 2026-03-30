@@ -103,6 +103,12 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
     },
     {
       type: "link",
+      name: "Teams",
+      path: "/superadmin/teams",
+      icon: <Book size={18} />,
+    },
+    {
+      type: "link",
       name: "PMMU Registry",
       path: "/superadmin/registry",
       icon: <Folder size={18} />,

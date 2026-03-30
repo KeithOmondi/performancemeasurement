@@ -1,13 +1,23 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  X, CheckCircle2, FileText, Calendar, ShieldCheck,
-  RotateCcw, Loader2, Lock, User, Paperclip, ExternalLink
+  X,
+  CheckCircle2,
+  FileText,
+  Calendar,
+  ShieldCheck,
+  RotateCcw,
+  Loader2,
+  Lock,
+  User,
+  Users,
+  Paperclip,
+  ExternalLink,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   superAdminReview,
   type IIndicator,
-  type ISubmission
+  type ISubmission,
 } from "../../store/slices/indicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 import toast from "react-hot-toast";
@@ -21,18 +31,21 @@ export interface Props {
 
 const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const dispatch = useAppDispatch();
-  const isProcessing = useAppSelector((state) => state.indicators.actionLoading);
+  const isProcessing = useAppSelector(
+    (state) => state.indicators.actionLoading,
+  );
 
-  // ✅ Pull strategic plans from store to resolve perspective/objective/activity
   const { plans } = useAppSelector((state) => state.strategicPlan);
 
   const [decisionReason, setDecisionReason] = useState("");
   const [progressOverride, setProgressOverride] = useState<number>(0);
   const [nextDeadline, setNextDeadline] = useState<string>("");
   const [showRejectReason, setShowRejectReason] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
 
-  // ✅ Fetch plans if not already loaded
   useEffect(() => {
     if (plans.length === 0) dispatch(getAllStrategicPlans());
   }, [dispatch, plans.length]);
@@ -40,17 +53,25 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const targetQ = useMemo(() => indicator.activeQuarter, [indicator]);
 
   const { activeSubmission, cycleLabel, isLastQuarter } = useMemo(() => {
-    const label = indicator.reportingCycle === "Annual" ? "Annual" : `Q${targetQ}`;
-    const submission = indicator.submissions?.find((s: ISubmission) => s.quarter === targetQ);
+    const label =
+      indicator.reportingCycle === "Annual" ? "Annual" : `Q${targetQ}`;
+    const submission = indicator.submissions?.find(
+      (s: ISubmission) => s.quarter === targetQ,
+    );
     const last = indicator.reportingCycle === "Annual" || targetQ === 4;
-    return { activeSubmission: submission || null, cycleLabel: label, isLastQuarter: last };
+    return {
+      activeSubmission: submission || null,
+      cycleLabel: label,
+      isLastQuarter: last,
+    };
   }, [indicator, targetQ]);
 
-  // ✅ Resolve perspective, objectiveTitle, activityDescription from strategic plans
-  // Falls back to fields already on indicator (populated by backend transformer)
   const { perspective, objectiveTitle, activityDescription } = useMemo(() => {
-    // If the indicator already has these fields (from transformer), use them directly
-    if (indicator.perspective && indicator.objectiveTitle && indicator.activityDescription) {
+    if (
+      indicator.perspective &&
+      indicator.objectiveTitle &&
+      indicator.activityDescription
+    ) {
       return {
         perspective: indicator.perspective,
         objectiveTitle: indicator.objectiveTitle,
@@ -58,39 +79,51 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       };
     }
 
-    // Otherwise resolve from the strategic plans store
-    const planId = typeof indicator.strategicPlanId === "object"
-      ? indicator.strategicPlanId?._id
-      : indicator.strategicPlanId;
+    const planId =
+      typeof indicator.strategicPlanId === "object"
+        ? indicator.strategicPlanId?._id
+        : indicator.strategicPlanId;
 
     const plan = plans.find((p) => p._id === planId);
-
     const objective = plan?.objectives?.find(
-      (obj) => obj._id === indicator.objectiveId
+      (obj) => obj._id === indicator.objectiveId,
     );
-
     const activity = objective?.activities?.find(
-      (act) => act._id === indicator.activityId
+      (act) => act._id === indicator.activityId,
     );
 
     return {
       perspective: plan?.perspective || indicator.perspective || "N/A",
-      objectiveTitle: objective?.title || indicator.objectiveTitle || "Strategic Objective",
-      activityDescription: activity?.description || indicator.activityDescription || "No description provided",
+      objectiveTitle:
+        objective?.title || indicator.objectiveTitle || "Strategic Objective",
+      activityDescription:
+        activity?.description ||
+        indicator.activityDescription ||
+        "No description provided",
     };
   }, [indicator, plans]);
 
   useEffect(() => {
-    setProgressOverride(activeSubmission?.achievedValue ?? indicator.currentTotalAchieved ?? 0);
+    setProgressOverride(
+      activeSubmission?.achievedValue ?? indicator.currentTotalAchieved ?? 0,
+    );
     setDecisionReason("");
     setNextDeadline("");
     setShowRejectReason(false);
   }, [indicator, activeSubmission]);
 
   const isCertified =
-    activeSubmission?.reviewStatus === "Accepted" || indicator.status === "Completed";
+    activeSubmission?.reviewStatus === "Accepted" ||
+    indicator.status === "Completed";
 
   const canAct = indicator.status === "Awaiting Super Admin" && !isCertified;
+
+  // ── Assignee display ─────────────────────────────────────────────────
+  // assignmentType tells us whether this is a User or Team assignment.
+  // assigneeDisplayName is already resolved by the backend transformer for
+  // both cases (user's full name OR team name).
+  const isTeamAssignment = indicator.assignmentType === "Team";
+  const assigneeLabel = indicator.assigneeDisplayName || "Unassigned";
 
   const handleCertification = async (decision: "Approved" | "Rejected") => {
     if (decision === "Rejected" && !showRejectReason) {
@@ -107,7 +140,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       !isLastQuarter &&
       !nextDeadline
     ) {
-      toast.error(`Please set the Q${targetQ + 1} submission deadline before certifying.`);
+      toast.error(
+        `Please set the Q${targetQ + 1} submission deadline before certifying.`,
+      );
       return;
     }
 
@@ -121,7 +156,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             progressOverride,
             nextDeadline: nextDeadline || undefined,
           },
-        })
+        }),
       ).unwrap();
 
       toast.success(
@@ -129,7 +164,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           ? isLastQuarter
             ? `${cycleLabel} — Final certification complete.`
             : `Q${targetQ} certified. Q${targetQ + 1} is now open.`
-          : `${cycleLabel} returned for correction.`
+          : `${cycleLabel} returned for correction.`,
       );
 
       onClose();
@@ -143,29 +178,26 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   return (
     <div className="bg-[#fcfcf7] w-full h-full flex flex-col shadow-2xl overflow-hidden font-sans relative">
 
-      {/* ✅ Header — now uses resolved perspective, objectiveTitle, activityDescription */}
+      {/* ── Header ──────────────────────────────────────────────────── */}
       <header className="bg-[#1d3331] px-8 py-7 flex justify-between items-start shrink-0 border-b-4 border-[#c2a336]">
         <div className="flex items-start gap-5">
-          <div className={`h-12 w-12 rounded-xl flex items-center justify-center border transition-all mt-1 ${
-            isCertified
-              ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
-              : "bg-[#c2a336]/10 border-[#c2a336]/20 text-[#c2a336]"
-          }`}>
+          <div
+            className={`h-12 w-12 rounded-xl flex items-center justify-center border transition-all mt-1 ${
+              isCertified
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
+                : "bg-[#c2a336]/10 border-[#c2a336]/20 text-[#c2a336]"
+            }`}
+          >
             {isCertified ? <ShieldCheck size={26} /> : <FileText size={24} />}
           </div>
 
           <div className="space-y-2">
-            {/* ✅ Perspective — replaces hardcoded "CORE BUSINESS / MANDATE" */}
             <p className="text-[10px] font-black uppercase text-[#c2a336] tracking-[0.2em]">
               {perspective}
             </p>
-
-            {/* ✅ Objective title */}
             <p className="text-[9px] font-black uppercase text-white/50 tracking-widest">
               {objectiveTitle}
             </p>
-
-            {/* ✅ Activity description — the main heading */}
             <h2 className="text-lg font-bold text-white font-serif leading-tight max-w-xl uppercase tracking-tight">
               {activityDescription}
             </h2>
@@ -174,10 +206,15 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               <span className="bg-[#c2a336] text-[9px] text-[#1d3331] px-3 py-1 rounded-full font-black uppercase">
                 {indicator.status?.replace(/-/g, " ") || "Pending"}
               </span>
+
+              {/* Assignee pill — icon changes for team vs individual */}
               <div className="bg-white/10 text-[9px] text-white px-3 py-1 rounded-full font-black uppercase flex items-center gap-1.5 border border-white/10">
-                <User size={10} className="text-[#c2a336]" />
-                {indicator.assigneeDisplayName || "Registry Team"}
+                {isTeamAssignment
+                  ? <Users size={10} className="text-[#c2a336]" />
+                  : <User size={10} className="text-[#c2a336]" />}
+                {assigneeLabel}
               </div>
+
               <div className="bg-white/10 text-[9px] text-white px-3 py-1 rounded-full font-black uppercase flex items-center gap-1.5 border border-white/10">
                 <Calendar size={10} className="text-[#c2a336]" />
                 {indicator.deadline
@@ -188,7 +225,10 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           </div>
         </div>
 
-        <button onClick={onClose} className="text-white/30 hover:text-white p-2 bg-white/5 rounded-lg transition-colors">
+        <button
+          onClick={onClose}
+          className="text-white/30 hover:text-white p-2 bg-white/5 rounded-lg transition-colors"
+        >
           <X size={20} />
         </button>
       </header>
@@ -196,7 +236,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       <main className="flex-1 overflow-y-auto bg-white">
         <div className="max-w-3xl mx-auto py-8 px-8 space-y-12">
 
-          {/* Indicator Details */}
+          {/* ── Indicator Details ──────────────────────────────────── */}
           <section className="space-y-6">
             <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em] border-b border-slate-100 pb-3">
               Indicator Details
@@ -221,21 +261,44 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             </div>
           </section>
 
-          {/* Assignment */}
+          {/* ── Assignment ────────────────────────────────────────── */}
           <section className="space-y-6">
             <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em] border-b border-slate-100 pb-3">
               Assignment
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+              {/* Assignee display — adapts for Team vs Individual */}
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Assign To</label>
-                <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#1d3331] flex justify-between items-center">
-                  {indicator.assigneeDisplayName || "Select Staff"}
-                  <X size={14} className="text-slate-300" />
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  {isTeamAssignment ? "Assigned Group" : "Assigned To"}
+                </label>
+                <div
+                  className={`w-full p-4 border rounded-xl text-sm font-bold flex items-center gap-3 ${
+                    isTeamAssignment
+                      ? "bg-violet-50 border-violet-100 text-violet-800"
+                      : "bg-slate-50 border-slate-200 text-[#1d3331]"
+                  }`}
+                >
+                  {isTeamAssignment ? (
+                    <Users size={16} className="text-violet-500 shrink-0" />
+                  ) : (
+                    <User size={16} className="text-slate-400 shrink-0" />
+                  )}
+                  <span className="truncate">{assigneeLabel}</span>
+                  {isTeamAssignment && (
+                    <span className="ml-auto shrink-0 text-[9px] font-black bg-violet-100 text-violet-600 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      Team
+                    </span>
+                  )}
                 </div>
               </div>
+
+              {/* Deadline */}
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Deadline</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Deadline
+                </label>
                 <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-[#1d3331] flex items-center gap-3">
                   <Calendar size={16} className="text-slate-400" />
                   {indicator.deadline
@@ -244,42 +307,51 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                 </div>
               </div>
             </div>
-            <button className="px-6 py-3 bg-[#1d3331] text-white rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all">
-              Save Assignment
-            </button>
           </section>
 
-          {/* Evidence */}
+          {/* ── Evidence ──────────────────────────────────────────── */}
           <section className="space-y-6 pb-20">
             <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em] border-b border-slate-100 pb-3">
               Evidence / Supporting Documents
             </h3>
 
-            {activeSubmission?.documents && activeSubmission.documents.length > 0 ? (
+            {activeSubmission?.documents &&
+            activeSubmission.documents.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {activeSubmission.documents.map((doc: any, i: number) => (
                   <button
                     key={i}
-                    onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: doc.fileName || "Evidence File" })}
+                    onClick={() =>
+                      setPreviewFile({
+                        url: doc.evidenceUrl,
+                        name: doc.fileName || "Evidence File",
+                      })
+                    }
                     className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-[#1d3331] group transition-all text-left"
                   >
                     <div className="flex items-center gap-3 overflow-hidden">
-                      <FileText className="text-slate-400 group-hover:text-[#1d3331] shrink-0" size={16} />
+                      <FileText
+                        className="text-slate-400 group-hover:text-[#1d3331] shrink-0"
+                        size={16}
+                      />
                       <span className="text-[11px] font-black text-slate-600 truncate uppercase">
                         {doc.fileName || "Evidence File"}
                       </span>
                     </div>
-                    <ExternalLink size={14} className="text-slate-300 group-hover:text-[#1d3331] shrink-0" />
+                    <ExternalLink
+                      size={14}
+                      className="text-slate-300 group-hover:text-[#1d3331] shrink-0"
+                    />
                   </button>
                 ))}
               </div>
             ) : (
-              <div className="py-12 bg-[#fcfcf7] border-2 border-dashed border-emerald-100 rounded-3xl flex flex-col items-center justify-center text-center group cursor-pointer hover:border-[#c2a336]/40 transition-all">
-                <div className="mb-4 text-slate-400 group-hover:scale-110 transition-transform">
+              <div className="py-12 bg-[#fcfcf7] border-2 border-dashed border-emerald-100 rounded-3xl flex flex-col items-center justify-center text-center">
+                <div className="mb-4 text-slate-400">
                   <Paperclip size={32} strokeWidth={1.5} />
                 </div>
                 <p className="text-xs font-bold text-slate-600 mb-1">
-                  <span className="text-[#1d3331] underline">Click to upload</span> or drag files here
+                  No evidence uploaded yet
                 </p>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
                   PDF, DOCX, XLSX, JPG — max 10 MB per file
@@ -288,18 +360,33 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             )}
           </section>
 
-          {/* Certification Card */}
-          <div className={`p-8 rounded-[2rem] shadow-2xl space-y-8 border-b-[10px] transition-all duration-500 ${
-            isCertified ? "bg-emerald-900 border-emerald-500" : "bg-[#1d3331] border-[#c2a336]"
-          } text-white`}>
+          {/* ── Certification Card ────────────────────────────────── */}
+          <div
+            className={`p-8 rounded-[2rem] shadow-2xl space-y-8 border-b-[10px] transition-all duration-500 ${
+              isCertified
+                ? "bg-emerald-900 border-emerald-500"
+                : "bg-[#1d3331] border-[#c2a336]"
+            } text-white`}
+          >
             <div className="flex items-center gap-4">
-              <div className={`p-2 rounded-lg ${isCertified ? "bg-emerald-500/20" : "bg-white/10"}`}>
-                {isCertified
-                  ? <ShieldCheck size={24} className="text-emerald-400" />
-                  : <Lock size={24} className={canAct ? "text-[#c2a336]" : "text-white/20"} />}
+              <div
+                className={`p-2 rounded-lg ${isCertified ? "bg-emerald-500/20" : "bg-white/10"}`}
+              >
+                {isCertified ? (
+                  <ShieldCheck size={24} className="text-emerald-400" />
+                ) : (
+                  <Lock
+                    size={24}
+                    className={canAct ? "text-[#c2a336]" : "text-white/20"}
+                  />
+                )}
               </div>
               <h3 className="text-[11px] font-black uppercase tracking-[0.3em]">
-                {isCertified ? "Record Certified" : canAct ? "Certification Verdict" : "Not Ready for Certification"}
+                {isCertified
+                  ? "Record Certified"
+                  : canAct
+                    ? "Certification Verdict"
+                    : "Not Ready for Certification"}
               </h3>
             </div>
 
@@ -313,7 +400,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     <input
                       type="number"
                       value={progressOverride}
-                      onChange={(e) => setProgressOverride(Number(e.target.value))}
+                      onChange={(e) =>
+                        setProgressOverride(Number(e.target.value))
+                      }
                       className="w-full p-4 bg-black/40 border border-white/10 rounded-2xl font-black text-lg text-white outline-none focus:border-[#c2a336] transition-all"
                     />
                   </div>
@@ -354,7 +443,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     className="flex-[2] py-5 bg-[#c2a336] text-[#1d3331] rounded-2xl font-black text-[11px] uppercase tracking-[0.25em] hover:bg-white hover:scale-[1.02] transition-all flex items-center justify-center gap-3 disabled:opacity-30"
                   >
                     <CheckCircle2 size={18} />
-                    {isLastQuarter ? "Certify Performance" : "Approve & Open Next Period"}
+                    {isLastQuarter
+                      ? "Certify Performance"
+                      : "Approve & Open Next Period"}
                   </button>
                   <button
                     onClick={() => handleCertification("Rejected")}
@@ -372,6 +463,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </div>
             )}
           </div>
+
         </div>
       </main>
 
