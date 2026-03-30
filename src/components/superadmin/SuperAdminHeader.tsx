@@ -1,24 +1,33 @@
 import { useState } from "react";
-import { useSelector } from "react-redux";
-import { Search, Bell, Mail, PlusCircle, Check, Menu } from "lucide-react";
+import { useSelector, useDispatch } from "react-redux"; // Added useDispatch
+import { Search, Bell, Mail, LogOut, Check, Menu } from "lucide-react"; // Replaced PlusCircle with LogOut
 import SlideOver from "./SlideOver";
-import type { RootState } from "../../store/store";
+import type { RootState, AppDispatch } from "../../store/store"; // Import AppDispatch
+import { logout } from "../../store/slices/auth/authSlice";
 
 interface HeaderProps {
   onMenuClick: () => void;
 }
 
 const SuperAdminHeader = ({ onMenuClick }: HeaderProps) => {
+  const dispatch = useDispatch<AppDispatch>();
   const [activePanel, setActivePanel] = useState<"notifications" | "messages" | null>(null);
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
   
-  // Fetch real users from Redux
+  // Fetch users and auth status from Redux
   const { users } = useSelector((state: RootState) => state.users);
+  const { isLoading } = useSelector((state: RootState) => state.auth);
 
   const toggleRecipient = (userId: string) => {
     setSelectedRecipients((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
     );
+  };
+
+  const handleLogout = () => {
+    if (window.confirm("Are you sure you want to log out?")) {
+      dispatch(logout());
+    }
   };
 
   return (
@@ -66,10 +75,14 @@ const SuperAdminHeader = ({ onMenuClick }: HeaderProps) => {
           </button>
         </div>
 
-        {/* Assign Button */}
-        <button className="flex items-center gap-2 bg-[#eab308] text-black p-2 md:px-4 md:py-2 rounded-md text-xs font-bold uppercase hover:bg-yellow-500 transition-colors">
-          <PlusCircle size={16} />
-          <span className="hidden lg:inline">Assign Indicator</span>
+        {/* Logout Button (Replaced Assign Indicator) */}
+        <button 
+          onClick={handleLogout}
+          disabled={isLoading}
+          className="flex items-center gap-2 bg-red-50 text-red-600 p-2 md:px-4 md:py-2 rounded-md text-xs font-bold uppercase hover:bg-red-600 hover:text-white transition-all border border-red-100"
+        >
+          <LogOut size={16} />
+          <span className="hidden lg:inline">{isLoading ? "Logging out..." : "Logout"}</span>
         </button>
       </div>
 
@@ -81,7 +94,7 @@ const SuperAdminHeader = ({ onMenuClick }: HeaderProps) => {
         </div>
       </SlideOver>
 
-      {/* Messages SlideOver - Restored mapping logic */}
+      {/* Messages SlideOver */}
       <SlideOver isOpen={activePanel === "messages"} onClose={() => setActivePanel(null)} title="Messages" icon={<Mail size={18} />}>
         <div className="flex flex-col h-full bg-slate-50">
           <div className="bg-white border-b p-4">
