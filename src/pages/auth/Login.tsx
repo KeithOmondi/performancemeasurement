@@ -69,10 +69,10 @@ const LoginPage = () => {
             <ShieldCheck size={14} className="text-[#2d5a43]" /> PMMU Portal
           </span>
         </div>
-        <h1 className="text-3xl md:text-4xl font-serif font-bold text-[#2d5a43] tracking-tight uppercase">
+        <h1 className="text-3xl md:text-2xl font-serif font-bold text-[#2d5a43] tracking-tight uppercase">
           Office of the Registrar
         </h1>
-        <p className="text-[#b19149] font-bold tracking-[0.3em] text-xs uppercase">
+        <p className="text-[#b19149] font-serif font-bold tracking-[0.3em] text-xs uppercase">
           High Court of Kenya
         </p>
       </div>
