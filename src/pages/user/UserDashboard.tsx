@@ -102,8 +102,8 @@ const UserDashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <Scale className="text-[#1E3A2B]" size={24} />
             <div>
-              <h1 className="text-xl font-black text-[#1E3A2B] uppercase tracking-tight">Performance Console</h1>
-              <p className="text-[#C69214] font-bold text-[9px] uppercase tracking-[0.2em]">PMMU Registry Oversight</p>
+              <h1 className="text-xl font-black text-[#1E3A2B] font-serif uppercase tracking-tight">Performance DashBoard</h1>
+              <p className="text-[#C69214] font-bold text-[9px] uppercase tracking-[0.2em]">PMMU Oversight</p>
             </div>
           </div>
           <div className="hidden sm:block text-right">

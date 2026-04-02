@@ -78,7 +78,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
         <header className="p-8 border-b flex justify-between items-center bg-slate-50/50">
           <div>
             <h2 className="text-xl font-black text-[#1a3a32] uppercase tracking-tight">Correction Protocol</h2>
-            <p className="text-[10px] font-bold text-rose-500 uppercase mt-1">Registry Re-submission • {periodDisplay}</p>
+            <p className="text-[10px] font-bold text-rose-500 uppercase mt-1">Re-submission • {periodDisplay}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20} /></button>
         </header>
@@ -197,11 +197,11 @@ const UserRejections = () => {
     <div className="p-6 md:p-10 bg-[#fdfdfd] min-h-screen font-sans">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
         <div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tighter uppercase">
-            Correction <span className="text-rose-500">Hub</span>
+          <h1 className="text-2xl font-serif font-black green-slate500 text-slate-900 tracking-tighter uppercase">
+            Rejected Assignments
           </h1>
           <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-2">
-            PMMU Registry • {rejectedIndicators.length} Flagged Assignments
+            PMMU • {rejectedIndicators.length} Flagged Assignments
           </p>
         </div>
         <div className="relative">

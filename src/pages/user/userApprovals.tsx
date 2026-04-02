@@ -57,8 +57,8 @@ const UserApprovals = () => {
              <div className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Finalized Records</span>
           </div>
-          <h1 className="text-3xl font-black text-[#1a3a32] tracking-tighter uppercase">
-            Completed Registry
+          <h1 className="text-2xl font-serif font-black text-[#1a3a32] tracking-tighter uppercase">
+            Completed Assignments
           </h1>
         </div>
 

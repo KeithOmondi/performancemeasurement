@@ -65,7 +65,7 @@ const UserHistory: React.FC = () => {
             <History size={28} />
           </div>
           <div>
-            <h1 className="text-3xl font-black text-[#1a3a32] uppercase tracking-tighter italic">Activity Log</h1>
+            <h1 className="text-2xl font-black text-[#1a3a32] uppercase tracking-tighter font-serif">Activity Log</h1>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Full audit trail of your submissions and reviews</p>
           </div>
         </div>

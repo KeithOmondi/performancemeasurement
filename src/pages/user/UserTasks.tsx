@@ -113,9 +113,9 @@ const UserTasks = () => {
             <div className="flex items-center gap-2 text-[#c2a336] text-[10px] font-black uppercase tracking-[0.3em]">
               <Activity size={16} /> Strategic Performance Unit
             </div>
-            <h1 className="text-4xl font-black tracking-tighter leading-tight">
+            <h1 className="text-2xl font-black font-serif tracking-tighter leading-tight">
               Active{" "}
-              <span className="text-gray-300 font-light italic">
+              <span className="text-gray-300 font-serif font-light italic">
                 Assignments
               </span>
             </h1>
