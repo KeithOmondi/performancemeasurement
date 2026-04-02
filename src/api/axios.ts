@@ -5,14 +5,15 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const axiosConfig = {
   baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
-  withCredentials: true, // sends HttpOnly cookies automatically
+  withCredentials: true,
 };
 
 // Public instance — for login, OTP, refresh
-export const api = axios.create(axiosConfig);
+// Timeout of 6s so a dead server doesn't hang the app indefinitely
+export const api = axios.create({ ...axiosConfig, timeout: 6000 });
 
 // Private instance — for all authenticated requests
-export const apiPrivate = axios.create(axiosConfig);
+export const apiPrivate = axios.create({ ...axiosConfig, timeout: 10000 });
 
 // Injected logout handler — avoids circular store imports
 let logoutHandler: (() => void) | null = null;
@@ -21,13 +22,13 @@ export const injectLogoutHandler = (handler: () => void) => {
   logoutHandler = handler;
 };
 
-// Request interceptor — cookies are sent automatically, nothing to inject
+// Request interceptor — cookies sent automatically, nothing to inject
 apiPrivate.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => config,
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 by refreshing the cookie
+// Response interceptor — on 401, attempt a silent token refresh
 apiPrivate.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -37,13 +38,9 @@ apiPrivate.interceptors.response.use(
       prevRequest._retry = true;
 
       try {
-        // Backend sets a new accessToken cookie on this call
         await api.get("/auth/refresh");
-
-        // Retry the original request — new cookie is now in the jar
         return apiPrivate(prevRequest);
       } catch (refreshError) {
-        // Refresh failed — session is dead, log the user out
         if (logoutHandler) logoutHandler();
         return Promise.reject(refreshError);
       }

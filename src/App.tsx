@@ -1,7 +1,12 @@
 import { useEffect, useMemo } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "./store/hooks";
-import { checkAuth } from "./store/slices/auth/authSlice";
+import { checkAuth, SESSION_KEY } from "./store/slices/auth/authSlice";
 
 // Layouts
 import ProtectedRoute from "./routes/ProtectedRoute";
@@ -22,6 +27,7 @@ import SuperAdminReviewer from "./pages/superadmin/SuperAdminReviewer";
 import SuperAdminSettings from "./pages/superadmin/SuperAdminSettings";
 import SuperAdminExaminers from "./pages/superadmin/SuperAdminExaminers";
 import SuperAdminRegistry from "./pages/superadmin/SuperAdminRegistry";
+import SuperAdminTeams from "./pages/superadmin/Superadminteams";
 
 // Admin pages
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -37,7 +43,6 @@ import UserRejections from "./pages/user/UserRejections";
 import UserHistory from "./pages/user/UserHistory";
 import UserApprovals from "./pages/user/userApprovals";
 import UserTaskIdPage from "./pages/user/UserTaskIdPage";
-import SuperAdminTeams from "./pages/superadmin/Superadminteams";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -55,11 +60,14 @@ const App = () => {
   }, [dispatch]);
 
   const homeRoute = useMemo(
-    () => (user ? HOME_ROUTES[user.role] ?? "/login" : "/login"),
-    [user]
+    () => (user ? (HOME_ROUTES[user.role] ?? "/login") : "/login"),
+    [user],
   );
 
-  if (isCheckingAuth) {
+  // Only show the spinner when we know there's a real session to validate.
+  // Guests (no SESSION_KEY) get the login page instantly — no network wait.
+  const hasSessionHint = !!localStorage.getItem(SESSION_KEY);
+  if (isCheckingAuth && hasSessionHint) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-[#fcfcf7]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#eab308] mb-4" />
@@ -73,30 +81,53 @@ const App = () => {
   return (
     <Router>
       <Routes>
-        {/* ── Public ─────────────────────────────────────────────────── */}
+        {/* ── Public ──────────────────────────────────────────────────── */}
         <Route
           path="/login"
           element={!user ? <LoginPage /> : <Navigate to={homeRoute} replace />}
         />
 
-        {/* ── SuperAdmin ──────────────────────────────────────────────── */}
+        {/* ── SuperAdmin ───────────────────────────────────────────────── */}
         <Route element={<ProtectedRoute allowedRoles={["superadmin"]} />}>
           <Route element={<SuperAdminLayout />}>
-            <Route path="/superadmin/dashboard" element={<SuperAdminDashboardPage />} />
+            <Route
+              path="/superadmin/dashboard"
+              element={<SuperAdminDashboardPage />}
+            />
             <Route path="/superadmin/team" element={<SuperAdminMembers />} />
-            <Route path="/superadmin/indicators" element={<SuperAdminIndicators />} />
-            <Route path="/superadmin/submissions" element={<SuperAdminSubmissions />} />
+            <Route
+              path="/superadmin/indicators"
+              element={<SuperAdminIndicators />}
+            />
+            <Route
+              path="/superadmin/submissions"
+              element={<SuperAdminSubmissions />}
+            />
             <Route path="/superadmin/reports" element={<SuperAdminReports />} />
-            <Route path="/superadmin/reviewer" element={<SuperAdminReviewer />} />
-            <Route path="/superadmin/settings" element={<SuperAdminSettings />} />
-            <Route path="/superadmin/examiner" element={<SuperAdminExaminers />} />
-            <Route path="/superadmin/registry" element={<SuperAdminRegistry />} />
+            <Route
+              path="/superadmin/reviewer"
+              element={<SuperAdminReviewer />}
+            />
+            <Route
+              path="/superadmin/settings"
+              element={<SuperAdminSettings />}
+            />
+            <Route
+              path="/superadmin/examiner"
+              element={<SuperAdminExaminers />}
+            />
+            <Route
+              path="/superadmin/registry"
+              element={<SuperAdminRegistry />}
+            />
             <Route path="/superadmin/teams" element={<SuperAdminTeams />} />
           </Route>
         </Route>
 
-        {/* ── Admin & Examiner ────────────────────────────────────────── */}
-        <Route element={<ProtectedRoute allowedRoles={["admin", "examiner"]} />}>
+        {/* ── Admin & Examiner ─────────────────────────────────────────── */}
+        <Route
+          element={<ProtectedRoute allowedRoles={["admin", "examiner"]} />}
+        >
           <Route element={<AdminLayout />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
             <Route path="/admin/indicators/all" element={<AdminIndicators />} />

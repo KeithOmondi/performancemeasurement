@@ -1,6 +1,10 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { authService } from "./authService";
 
+// Session hint key — a lightweight flag (NOT the token)
+// Set on login, cleared on logout. Used to skip checkAuth for guests.
+export const SESSION_KEY = "hasSession";
+
 interface User {
   id: string;
   name: string;
@@ -18,10 +22,13 @@ interface AuthState {
   message: string;
 }
 
+const hasSessionHint = !!localStorage.getItem(SESSION_KEY);
+
 const initialState: AuthState = {
   user: null,
   isLoading: false,
-  isCheckingAuth: true, // true on load — prevents flash of login page
+  // Only block UI with spinner if there's a session worth checking
+  isCheckingAuth: hasSessionHint,
   otpSent: false,
   isError: false,
   message: "",
@@ -44,7 +51,10 @@ export const login = createAsyncThunk(
   "auth/login",
   async (loginData: { pjNumber: string; otp: string }, thunkAPI) => {
     try {
-      return await authService.login(loginData);
+      const data = await authService.login(loginData);
+      // Mark session as active — skips checkAuth network call next load
+      localStorage.setItem(SESSION_KEY, "true");
+      return data;
     } catch (error: any) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || error.message
@@ -70,8 +80,12 @@ export const logout = createAsyncThunk(
   "auth/logout",
   async (_, thunkAPI) => {
     try {
-      return await authService.logout();
+      const data = await authService.logout();
+      // Clear session hint so next load skips the auth check
+      localStorage.removeItem(SESSION_KEY);
+      return data;
     } catch (error: any) {
+      localStorage.removeItem(SESSION_KEY);
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || error.message
       );
@@ -79,13 +93,20 @@ export const logout = createAsyncThunk(
   }
 );
 
-// Runs once on app load to restore session from the refresh cookie
+// Runs once on app load — only if session hint exists
 export const checkAuth = createAsyncThunk(
   "auth/checkAuth",
   async (_, thunkAPI) => {
+    // No hint → skip the network round-trip entirely
+    if (!localStorage.getItem(SESSION_KEY)) {
+      return thunkAPI.rejectWithValue("no session");
+    }
+
     try {
       return await authService.checkAuth();
     } catch (error: any) {
+      // Stale hint (cookie expired) — clean up
+      localStorage.removeItem(SESSION_KEY);
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || error.message
       );
@@ -106,7 +127,7 @@ export const authSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // ── Request OTP ──────────────────────────────────────────────────────
+      // ── Request OTP ────────────────────────────────────────────────────
       .addCase(requestOTP.pending, (state) => {
         state.isLoading = true;
         state.isError = false;
@@ -123,7 +144,7 @@ export const authSlice = createSlice({
         state.message = action.payload as string;
       })
 
-      // ── Login ────────────────────────────────────────────────────────────
+      // ── Login ──────────────────────────────────────────────────────────
       .addCase(login.pending, (state) => {
         state.isLoading = true;
         state.isError = false;
@@ -140,7 +161,7 @@ export const authSlice = createSlice({
         state.message = action.payload as string;
       })
 
-      // ── Register ─────────────────────────────────────────────────────────
+      // ── Register ───────────────────────────────────────────────────────
       .addCase(register.pending, (state) => {
         state.isLoading = true;
         state.isError = false;
@@ -155,7 +176,7 @@ export const authSlice = createSlice({
         state.message = action.payload as string;
       })
 
-      // ── Logout ───────────────────────────────────────────────────────────
+      // ── Logout ─────────────────────────────────────────────────────────
       .addCase(logout.fulfilled, (state) => {
         state.user = null;
         state.otpSent = false;
@@ -166,7 +187,7 @@ export const authSlice = createSlice({
         state.user = null;
       })
 
-      // ── Check Auth (on page refresh) ─────────────────────────────────────
+      // ── Check Auth (on page refresh) ───────────────────────────────────
       .addCase(checkAuth.pending, (state) => {
         state.isCheckingAuth = true;
       })
@@ -176,7 +197,7 @@ export const authSlice = createSlice({
       })
       .addCase(checkAuth.rejected, (state) => {
         state.isCheckingAuth = false;
-        state.user = null; // No valid session — show login
+        state.user = null;
       });
   },
 });
