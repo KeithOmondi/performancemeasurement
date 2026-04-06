@@ -1,7 +1,6 @@
 import {
   createSlice,
   createAsyncThunk,
-  type PayloadAction,
 } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
@@ -69,35 +68,29 @@ export interface IIndicator {
   activeQuarter: 1 | 2 | 3 | 4;
   reportingCycle: "Quarterly" | "Annual";
   assignmentType: "User" | "Team";
-
-  // ✅ Updated to match backend controller expectation
   assignee: string; 
   assignedBy: string;
   strategicPlanId: string;
   objectiveId: string;
   activityId: string;
-
   assigneeDisplayName?: string;
   assignedByName?: string;
   perspective?: string;
   objectiveTitle?: string;
   activityDescription?: string;
   assigneePjNumber?: string;
-
   createdAt?: string;
   updatedAt?: string;
-
   submissions?: ISubmission[];
   reviewHistory?: IReviewHistory[];
-
   needsAction?: boolean;
   isOverdue?: boolean;
   adminOverallComments?: string;
 }
 
 export interface IQueueItem {
-  id: string;
-  submissionId: string;
+  id: string; // Submission ID
+  indicatorId: string; // Link to Indicator
   indicatorTitle: string;
   submittedBy: string;
   submittedOn: string;
@@ -141,19 +134,25 @@ const initialState: IndicatorState = {
 const getErrorMessage = (error: any): string =>
   error?.response?.data?.message ?? "An unexpected error occurred";
 
+/**
+ * Updates the indicator in all relevant list states and the selected item.
+ * Uses strict ID comparison to prevent UI flickering.
+ */
 const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
   const replace = (list: IIndicator[]) => {
-    const idx = list.findIndex((i) => i.id === updated.id);
+    const idx = list.findIndex((i) => String(i.id) === String(updated.id));
     if (idx !== -1) {
-      list[idx] = updated;
+      list[idx] = { ...list[idx], ...updated };
       return true;
     }
     return false;
   };
-  if (!replace(state.indicators)) state.indicators.unshift(updated);
+
+  replace(state.indicators);
   replace(state.rejectedByAdmin);
 
-  if (state.selectedIndicator?.id === updated.id) {
+  // If the currently viewed indicator is updated, merge the data
+  if (state.selectedIndicator && String(state.selectedIndicator.id) === String(updated.id)) {
     state.selectedIndicator = { ...state.selectedIndicator, ...updated };
   }
 };
@@ -200,9 +199,7 @@ export const fetchRejectedByAdmin = createAsyncThunk(
   "indicators/fetchRejectedByAdmin",
   async (_: void, { rejectWithValue }) => {
     try {
-      const res = await apiPrivate.get(
-        "/indicators/submissions/rejected-by-admin"
-      );
+      const res = await apiPrivate.get("/indicators/submissions/rejected-by-admin");
       return res.data.data as IIndicator[];
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
@@ -224,10 +221,7 @@ export const createIndicator = createAsyncThunk(
 
 export const updateIndicator = createAsyncThunk(
   "indicators/update",
-  async (
-    arg: { id: string; data: Partial<IIndicator> },
-    { rejectWithValue }
-  ) => {
+  async (arg: { id: string; data: Partial<IIndicator> }, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.patch(`/indicators/${arg.id}`, arg.data);
       return res.data.data as IIndicator;
@@ -251,15 +245,9 @@ export const deleteIndicator = createAsyncThunk(
 
 export const superAdminReview = createAsyncThunk(
   "indicators/superAdminReview",
-  async (
-    arg: { id: string; reviewData: any },
-    { rejectWithValue }
-  ) => {
+  async (arg: { id: string; reviewData: any }, { rejectWithValue }) => {
     try {
-      const res = await apiPrivate.patch(
-        `/indicators/${arg.id}/review`,
-        arg.reviewData
-      );
+      const res = await apiPrivate.patch(`/indicators/${arg.id}/review`, arg.reviewData);
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
@@ -281,12 +269,13 @@ const indicatorSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
+    // FETCH ALL
     builder
       .addCase(fetchIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchIndicators.fulfilled, (state, action: PayloadAction<IIndicator[]>) => {
+      .addCase(fetchIndicators.fulfilled, (state, action) => {
         state.loading = false;
         state.indicators = action.payload;
       })
@@ -295,14 +284,19 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // FETCH BY ID
     builder
       .addCase(fetchIndicatorById.pending, (state) => {
         state.detailLoading = true;
         state.error = null;
+        // Optimization: Do NOT nullify selectedIndicator here to allow Modal to stay open
       })
-      .addCase(fetchIndicatorById.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+      .addCase(fetchIndicatorById.fulfilled, (state, action) => {
         state.detailLoading = false;
-        state.selectedIndicator = action.payload;
+        // Direct set for initial load of modal, then upsert
+        if (!state.selectedIndicator || state.selectedIndicator.id !== action.payload.id) {
+           state.selectedIndicator = action.payload;
+        }
         upsertIndicator(state, action.payload);
       })
       .addCase(fetchIndicatorById.rejected, (state, action) => {
@@ -310,40 +304,21 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // QUEUE & REJECTED LISTS
     builder
-      .addCase(fetchSubmissionsQueue.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(fetchSubmissionsQueue.fulfilled, (state, action: PayloadAction<IQueueItem[]>) => {
-        state.loading = false;
+      .addCase(fetchSubmissionsQueue.fulfilled, (state, action) => {
         state.queue = action.payload;
       })
-      .addCase(fetchSubmissionsQueue.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
-      });
-
-    builder
-      .addCase(fetchRejectedByAdmin.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(fetchRejectedByAdmin.fulfilled, (state, action: PayloadAction<IIndicator[]>) => {
-        state.loading = false;
+      .addCase(fetchRejectedByAdmin.fulfilled, (state, action) => {
         state.rejectedByAdmin = action.payload;
-      })
-      .addCase(fetchRejectedByAdmin.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
       });
 
+    // CREATE
     builder
       .addCase(createIndicator.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
       })
-      .addCase(createIndicator.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+      .addCase(createIndicator.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.indicators.unshift(action.payload);
       })
@@ -352,12 +327,12 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // UPDATE
     builder
       .addCase(updateIndicator.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
       })
-      .addCase(updateIndicator.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+      .addCase(updateIndicator.fulfilled, (state, action) => {
         state.actionLoading = false;
         upsertIndicator(state, action.payload);
       })
@@ -366,33 +341,42 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // DELETE
     builder
       .addCase(deleteIndicator.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
       })
-      .addCase(deleteIndicator.fulfilled, (state, action: PayloadAction<string>) => {
+      .addCase(deleteIndicator.fulfilled, (state, action) => {
         state.actionLoading = false;
-        const id = action.payload;
-        state.indicators = state.indicators.filter((i) => i.id !== id);
-        state.queue = state.queue.filter((q) => q.id !== id);
-        state.rejectedByAdmin = state.rejectedByAdmin.filter((i) => i.id !== id);
-        if (state.selectedIndicator?.id === id) state.selectedIndicator = null;
+        const targetId = action.payload;
+        state.indicators = state.indicators.filter((i) => String(i.id) !== String(targetId));
+        state.queue = state.queue.filter((q) => String(q.indicatorId) !== String(targetId));
+        state.rejectedByAdmin = state.rejectedByAdmin.filter((i) => String(i.id) !== String(targetId));
+        
+        // Critical: Only clear selected if it's the one deleted
+        if (state.selectedIndicator && String(state.selectedIndicator.id) === String(targetId)) {
+          state.selectedIndicator = null;
+        }
       })
       .addCase(deleteIndicator.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload as string;
       });
 
+    // SUPER ADMIN REVIEW (STABILIZED)
     builder
       .addCase(superAdminReview.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
       })
-      .addCase(superAdminReview.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+      .addCase(superAdminReview.fulfilled, (state, action) => {
         state.actionLoading = false;
-        upsertIndicator(state, action.payload);
-        state.queue = state.queue.filter((q) => q.id !== action.payload.id);
+        const updated = action.payload;
+        
+        upsertIndicator(state, updated);
+        
+        // Ensure the queue is cleaned of any submissions belonging to this indicator
+        state.queue = state.queue.filter((q) => String(q.indicatorId) !== String(updated.id));
       })
       .addCase(superAdminReview.rejected, (state, action) => {
         state.actionLoading = false;

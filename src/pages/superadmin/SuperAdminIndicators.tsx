@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, ArrowRight, Loader2, AlertCircle, Calendar } from "lucide-react";
+import { Plus, ArrowRight, Loader2, Calendar } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
@@ -12,22 +12,21 @@ import {
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 
-import SuperAdminAssign from "./SuperAdminAssign";
+import SuperAdminAssign, { type AssignPrefill } from "./SuperAdminAssign";
 import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────── */
+/* ─── TYPES & HELPERS ────────────────────────────────────────────────── */
 
 interface IndicatorSectionProps {
   perspective: string;
   objective: any;
+  plan: any;
   indicators: IIndicator[];
   userMap: Record<string, any>;
-  onAssign: () => void;
+  onAssign: (prefill: AssignPrefill) => void;
   onSelectAssignment: (indicator: IIndicator) => void;
   activeFilter: string;
 }
-
-/* ─── HELPERS ────────────────────────────────────────────────────────── */
 
 const matchId = (a: any, b: any): boolean => {
   const extract = (v: any): string => {
@@ -48,7 +47,7 @@ const resolveIds = (assignee: any): string[] => {
   if (!assignee) return [];
   if (Array.isArray(assignee)) {
     return assignee.map((a: any) =>
-      typeof a === "object" ? String(a.id ?? a._id ?? "") : String(a)
+      typeof a === "object" ? String(a.id ?? a._id ?? "") : String(a),
     );
   }
   return [
@@ -57,8 +56,6 @@ const resolveIds = (assignee: any): string[] => {
       : String(assignee),
   ];
 };
-
-/* ─── CONSTANTS ──────────────────────────────────────────────────────── */
 
 const PERSPECTIVE_ORDER: Record<string, number> = {
   "CORE BUSINESS": 1,
@@ -73,6 +70,7 @@ const PERSPECTIVE_ORDER: Record<string, number> = {
 const IndicatorSection = ({
   perspective,
   objective,
+  plan,
   indicators,
   userMap,
   onAssign,
@@ -83,8 +81,8 @@ const IndicatorSection = ({
 
   const assignedCount = visibleActivities.filter((act) =>
     (indicators || []).some((ind) =>
-      matchId(ind.activityId, act.id ?? act._id)
-    )
+      matchId(ind.activityId, act.id ?? act._id),
+    ),
   ).length;
 
   return (
@@ -112,7 +110,7 @@ const IndicatorSection = ({
       {visibleActivities.map((activity: any) => {
         const activityId = activity.id ?? activity._id;
         const assignment = (indicators || []).find((ind) =>
-          matchId(ind.activityId, activityId)
+          matchId(ind.activityId, activityId),
         );
         const ids = resolveIds(assignment?.assignee);
         const primaryUser = userMap[ids[0]];
@@ -130,9 +128,7 @@ const IndicatorSection = ({
                 </span>
               </div>
             </td>
-
             <td />
-
             <td className="p-4 text-center">
               {assignment ? (
                 <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-[11px] font-bold border border-amber-100">
@@ -142,11 +138,9 @@ const IndicatorSection = ({
                 "—"
               )}
             </td>
-
             <td className="p-4 text-center text-[12px] font-bold text-gray-500">
               {assignment?.unit || "—"}
             </td>
-
             <td className="p-4">
               {assignment ? (
                 <div className="flex items-center gap-2">
@@ -167,7 +161,6 @@ const IndicatorSection = ({
                 </span>
               )}
             </td>
-
             <td className="p-4">
               {assignment?.deadline ? (
                 <div className="flex items-center gap-2 text-slate-500">
@@ -184,7 +177,6 @@ const IndicatorSection = ({
                 <span className="text-gray-300 text-[10px]">No Date</span>
               )}
             </td>
-
             <td className="p-4 text-center">
               <div className="flex items-center justify-center gap-2">
                 <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -198,7 +190,6 @@ const IndicatorSection = ({
                 </span>
               </div>
             </td>
-
             <td className="p-4">
               {assignment?.status?.toLowerCase().includes("awaiting") ? (
                 <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-emerald-100">
@@ -214,7 +205,6 @@ const IndicatorSection = ({
                 </span>
               )}
             </td>
-
             <td className="p-4 text-center">
               {assignment ? (
                 <button
@@ -225,7 +215,13 @@ const IndicatorSection = ({
                 </button>
               ) : (
                 <button
-                  onClick={onAssign}
+                  onClick={() =>
+                    onAssign({
+                      strategicPlanId: plan.id ?? plan._id,
+                      objectiveId: objective.id ?? objective._id,
+                      activityId: activityId,
+                    })
+                  }
                   className="border border-slate-400 text-slate-500 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-slate-800 hover:text-white transition-all mx-auto"
                 >
                   Assign <ArrowRight size={12} />
@@ -246,23 +242,28 @@ const IndicatorSection = ({
 
 const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
-  const [searchParams, setSearchParams] = useSearchParams();
-
+  const [searchParams] = useSearchParams();
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
   const { plans, loading: plansLoading } = useAppSelector(
-    (s) => s.strategicPlan
+    (s) => s.strategicPlan,
   );
   const {
     indicators,
-    selectedIndicator,   // ← now from Redux, not local state
+    selectedIndicator,
     loading: indicatorsLoading,
-    detailLoading,       // ← separate loading flag for the drawer
+    detailLoading,
     actionLoading,
   } = useAppSelector((s) => s.indicators);
   const { users, isLoading: usersLoading } = useAppSelector((s) => s.users);
 
+  const [assignPrefill, setAssignPrefill] = useState<
+    AssignPrefill | undefined
+  >();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+
+  // Use a local state to control the drawer visibility separate from Redux
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   useEffect(() => {
     dispatch(getAllStrategicPlans());
@@ -273,14 +274,36 @@ const SuperAdminIndicators = () => {
     };
   }, [dispatch]);
 
-  // When an indicator row is clicked, fetch its full detail (submissions, docs, history)
-  const handleSelectAssignment = (indicator: IIndicator) => {
-    dispatch(fetchIndicatorById(indicator.id));
+  // Synchronize the local drawer state with the Redux state
+  useEffect(() => {
+    if (selectedIndicator || detailLoading) {
+      setIsDrawerOpen(true);
+    }
+  }, [selectedIndicator, detailLoading]);
+
+  const handleSelectAssignment = useCallback(
+    (indicator: IIndicator) => {
+      dispatch(fetchIndicatorById(indicator.id));
+    },
+    [dispatch],
+  );
+
+  const handleCloseDrawer = () => {
+    setIsDrawerOpen(false);
+    // Add a slight delay to allow the sliding animation to complete before clearing data
+    setTimeout(() => {
+      dispatch(clearSelectedIndicator());
+    }, 300);
   };
 
-  // Clear Redux selectedIndicator on drawer close
-  const handleCloseDrawer = () => {
-    dispatch(clearSelectedIndicator());
+  const handleOpenAssign = (prefill?: AssignPrefill) => {
+    setAssignPrefill(prefill);
+    setIsAssignModalOpen(true);
+  };
+
+  const handleCloseAssign = () => {
+    setIsAssignModalOpen(false);
+    setAssignPrefill(undefined);
   };
 
   const userMap = useMemo(() => {
@@ -301,7 +324,7 @@ const SuperAdminIndicators = () => {
 
     if (activeFilter !== "ALL" && PERSPECTIVE_ORDER[activeFilter]) {
       processedPlans = processedPlans.filter((p) =>
-        p?.perspective?.toUpperCase().includes(activeFilter)
+        p?.perspective?.toUpperCase().includes(activeFilter),
       );
     }
 
@@ -312,7 +335,7 @@ const SuperAdminIndicators = () => {
             const filteredActivities = getActivities(obj).filter((act: any) => {
               const actId = act.id ?? act._id;
               const isAssigned = (indicators ?? []).some((ind) =>
-                matchId(ind.activityId, actId)
+                matchId(ind.activityId, actId),
               );
               if (activeFilter === "ASSIGNED") return isAssigned;
               if (activeFilter === "UNASSIGNED") return !isAssigned;
@@ -321,7 +344,6 @@ const SuperAdminIndicators = () => {
             return { ...obj, activities: filteredActivities };
           })
           .filter((obj) => obj.activities.length > 0);
-
         return { ...plan, objectives };
       })
       .filter((plan) => plan.objectives.length > 0);
@@ -329,39 +351,12 @@ const SuperAdminIndicators = () => {
 
   const counts = useMemo(() => {
     const allActs = (plans ?? []).flatMap((p) =>
-      getObjectives(p).flatMap((o) => getActivities(o))
+      getObjectives(p).flatMap((o) => getActivities(o)),
     );
     return {
       total: allActs.length,
-      getPerspective: (label: string) =>
-        (plans ?? [])
-          .filter((p) => p?.perspective?.toUpperCase().includes(label))
-          .reduce(
-            (acc, p) =>
-              acc +
-              getObjectives(p).reduce(
-                (oAcc, obj) => oAcc + getActivities(obj).length,
-                0
-              ),
-            0
-          ),
     };
   }, [plans]);
-
-  const filterTabs = [
-    { label: "ALL", count: counts.total },
-    { label: "CORE BUSINESS", count: counts.getPerspective("CORE BUSINESS") },
-    {
-      label: "CUSTOMER PERSPECTIVE",
-      count: counts.getPerspective("CUSTOMER PERSPECTIVE"),
-    },
-    { label: "FINANCIAL", count: counts.getPerspective("FINANCIAL") },
-    { label: "INNOVATION", count: counts.getPerspective("INNOVATION") },
-    {
-      label: "INTERNAL PROCESS",
-      count: counts.getPerspective("INTERNAL PROCESS"),
-    },
-  ];
 
   if (
     (plansLoading || indicatorsLoading || usersLoading) &&
@@ -385,9 +380,7 @@ const SuperAdminIndicators = () => {
             PMMU Indicators — 2025/2026
           </h1>
           <p className="text-sm text-gray-500 font-medium">
-            {activeFilter !== "ALL"
-              ? `Viewing ${activeFilter}`
-              : `Monitoring ${counts.total} activities`}
+            Monitoring {counts.total} activities
           </p>
         </div>
         <div className="flex gap-2 items-center">
@@ -395,37 +388,12 @@ const SuperAdminIndicators = () => {
             <Loader2 className="animate-spin text-[#1a3a32]" size={20} />
           )}
           <button
-            onClick={() => setIsAssignModalOpen(true)}
+            onClick={() => handleOpenAssign()}
             className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all shadow-md shadow-[#1a3a32]/10"
           >
             <Plus size={16} strokeWidth={3} /> Assign KPI
           </button>
         </div>
-      </div>
-
-      <div className="flex overflow-x-auto pb-4 gap-2 mb-8 no-scrollbar">
-        {filterTabs.map((f) => (
-          <button
-            key={f.label}
-            onClick={() => setSearchParams({ filter: f.label })}
-            className={`px-4 py-2 rounded-full text-[11px] font-bold border transition-all flex items-center gap-2 whitespace-nowrap uppercase ${
-              activeFilter === f.label
-                ? "bg-[#1a3a32] text-white border-[#1a3a32]"
-                : "bg-white text-gray-400 border-gray-100 hover:border-gray-300"
-            }`}
-          >
-            {f.label}
-            <span
-              className={`px-2 py-0.5 rounded-full text-[10px] ${
-                activeFilter === f.label
-                  ? "bg-white/20"
-                  : "bg-gray-100 text-gray-400"
-              }`}
-            >
-              {f.count}
-            </span>
-          </button>
-        ))}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -445,37 +413,22 @@ const SuperAdminIndicators = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredData.length > 0 ? (
-                filteredData.map((plan) =>
-                  plan.objectives.map((objective: any) => (
-                    <IndicatorSection
-                      key={objective.id ?? objective._id}
-                      perspective={plan.perspective}
-                      objective={objective}
-                      indicators={(indicators ?? []).filter((ind) =>
-                        matchId(
-                          ind.objectiveId,
-                          objective.id ?? objective._id
-                        )
-                      )}
-                      userMap={userMap}
-                      onAssign={() => setIsAssignModalOpen(true)}
-                      onSelectAssignment={handleSelectAssignment}  // ← dispatches fetchIndicatorById
-                      activeFilter={activeFilter}
-                    />
-                  ))
-                )
-              ) : (
-                <tr>
-                  <td colSpan={9} className="p-20 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <AlertCircle className="text-gray-200" size={48} />
-                      <p className="text-gray-400 font-medium italic">
-                        No indicators found
-                      </p>
-                    </div>
-                  </td>
-                </tr>
+              {filteredData.map((plan) =>
+                plan.objectives.map((objective: any) => (
+                  <IndicatorSection
+                    key={objective.id ?? objective._id}
+                    perspective={plan.perspective}
+                    objective={objective}
+                    plan={plan}
+                    indicators={(indicators ?? []).filter((ind) =>
+                      matchId(ind.objectiveId, objective.id ?? objective._id),
+                    )}
+                    userMap={userMap}
+                    onAssign={handleOpenAssign}
+                    onSelectAssignment={handleSelectAssignment}
+                    activeFilter={activeFilter}
+                  />
+                )),
               )}
             </tbody>
           </table>
@@ -483,35 +436,38 @@ const SuperAdminIndicators = () => {
       </div>
 
       {isAssignModalOpen && (
-        <SuperAdminAssign onClose={() => setIsAssignModalOpen(false)} />
+        <SuperAdminAssign prefill={assignPrefill} onClose={handleCloseAssign} />
       )}
 
+      {/* ─── FIXED DRAWER LOGIC ─── */}
       <div
-        className={`fixed inset-0 z-[300] transition-all duration-300 ${
-          selectedIndicator ? "visible opacity-100" : "invisible opacity-0"
-        }`}
+        className={`fixed inset-0 z-[300] transition-all duration-300 ${isDrawerOpen ? "visible opacity-100" : "invisible opacity-0"}`}
       >
         <div
           className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-          onClick={handleCloseDrawer}  // ← dispatches clearSelectedIndicator
+          onClick={handleCloseDrawer}
         />
         <div
-          className={`fixed right-0 top-0 h-full w-full md:w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${
-            selectedIndicator ? "translate-x-0" : "translate-x-full"
-          }`}
+          className={`fixed right-0 top-0 h-full w-full md:w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${isDrawerOpen ? "translate-x-0" : "translate-x-full"}`}
         >
-          {/* Show spinner inside drawer while fetching full detail */}
-          {detailLoading ? (
-            <div className="flex items-center justify-center h-full">
+          {/* Show loader if we are fetching fresh data and haven't loaded the item yet */}
+          {detailLoading && !selectedIndicator ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
               <Loader2 className="animate-spin text-[#1a3a32]" size={36} />
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">
+                Opening Registry...
+              </p>
             </div>
           ) : selectedIndicator ? (
             <IndicatorsPageIdModal
               indicator={selectedIndicator}
               allStaff={users}
-              onClose={handleCloseDrawer}  // ← dispatches clearSelectedIndicator
+              onClose={handleCloseDrawer}
             />
-          ) : null}
+          ) : (
+            /* Blank state while drawer is animating out or loading fails */
+            <div className="h-full bg-white" />
+          )}
         </div>
       </div>
     </div>

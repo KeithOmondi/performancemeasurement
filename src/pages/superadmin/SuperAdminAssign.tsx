@@ -3,13 +3,23 @@ import {
   X, Loader2, Hash, Percent,
   ChevronRight, ShieldAlert, Activity,
   User, Users, CalendarRange, CalendarDays,
-  Info, Crown,
+  Info, Crown, Plus, Check, ChevronDown,
 } from "lucide-react";
 import { useAppSelector, useAppDispatch } from "../../store/hooks";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
-import { fetchTeams } from "../../store/slices/teamSlice";
+import { fetchTeams, createTeam } from "../../store/slices/teamSlice";
 import { createIndicator, type IIndicator } from "../../store/slices/indicatorSlice";
 import toast from "react-hot-toast";
+
+/* ─── TYPES ──────────────────────────────────────────────────────────── */
+
+export interface AssignPrefill {
+  strategicPlanId?: string;
+  objectiveId?: string;
+  activityId?: string;
+  assigneeId?: string;
+  assignmentType?: "Individual" | "Team";
+}
 
 /* ─── SUB-COMPONENTS ─────────────────────────────────────────────────── */
 
@@ -28,26 +38,276 @@ const MetricCard = ({ label, icon, value, onChange, disabled, isString }: any) =
   </div>
 );
 
+/* ─── INLINE MULTI-SELECT ────────────────────────────────────────────── */
+
+const UserMultiSelect = ({
+  label,
+  allUsers,
+  selectedIds,
+  excludeIds = [],
+  onChange,
+}: {
+  label: string;
+  allUsers: any[];
+  selectedIds: string[];
+  excludeIds?: string[];
+  onChange: (ids: string[]) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const available = useMemo(
+    () =>
+      allUsers.filter(
+        (u) =>
+          u.isActive &&
+          !excludeIds.includes(u._id ?? u.id) &&
+          (u.name.toLowerCase().includes(search.toLowerCase()) ||
+            u.email?.toLowerCase().includes(search.toLowerCase()))
+      ),
+    [allUsers, excludeIds, search]
+  );
+
+  const toggle = (id: string) =>
+    onChange(
+      selectedIds.includes(id)
+        ? selectedIds.filter((i) => i !== id)
+        : [...selectedIds, id]
+    );
+
+  return (
+    <div className="space-y-1 relative">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+        {label}
+      </label>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-sm outline-none"
+      >
+        <span className={selectedIds.length ? "font-bold text-[#1a3a32]" : "text-slate-400"}>
+          {selectedIds.length ? `${selectedIds.length} member(s) selected` : "Select members..."}
+        </span>
+        <ChevronDown
+          size={16}
+          className={`text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-100 rounded-2xl shadow-xl overflow-hidden">
+          <div className="p-3 border-b border-slate-50">
+            <input
+              autoFocus
+              placeholder="Search staff..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-100 rounded-xl outline-none"
+            />
+          </div>
+          <div className="max-h-44 overflow-y-auto">
+            {available.length === 0 ? (
+              <p className="text-center text-xs text-slate-400 py-6">No staff found</p>
+            ) : (
+              available.map((u) => {
+                const id = u._id ?? u.id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => toggle(id)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-[#1a3a32] text-white flex items-center justify-center text-[10px] font-bold">
+                        {u.name
+                          .split(" ")
+                          .map((n: string) => n[0])
+                          .join("")
+                          .toUpperCase()
+                          .substring(0, 2)}
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-bold text-[#1a3a32]">{u.name}</p>
+                        <p className="text-[10px] text-slate-400">{u.title || u.role}</p>
+                      </div>
+                    </div>
+                    {selectedIds.includes(id) && (
+                      <Check size={14} className="text-emerald-500" />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-2">
+          {selectedIds.map((id) => {
+            const u = allUsers.find((user) => (user._id ?? user.id) === id);
+            return u ? (
+              <div
+                key={id}
+                className="flex items-center gap-1.5 bg-[#1a3a32] text-white text-[10px] font-bold px-3 py-1.5 rounded-full"
+              >
+                {u.name}
+                <button type="button" onClick={() => toggle(id)}>
+                  <X size={11} className="hover:text-red-300" />
+                </button>
+              </div>
+            ) : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── INLINE CREATE-TEAM FORM ────────────────────────────────────────── */
+
+const InlineCreateTeam = ({
+  users,
+  onCreated,
+  onCancel,
+}: {
+  users: any[];
+  onCreated: (teamId: string) => void;
+  onCancel: () => void;
+}) => {
+  const dispatch = useAppDispatch();
+  const { actionLoading } = useAppSelector((s) => s.teams);
+
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [teamLead, setTeamLead] = useState("");
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+
+  const handleCreate = async () => {
+    if (!name.trim()) return toast.error("Team name is required");
+    if (!teamLead) return toast.error("Please select a team lead");
+
+    try {
+      const result = await dispatch(
+        createTeam({ name: name.trim(), description, teamLead, members: memberIds })
+      ).unwrap();
+      toast.success(`Team "${result.name}" created`);
+      onCreated(result.id);
+    } catch (err: any) {
+      toast.error(err || "Failed to create team");
+    }
+  };
+
+  return (
+    <div className="mt-4 p-5 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4">
+      <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest flex items-center gap-2">
+        <Users size={12} /> New Team
+      </p>
+
+      {/* Team name */}
+      <input
+        placeholder="Team name..."
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-[#1a3a32] outline-none"
+      />
+
+      {/* Description */}
+      <input
+        placeholder="Description (optional)..."
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm text-[#1a3a32] outline-none"
+      />
+
+      {/* Team lead */}
+      <div className="space-y-1">
+        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
+          <Crown size={10} className="text-amber-400" /> Team Lead
+        </label>
+        <select
+          value={teamLead}
+          onChange={(e) => setTeamLead(e.target.value)}
+          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm font-bold text-[#1a3a32] outline-none"
+        >
+          <option value="">Select lead...</option>
+          {users.filter((u) => u.isActive).map((u) => {
+            const id = u._id ?? u.id;
+            return (
+              <option key={id} value={id}>
+                {u.name} — {u.title || u.role}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      {/* Members multi-select */}
+      <UserMultiSelect
+        label="Members"
+        allUsers={users}
+        selectedIds={memberIds}
+        excludeIds={teamLead ? [teamLead] : []}
+        onChange={setMemberIds}
+      />
+
+      {/* Actions */}
+      <div className="flex gap-3 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 py-2.5 border border-slate-200 bg-white rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleCreate}
+          disabled={actionLoading}
+          className="flex-1 py-2.5 bg-[#1a3a32] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-40 flex items-center justify-center gap-2"
+        >
+          {actionLoading ? (
+            <Loader2 className="animate-spin" size={14} />
+          ) : (
+            <><Plus size={12} /> Create & Select</>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 /* ─── MAIN COMPONENT ─────────────────────────────────────────────────── */
 
-const SuperAdminAssign = ({ onClose }: { onClose: () => void }) => {
+interface SuperAdminAssignProps {
+  onClose: () => void;
+  prefill?: AssignPrefill;
+}
+
+const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
   const dispatch = useAppDispatch();
   const { plans }                               = useAppSelector((s) => s.strategicPlan);
   const { users, isLoading: usersLoading }      = useAppSelector((s) => s.users);
   const { teams, loading: teamsLoading }        = useAppSelector((s) => s.teams);
   const { actionLoading: createLoading }        = useAppSelector((s) => s.indicators);
 
-  const [selectedPerspectiveId, setSelectedPerspectiveId] = useState("");
-  const [selectedObjectiveId, setSelectedObjectiveId]     = useState("");
-  const [selectedActivityId, setSelectedActivityId]       = useState("");
-  const [assignmentType, setAssignmentType] = useState<"Individual" | "Team">("Individual");
+  const [selectedPerspectiveId, setSelectedPerspectiveId] = useState(prefill?.strategicPlanId ?? "");
+  const [selectedObjectiveId, setSelectedObjectiveId]     = useState(prefill?.objectiveId ?? "");
+  const [selectedActivityId, setSelectedActivityId]       = useState(prefill?.activityId ?? "");
+  const [assignmentType, setAssignmentType] = useState<"Individual" | "Team">(prefill?.assignmentType ?? "Individual");
   const [reportingCycle, setReportingCycle] = useState<"Quarterly" | "Annual">("Quarterly");
   const [weight, setWeight] = useState<number>(5);
   const [unit, setUnit]     = useState<string>("%");
-  const [selectedUserId, setSelectedUserId] = useState<string>("");
-  const [selectedTeamId, setSelectedTeamId] = useState<string>("");
-  const [deadline, setDeadline]             = useState("");
-  const [instructions]                      = useState("");
+  const [selectedUserId, setSelectedUserId] = useState<string>(
+    prefill?.assignmentType === "Individual" ? (prefill?.assigneeId ?? "") : ""
+  );
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(
+    prefill?.assignmentType === "Team" ? (prefill?.assigneeId ?? "") : ""
+  );
+  const [deadline, setDeadline]           = useState("");
+  const [instructions]                    = useState("");
+  const [showCreateTeam, setShowCreateTeam] = useState(false); // ← new
 
   useEffect(() => {
     dispatch(fetchAllUsers());
@@ -64,7 +324,6 @@ const SuperAdminAssign = ({ onClose }: { onClose: () => void }) => {
     [selectedPlan, selectedObjectiveId]
   );
 
-  // ✅ Teams use _id (from teamSlice ITeam interface)
   const selectedTeam = useMemo(
     () => teams.find((t) => t.id === selectedTeamId),
     [teams, selectedTeamId]
@@ -77,48 +336,61 @@ const SuperAdminAssign = ({ onClose }: { onClose: () => void }) => {
     }
   }, [selectedObjective]);
 
+  useEffect(() => {
+    if (prefill?.strategicPlanId && !selectedPerspectiveId)
+      setSelectedPerspectiveId(prefill.strategicPlanId);
+  }, [plans, prefill]);
+
+  useEffect(() => {
+    if (prefill?.objectiveId && selectedPerspectiveId && !selectedObjectiveId)
+      setSelectedObjectiveId(prefill.objectiveId);
+  }, [selectedPerspectiveId, prefill]);
+
+  useEffect(() => {
+    if (prefill?.activityId && selectedObjectiveId && !selectedActivityId)
+      setSelectedActivityId(prefill.activityId);
+  }, [selectedObjectiveId, prefill]);
+
   const handleModeSwitch = (mode: "Individual" | "Team") => {
     setAssignmentType(mode);
     setSelectedUserId("");
     setSelectedTeamId("");
+    setShowCreateTeam(false);
   };
 
   const isAssigneeSelected =
     assignmentType === "Individual" ? !!selectedUserId : !!selectedTeamId;
 
-  // ✅ In SuperAdminAssign.tsx -> handleAssign function
+  const handleAssign = async () => {
+    if (!isAssigneeSelected) return toast.error("Please select an assignee");
+    if (!deadline)           return toast.error("Deadline required");
+    if (!selectedActivityId) return toast.error("Please select an activity");
 
-const handleAssign = async () => {
-  if (!isAssigneeSelected) return toast.error("Please select an assignee");
-  if (!deadline)           return toast.error("Deadline required");
-  if (!selectedActivityId) return toast.error("Please select an activity");
+    const payload: Partial<IIndicator> = {
+      strategicPlanId: selectedPerspectiveId,
+      objectiveId:     selectedObjectiveId,
+      activityId:      selectedActivityId,
+      assignee:        assignmentType === "Individual" ? selectedUserId : selectedTeamId,
+      assignmentType:  assignmentType === "Individual" ? "User" : "Team",
+      reportingCycle,
+      status: "Pending",
+      weight,
+      unit,
+      deadline,
+      instructions,
+    };
 
-  const payload: Partial<IIndicator> = {
-    strategicPlanId: selectedPerspectiveId,
-    objectiveId:     selectedObjectiveId,
-    activityId:      selectedActivityId,
-    
-    // ❌ OLD: assigneeId: assignmentType === "Individual" ? selectedUserId : selectedTeamId,
-    // ✅ NEW: Use 'assignee' to match your Slice and Backend Controller
-    assignee: assignmentType === "Individual" ? selectedUserId : selectedTeamId, 
-    
-    assignmentType: assignmentType === "Individual" ? "User" : "Team",
-    reportingCycle,
-    status: "Pending",
-    weight,
-    unit,
-    deadline,
-    instructions,
-  }; // Removed 'as any' so TypeScript can help you catch these!
+    try {
+      await dispatch(createIndicator(payload)).unwrap();
+      toast.success(`${reportingCycle} KPI assigned successfully`);
+      onClose();
+    } catch (error: any) {
+      toast.error(error || "Failed to create assignment");
+    }
+  };
 
-  try {
-    await dispatch(createIndicator(payload)).unwrap();
-    toast.success(`${reportingCycle} KPI assigned successfully`);
-    onClose();
-  } catch (error: any) {
-    toast.error(error || "Failed to create assignment");
-  }
-};
+  const hasPrefill = !!(prefill?.strategicPlanId || prefill?.objectiveId || prefill?.activityId);
+  const activeTeams = teams.filter((t) => t.isActive);
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-[#0d1a17]/60 z-[500] backdrop-blur-md p-4 animate-in fade-in duration-300">
@@ -131,11 +403,28 @@ const handleAssign = async () => {
               <span>Strategic Registry</span>
               <ChevronRight size={12} />
               <span className="text-[#d9b929]">{reportingCycle} deployment</span>
+              {hasPrefill && (
+                <>
+                  <ChevronRight size={12} />
+                  <span className="text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                    Auto-filled
+                  </span>
+                </>
+              )}
             </div>
             <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
               <X size={20} className="text-slate-400" />
             </button>
           </div>
+
+          {hasPrefill && (
+            <div className="mx-10 mt-6 p-3 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+              <p className="text-[11px] text-emerald-800 font-bold">
+                Activity context was pre-loaded from your selection. Review and complete the remaining fields below.
+              </p>
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
 
@@ -146,44 +435,71 @@ const handleAssign = async () => {
                 Strategic Mapping
               </h3>
               <div className="grid gap-4">
-                <select
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
-                  value={selectedPerspectiveId}
-                  onChange={(e) => {
-                    setSelectedPerspectiveId(e.target.value);
-                    setSelectedObjectiveId("");
-                    setSelectedActivityId("");
-                  }}
-                >
-                  <option value="">Select Perspective...</option>
-                  {plans.map((p) => (
-                    <option key={p.id} value={p.id}>{p.perspective}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  {prefill?.strategicPlanId && (
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
+                      Pre-filled
+                    </span>
+                  )}
+                  <select
+                    className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none transition-colors ${
+                      prefill?.strategicPlanId ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-100"
+                    }`}
+                    value={selectedPerspectiveId}
+                    onChange={(e) => {
+                      setSelectedPerspectiveId(e.target.value);
+                      setSelectedObjectiveId("");
+                      setSelectedActivityId("");
+                    }}
+                  >
+                    <option value="">Select Perspective...</option>
+                    {plans.map((p) => (
+                      <option key={p.id} value={p.id}>{p.perspective}</option>
+                    ))}
+                  </select>
+                </div>
 
-                <select
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50"
-                  value={selectedObjectiveId}
-                  onChange={(e) => { setSelectedObjectiveId(e.target.value); setSelectedActivityId(""); }}
-                  disabled={!selectedPerspectiveId}
-                >
-                  <option value="">Select Primary Objective...</option>
-                  {selectedPlan?.objectives.map((obj) => (
-                    <option key={obj.id} value={obj.id}>{obj.title}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  {prefill?.objectiveId && (
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
+                      Pre-filled
+                    </span>
+                  )}
+                  <select
+                    className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50 transition-colors ${
+                      prefill?.objectiveId ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-100"
+                    }`}
+                    value={selectedObjectiveId}
+                    onChange={(e) => { setSelectedObjectiveId(e.target.value); setSelectedActivityId(""); }}
+                    disabled={!selectedPerspectiveId}
+                  >
+                    <option value="">Select Primary Objective...</option>
+                    {selectedPlan?.objectives.map((obj) => (
+                      <option key={obj.id} value={obj.id}>{obj.title}</option>
+                    ))}
+                  </select>
+                </div>
 
-                <select
-                  className="w-full bg-[#1a3a32]/5 border-2 border-dashed border-[#1a3a32]/10 rounded-xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50"
-                  value={selectedActivityId}
-                  onChange={(e) => setSelectedActivityId(e.target.value)}
-                  disabled={!selectedObjectiveId}
-                >
-                  <option value="">Connect Specific Activity...</option>
-                  {selectedObjective?.activities.map((act) => (
-                    <option key={act.id} value={act.id}>{act.description}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  {prefill?.activityId && (
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
+                      Pre-filled
+                    </span>
+                  )}
+                  <select
+                    className={`w-full border-2 border-dashed rounded-xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50 transition-colors ${
+                      prefill?.activityId ? "bg-emerald-50 border-emerald-300" : "bg-[#1a3a32]/5 border-[#1a3a32]/10"
+                    }`}
+                    value={selectedActivityId}
+                    onChange={(e) => setSelectedActivityId(e.target.value)}
+                    disabled={!selectedObjectiveId}
+                  >
+                    <option value="">Connect Specific Activity...</option>
+                    {selectedObjective?.activities.map((act) => (
+                      <option key={act.id} value={act.id}>{act.description}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -216,7 +532,6 @@ const handleAssign = async () => {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {/* Review Cycle */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Review Cycle</label>
                   <div className="flex p-1 bg-slate-100 rounded-2xl">
@@ -235,7 +550,6 @@ const handleAssign = async () => {
                   </div>
                 </div>
 
-                {/* Assignment Mode */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Command Mode</label>
                   <div className="flex p-1 bg-slate-100 rounded-2xl">
@@ -255,7 +569,7 @@ const handleAssign = async () => {
                 </div>
               </div>
 
-              {/* Individual select */}
+              {/* ── Individual assignee ── */}
               {assignmentType === "Individual" && (
                 <div className="relative">
                   <div className="absolute right-4 top-9 z-10">
@@ -265,13 +579,16 @@ const handleAssign = async () => {
                     Judicial Personnel
                   </label>
                   <select
-                    className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
+                    className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none ${
+                      prefill?.assignmentType === "Individual" && prefill?.assigneeId
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-white border-slate-200"
+                    }`}
                     value={selectedUserId}
                     onChange={(e) => setSelectedUserId(e.target.value)}
                     disabled={usersLoading}
                   >
                     <option value="">{usersLoading ? "Decrypting Directory..." : "Select staff member..."}</option>
-                    {/* ✅ u._id is now normalized from PG id by userService */}
                     {users.filter((u) => u.isActive).map((u) => (
                       <option key={u._id} value={u._id}>
                         {u.name} — {u.title || u.role}
@@ -299,39 +616,71 @@ const handleAssign = async () => {
                 </div>
               )}
 
-              {/* Team select */}
+              {/* ── Team assignee ── */}
               {assignmentType === "Team" && (
-                <div className="relative">
-                  <div className="absolute right-4 top-9 z-10">
-                    {teamsLoading && <Loader2 className="animate-spin text-[#1a3a32]" size={18} />}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                      Select Team
+                    </label>
+                    {/* Toggle inline create form */}
+                    {!showCreateTeam && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateTeam(true)}
+                        className="flex items-center gap-1.5 text-[10px] font-black text-[#1a3a32] uppercase tracking-widest hover:text-emerald-600 transition-colors"
+                      >
+                        <Plus size={12} /> New Team
+                      </button>
+                    )}
                   </div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2 block">
-                    Select Team
-                  </label>
-                  {teams.filter((t) => t.isActive).length === 0 && !teamsLoading ? (
-                    <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-center">
-                      <p className="text-[11px] text-amber-700 font-bold">No active teams found.</p>
-                      <p className="text-[10px] text-amber-600 mt-1">Create a team from the Groups & Teams page first.</p>
+
+                  {teamsLoading ? (
+                    <div className="flex items-center gap-2 p-4 bg-slate-50 rounded-2xl">
+                      <Loader2 className="animate-spin text-[#1a3a32]" size={16} />
+                      <span className="text-[11px] text-slate-400 font-bold">Loading teams...</span>
                     </div>
-                  ) : (
+                  ) : activeTeams.length === 0 && !showCreateTeam ? (
+                    <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-center space-y-2">
+                      <p className="text-[11px] text-amber-700 font-bold">No active teams found.</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateTeam(true)}
+                        className="text-[10px] font-black text-[#1a3a32] underline underline-offset-2"
+                      >
+                        Create one right here →
+                      </button>
+                    </div>
+                  ) : !showCreateTeam ? (
                     <select
                       className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
                       value={selectedTeamId}
                       onChange={(e) => setSelectedTeamId(e.target.value)}
-                      disabled={teamsLoading}
                     >
-                      <option value="">{teamsLoading ? "Loading teams..." : "Select a team..."}</option>
-                      {/* ✅ Teams use _id from ITeam interface */}
-                      {teams.filter((t) => t.isActive).map((t) => (
+                      <option value="">Select a team...</option>
+                      {activeTeams.map((t) => (
                         <option key={t.id} value={t.id}>
-                          {t.name} ({t.members?.length} members)
+                          {t.name} ({t.members?.length ?? t.memberCount ?? 0} members)
                         </option>
                       ))}
                     </select>
+                  ) : null}
+
+                  {/* Inline team creation form */}
+                  {showCreateTeam && (
+                    <InlineCreateTeam
+                      users={users}
+                      onCreated={(teamId) => {
+                        setSelectedTeamId(teamId);
+                        setShowCreateTeam(false);
+                      }}
+                      onCancel={() => setShowCreateTeam(false)}
+                    />
                   )}
 
-                  {selectedTeam && (
-                    <div className="mt-3 p-4 bg-[#1a3a32]/5 rounded-2xl border border-[#1a3a32]/10 space-y-3">
+                  {/* Selected team preview */}
+                  {selectedTeam && !showCreateTeam && (
+                    <div className="p-4 bg-[#1a3a32]/5 rounded-2xl border border-[#1a3a32]/10 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-xl bg-[#1a3a32] text-white flex items-center justify-center">
@@ -348,7 +697,9 @@ const handleAssign = async () => {
                       </div>
                       <div className="flex items-center gap-2 pt-2 border-t border-[#1a3a32]/10">
                         <Crown size={11} className="text-amber-400" />
-                        <span className="text-[10px] text-slate-500 font-bold">Lead: {selectedTeam.teamLead?.name}</span>
+                        <span className="text-[10px] text-slate-500 font-bold">
+                          Lead: {selectedTeam.teamLead?.name ?? selectedTeam.leadName}
+                        </span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         {selectedTeam.members.slice(0, 6).map((m) => (
