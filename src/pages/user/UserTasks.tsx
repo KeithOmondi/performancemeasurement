@@ -29,18 +29,19 @@ const UserTasks = () => {
     dispatch(fetchMyAssignments());
   }, [dispatch]);
 
+  // Filter out fully completed tasks for the active work view
   const filteredTasks = useMemo(
     () => myIndicators.filter((item) => item.status !== "Completed"),
     [myIndicators],
   );
 
-  // Split for the stats banner
   const teamTasks = useMemo(
-    () => filteredTasks.filter((i) => i.assignmentType === "Team"),
+    () => filteredTasks.filter((i) => i.assignee_model === "Team"),
     [filteredTasks],
   );
+  
   const individualTasks = useMemo(
-    () => filteredTasks.filter((i) => i.assignmentType === "User"),
+    () => filteredTasks.filter((i) => i.assignee_model === "User"),
     [filteredTasks],
   );
 
@@ -49,7 +50,7 @@ const UserTasks = () => {
     activeQuarter: number,
     cycle: "Quarterly" | "Annual",
   ) => {
-    const periodLabel = cycle === "Annual" ? "Annual" : `Q${activeQuarter}`;
+    const periodLabel = cycle === "Annual" ? "Annual" : `Q${activeQuarter || 1}`;
     switch (status) {
       case "Awaiting Admin Approval":
         return {
@@ -58,6 +59,7 @@ const UserTasks = () => {
           icon: <Clock size={12} />,
         };
       case "Awaiting Super Admin":
+      case "Partially Approved":
         return {
           label: "Final Certification",
           bg: "bg-blue-50 text-blue-700 border-blue-100",
@@ -121,9 +123,7 @@ const UserTasks = () => {
             </h1>
           </div>
 
-          {/* Stats banner */}
           <div className="flex gap-3 flex-wrap">
-            {/* Total */}
             <div className="bg-[#1a3a32] text-white p-6 rounded-2xl shadow-2xl flex items-center gap-6 border border-white/5 relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-4 opacity-10">
                 <ShieldCheck size={60} />
@@ -138,14 +138,12 @@ const UserTasks = () => {
               </div>
               <div className="h-10 w-[1px] bg-white/10 relative z-10" />
               <div className="relative z-10 space-y-1">
-                {/* Individual count */}
                 <div className="flex items-center gap-2">
                   <User size={11} className="text-white/50" />
                   <span className="text-[9px] text-white/60 font-bold uppercase tracking-widest">
                     {individualTasks.length} Individual
                   </span>
                 </div>
-                {/* Team count — only shown when there are team tasks */}
                 {teamTasks.length > 0 && (
                   <div className="flex items-center gap-2">
                     <Users size={11} className="text-[#c2a336]" />
@@ -189,35 +187,32 @@ const UserTasks = () => {
                   {filteredTasks.map((item) => {
                     const lifecycle = getLifecycleConfig(
                       item.status,
-                      item.activeQuarter,
-                      item.reportingCycle,
+                      item.active_quarter,
+                      item.reporting_cycle,
                     );
-                    const isFlagged = item.status.includes("Rejected");
-                    const isUnderReview = item.status.startsWith("Awaiting");
-                    const isTeam = item.assignmentType === "Team";
+                    const isFlagged = item.status?.includes("Rejected");
+                    const isUnderReview = item.status?.startsWith("Awaiting") || item.status === "Partially Approved";
+                    const isTeam = item.assignee_model === "Team";
 
                     return (
                       <tr
-                        key={item._id}
+                        key={item.id}
                         className="group hover:bg-emerald-50/30 transition-all cursor-pointer"
-                        onClick={() =>
-                          navigate(`/user/assignments/${item._id}`)
-                        }
+                        onClick={() => navigate(`/user/assignments/${item.id}`)}
                       >
-                        {/* Indicator title */}
                         <td className="px-10 py-7">
                           <div className="max-w-md">
                             <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">
                               {item.perspective}
                             </p>
                             <p className="text-sm font-bold leading-tight">
-                              {item.objectiveTitle}
+                              {item.objective?.title || "Strategic Objective"}
                             </p>
                             <div className="flex items-center gap-3 mt-2 flex-wrap">
                               <div className="flex items-center gap-1 opacity-40">
                                 <Hash size={10} />
                                 <span className="text-[9px] font-black uppercase">
-                                  ID: {item._id?.slice(-6).toUpperCase()}
+                                  ID: {String(item.id).toUpperCase()}
                                 </span>
                               </div>
                               {isFlagged && (
@@ -230,7 +225,6 @@ const UserTasks = () => {
                           </div>
                         </td>
 
-                        {/* ── Assignment type badge ── */}
                         <td className="px-6 py-7">
                           {isTeam ? (
                             <div className="flex flex-col gap-1">
@@ -238,9 +232,6 @@ const UserTasks = () => {
                                 <Users size={10} />
                                 Team
                               </div>
-                              <span className="text-[9px] text-slate-400 font-bold truncate max-w-[100px]">
-                                {item.assignee?.name}
-                              </span>
                             </div>
                           ) : (
                             <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-500 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider w-fit">
@@ -250,20 +241,18 @@ const UserTasks = () => {
                           )}
                         </td>
 
-                        {/* Cycle */}
                         <td className="px-6 py-7">
                           <span
                             className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${
-                              item.reportingCycle === "Annual"
+                              item.reporting_cycle === "Annual"
                                 ? "bg-blue-50 text-blue-600 border-blue-100"
                                 : "bg-gray-100 text-gray-500 border-gray-200"
                             }`}
                           >
-                            {item.reportingCycle}
+                            {item.reporting_cycle}
                           </span>
                         </td>
 
-                        {/* Status */}
                         <td className="px-6 py-7">
                           <div
                             className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all group-hover:shadow-md ${lifecycle.bg}`}
@@ -273,30 +262,28 @@ const UserTasks = () => {
                           </div>
                         </td>
 
-                        {/* Progress */}
                         <td className="px-6 py-7">
                           <div className="flex items-center gap-4">
                             <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-[100px]">
                               <div
                                 className={`h-full transition-all duration-1000 ease-out ${isFlagged ? "bg-rose-500" : "bg-[#1a3a32]"}`}
                                 style={{
-                                  width: `${Math.min(item.progress, 100)}%`,
+                                  width: `${Math.min(item.progress || 0, 100)}%`,
                                 }}
                               />
                             </div>
                             <span className="text-[10px] font-black tabular-nums text-gray-400">
-                              {Math.round(item.progress)}%
+                              {Math.round(item.progress || 0)}%
                             </span>
                           </div>
                         </td>
 
-                        {/* Action */}
                         <td className="px-10 py-7 text-right">
                           <button
                             disabled={isUnderReview}
                             onClick={(e) => {
                               e.stopPropagation();
-                              navigate(`/user/assignments/${item._id}`);
+                              navigate(`/user/assignments/${item.id}`);
                             }}
                             className={`p-3 rounded-xl border transition-all inline-flex items-center gap-3 group/btn ${
                               isUnderReview

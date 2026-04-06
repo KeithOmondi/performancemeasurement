@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   FileText,
   ExternalLink,
@@ -7,8 +7,8 @@ import {
   ThumbsUp,
   AlertOctagon,
   Edit3,
-  Calendar,
   Clock,
+  CalendarDays,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -16,7 +16,7 @@ import {
   type IAdminIndicator,
   type ISubmissionReviewUpdate,
 } from "../../store/slices/adminIndicatorSlice";
-import FilePreviewModal from "../PreviewModal"; // ✅ Import — adjust path as needed
+import FilePreviewModal from "../PreviewModal";
 
 interface AdminIndicatorModalProps {
   indicator: IAdminIndicator;
@@ -33,89 +33,115 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
   const [docReviews, setDocReviews] = useState<ISubmissionReviewUpdate[]>([]);
   const [overallComment, setOverallComment] = useState("");
   const [rejectionMode, setRejectionMode] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
 
-  // ✅ State for file preview — same pattern as UserTaskIdPage
-  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
-
+  // Depend only on the indicator's id so this doesn't re-run on every parent render
   useEffect(() => {
-    if (indicator.submissions) {
-      const currentDocs = indicator.submissions
-        .filter((s) => s.reviewStatus === "Pending")
-        .map((s) => ({
-          submissionId: s._id,
-          reviewStatus: "Pending" as const,
-          adminComment: s.adminComment || "",
-        }));
-      setDocReviews(currentDocs);
-    }
-  }, [indicator]);
+    const pending = (indicator.submissions ?? [])
+      .filter((s) => s.reviewStatus === "Pending")
+      .map((s) => ({
+        submissionId: s.id,
+        reviewStatus: "Pending" as const,
+        adminComment: s.adminComment ?? "",
+      }));
+    setDocReviews(pending);
+    // Reset UI state when the indicator changes
+    setOverallComment("");
+    setRejectionMode(false);
+  }, [indicator.id]); // ✅ only re-run when a different indicator is opened
 
-  const handleDocReviewChange = (
-    subId: string,
-    updates: Partial<ISubmissionReviewUpdate>,
-  ) => {
+  const handleDocReviewChange = useCallback(
+    (subId: string, updates: Partial<ISubmissionReviewUpdate>) => {
+      setDocReviews((prev) =>
+        prev.map((r) => (r.submissionId === subId ? { ...r, ...updates } : r))
+      );
+    },
+    []
+  );
+
+  const handleEnterRejectionMode = useCallback(() => {
+    setRejectionMode(true);
     setDocReviews((prev) =>
-      prev.map((r) => (r.submissionId === subId ? { ...r, ...updates } : r)),
+      prev.map((r) => ({ ...r, reviewStatus: "Rejected" as const }))
     );
-  };
+  }, []);
 
-  const handleFinalAction = async (decision: "Verified" | "Rejected") => {
-    if (decision === "Rejected" && !overallComment.trim()) {
-      alert("Please provide a justification for the rejection.");
-      return;
-    }
+  const handleCancelRejection = useCallback(() => {
+    setRejectionMode(false);
+    setOverallComment("");
+    // Reset individual submission statuses back to Pending
+    setDocReviews((prev) =>
+      prev.map((r) => ({ ...r, reviewStatus: "Pending" as const }))
+    );
+  }, []);
 
-    const finalSubmissionUpdates = docReviews.map((r) => ({
-      submissionId: r.submissionId,
-      reviewStatus: decision === "Verified" ? ("Verified" as const) : r.reviewStatus,
-      adminComment: r.adminComment?.trim() || overallComment.trim(),
-    }));
+  const handleFinalAction = useCallback(
+    async (decision: "Verified" | "Rejected") => {
+      if (decision === "Rejected" && !overallComment.trim()) {
+        alert("Please provide a justification for the rejection.");
+        return;
+      }
 
-    await dispatch(
-      processAdminReview({
-        id: indicator._id,
-        reviewData: {
-          decision,
-          adminOverallComments:
-            overallComment.trim() ||
-            (decision === "Verified"
-              ? "Verified and approved for Super Admin review."
-              : "Rejected for corrections."),
-          submissionUpdates: finalSubmissionUpdates,
-        },
-      }),
-    ).then((res) => {
-      if (processAdminReview.fulfilled.match(res)) onClose();
-    });
-  };
+      const finalSubmissionUpdates = docReviews.map((r) => ({
+        submissionId: r.submissionId,
+        reviewStatus:
+          decision === "Verified" ? ("Verified" as const) : r.reviewStatus,
+        adminComment: r.adminComment?.trim() || overallComment.trim(),
+      }));
+
+      const result = await dispatch(
+        processAdminReview({
+          id: indicator.id,
+          reviewData: {
+            decision,
+            adminOverallComments:
+              overallComment.trim() ||
+              (decision === "Verified"
+                ? "Verified and approved for Super Admin review."
+                : "Rejected for corrections."),
+            submissionUpdates: finalSubmissionUpdates,
+          },
+        })
+      );
+
+      if (processAdminReview.fulfilled.match(result)) {
+        onClose();
+      }
+    },
+    [dispatch, docReviews, indicator.id, onClose, overallComment]
+  );
+
+  const isAnnual = indicator.reportingCycle === "Annual";
 
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] overflow-hidden">
-
       {/* Header */}
       <div className="px-8 py-4 bg-white border-b border-slate-100 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-4">
           <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-            Reviewing Submission
+            Review Pannel
           </h2>
-          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter border ${
-            indicator.reportingCycle === "Annual"
-              ? "bg-amber-50 text-amber-600 border-amber-100"
-              : "bg-blue-50 text-blue-600 border-blue-100"
-          }`}>
-            {indicator.reportingCycle === "Annual" ? <Calendar size={12} /> : <Clock size={12} />}
-            {indicator.reportingCycle} Cycle
-          </div>
+          {/* ✅ Correctly shows Annual vs Quarterly using reportingCycle */}
+          {isAnnual ? (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter border bg-amber-50 text-amber-600 border-amber-100">
+              <CalendarDays size={12} /> Annual Cycle
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter border bg-blue-50 text-blue-600 border-blue-100">
+              <Clock size={12} /> Quarter {indicator.activeQuarter}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
           {!rejectionMode && (
             <button
-              onClick={() => {
-                setRejectionMode(true);
-                setDocReviews((prev) => prev.map((r) => ({ ...r, reviewStatus: "Rejected" })));
-              }}
-              className="px-6 py-2.5 rounded-[0.5rem] text-[10px] font-black uppercase flex items-center gap-2 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all"
+              onClick={handleEnterRejectionMode}
+              disabled={isReviewing}
+              className="px-6 py-2.5 rounded-[0.5rem] text-[10px] font-black uppercase flex items-center gap-2 bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-50 transition-all"
             >
               <AlertOctagon size={14} /> Reject
             </button>
@@ -123,9 +149,13 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
           <button
             disabled={isReviewing || rejectionMode}
             onClick={() => handleFinalAction("Verified")}
-            className="px-6 py-2.5 rounded-[0.5rem] text-[10px] font-black uppercase bg-[#1a3a32] text-white flex items-center gap-2 hover:bg-black disabled:opacity-50 transition-all shadow-lg"
+            className="px-6 py-2.5 rounded-[0.5rem] text-[10px] font-black uppercase bg-[#1d3331] text-white flex items-center gap-2 hover:bg-black disabled:opacity-50 transition-all shadow-lg"
           >
-            {isReviewing ? <Loader2 size={14} className="animate-spin" /> : <ThumbsUp size={14} />}
+            {isReviewing ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <ThumbsUp size={14} />
+            )}
             Approve
           </button>
         </div>
@@ -136,18 +166,21 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
 
           {/* Rejection Form */}
           {rejectionMode && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-500 bg-rose-50 p-6 rounded-[2rem] border border-rose-100">
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-500 bg-rose-50 p-6 rounded-[2rem] border border-rose-100 shadow-inner">
               <div className="flex items-center justify-between px-2">
                 <h4 className="text-[10px] font-black text-rose-600 uppercase tracking-widest">
-                  Provide Rejection Justification
+                  Performance Correction Order
                 </h4>
-                <button onClick={() => setRejectionMode(false)} className="text-[10px] font-bold text-slate-400 hover:text-rose-600">
+                <button
+                  onClick={handleCancelRejection}
+                  className="text-[10px] font-bold text-slate-400 hover:text-rose-600 transition-colors"
+                >
                   Cancel
                 </button>
               </div>
               <textarea
                 autoFocus
-                placeholder="Detail the specific deficiencies..."
+                placeholder="Detail deficiencies..."
                 value={overallComment}
                 onChange={(e) => setOverallComment(e.target.value)}
                 className="w-full p-6 bg-white border-2 border-rose-200 rounded-[1.5rem] text-[14px] font-semibold outline-none focus:border-rose-500 min-h-[120px] resize-none"
@@ -155,64 +188,99 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
               <button
                 disabled={isReviewing}
                 onClick={() => handleFinalAction("Rejected")}
-                className="w-full py-4 bg-rose-600 text-white rounded-xl font-black uppercase text-[11px] tracking-widest hover:bg-rose-700 transition-all"
+                className="w-full py-4 bg-rose-600 text-white rounded-xl font-black uppercase text-[11px] tracking-widest hover:bg-rose-700 disabled:opacity-50 transition-all"
               >
-                {isReviewing ? "Processing..." : "Confirm & Return to Assignee"}
+                {isReviewing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 size={14} className="animate-spin" /> Processing...
+                  </span>
+                ) : (
+                  "Confirm & Return"
+                )}
               </button>
             </div>
           )}
 
-          {/* Indicator Details Card */}
-          <div className="bg-white p-8 border border-slate-200 shadow-sm rounded-3xl relative">
+          {/* Indicator Details */}
+          <div className="bg-white p-8 border border-slate-200 shadow-sm rounded-3xl">
             <div className="flex justify-between items-start mb-6">
-              <span className="text-[9px] font-black bg-[#1a3a32] text-white px-3 py-1.5 uppercase tracking-widest rounded-lg">
+              <span className="text-[9px] font-black bg-[#1d3331] text-white px-3 py-1.5 uppercase tracking-widest rounded-lg">
                 {indicator.perspective}
               </span>
               <div className="text-right">
-                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Target ({indicator.unit})</p>
-                <p className="text-lg font-serif font-black text-[#1a3a32]">{indicator.target}</p>
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                  Target ({indicator.unit})
+                </p>
+                <p className="text-xl font-serif font-black text-[#1d3331]">
+                  {indicator.target}
+                </p>
               </div>
             </div>
-            <h3 className="text-xl md:text-2xl font-serif font-black text-slate-800 leading-tight mb-4">
-              {indicator.objectiveTitle}
+            <h3 className="text-xl md:text-2xl font-serif font-black text-slate-800 mb-4">
+              {indicator.objective?.title}
             </h3>
-            <div className="p-5 bg-slate-50 rounded-2xl border-l-4 border-[#1a3a32]">
-              <p className="text-[13px] text-slate-600 font-semibold leading-relaxed">
-                {indicator.activityDescription}
+            <div className="p-5 bg-[#fcfcf7] rounded-2xl border-l-4 border-[#1d3331]">
+              <p className="text-[13px] text-[#1a2c2c] font-semibold">
+                {indicator.activity?.description}
               </p>
             </div>
           </div>
 
-          {/* Submissions List */}
-          <div className="space-y-6">
-            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-3 px-2">
-              <Files size={14} className="text-[#1a3a32]" />
-              {indicator.reportingCycle === "Annual" ? "Annual Submission" : "Quarterly Submissions"}
+          {/* Submissions */}
+          <div className="space-y-6 pb-10">
+            <h4 className="text-[10px] font-black text-slate-400 uppercase px-2 flex items-center gap-3">
+              <Files size={14} className="text-[#1d3331]" />
+              Quarterly Performance Evidence
             </h4>
 
+            {docReviews.length === 0 && (
+              <div className="text-center py-12 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                No pending submissions to review.
+              </div>
+            )}
+
             {docReviews.map((review) => {
-              const subData = indicator.submissions.find((s) => s._id === review.submissionId);
+              const subData = indicator.submissions.find(
+                (s) => s.id === review.submissionId
+              );
               if (!subData) return null;
 
               return (
-                <div key={review.submissionId} className="bg-white p-6 md:p-8 border border-slate-200 shadow-md rounded-[1.5rem] space-y-6">
+                <div
+                  key={review.submissionId}
+                  className="bg-white p-6 border border-slate-200 rounded-[1.5rem] space-y-6 shadow-md"
+                >
                   <div className="flex justify-between items-center">
-                    <p className="text-[11px] font-black text-[#1a3a32] uppercase">
-                      {indicator.reportingCycle === "Annual"
-                        ? "Annual Performance Evidence"
-                        : `Quarter ${subData.quarter} Evidence`}
+                    <p className="text-[11px] font-black text-[#1d3331] uppercase">
+                      Quarter {subData.quarter} Evidence
                     </p>
                     {rejectionMode && (
                       <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
                         <button
-                          onClick={() => handleDocReviewChange(review.submissionId, { reviewStatus: "Verified" })}
-                          className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${review.reviewStatus === "Verified" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-400"}`}
+                          onClick={() =>
+                            handleDocReviewChange(review.submissionId, {
+                              reviewStatus: "Verified",
+                            })
+                          }
+                          className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${
+                            review.reviewStatus === "Verified"
+                              ? "bg-white text-emerald-600 shadow-sm"
+                              : "text-slate-400"
+                          }`}
                         >
                           Accept
                         </button>
                         <button
-                          onClick={() => handleDocReviewChange(review.submissionId, { reviewStatus: "Rejected" })}
-                          className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${review.reviewStatus === "Rejected" ? "bg-rose-600 text-white shadow-sm" : "text-slate-400"}`}
+                          onClick={() =>
+                            handleDocReviewChange(review.submissionId, {
+                              reviewStatus: "Rejected",
+                            })
+                          }
+                          className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-all ${
+                            review.reviewStatus === "Rejected"
+                              ? "bg-rose-600 text-white shadow-sm"
+                              : "text-slate-400"
+                          }`}
                         >
                           Reject
                         </button>
@@ -220,43 +288,56 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
                     )}
                   </div>
 
-                  {/* ✅ Documents Grid — button instead of anchor */}
+                  {/* Evidence Documents */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {subData.documents.map((doc, i) => (
+                    {(subData.documents ?? []).map((doc) => (
                       <button
-                        key={i}
-                        onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: doc.fileName || "Evidence File" })}
-                        className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-[#1a3a32] group transition-all text-left"
+                        key={doc.id}
+                        onClick={() =>
+                          setPreviewFile({ url: doc.evidenceUrl, name: doc.fileName })
+                        }
+                        className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-[#1d3331] text-left transition-colors"
                       >
-                        <div className="flex items-center w-full gap-4 overflow-hidden">
-                          <FileText className="text-slate-400 group-hover:text-[#1a3a32] shrink-0" size={16} />
+                        <div className="flex items-center gap-4 overflow-hidden w-full">
+                          <FileText
+                            className="text-slate-400 shrink-0"
+                            size={16}
+                          />
                           <span className="text-[11px] font-black text-slate-600 truncate uppercase">
-                            {doc.fileName || "Evidence File"}
+                            {doc.fileName}
                           </span>
                         </div>
-                        <ExternalLink size={14} className="text-slate-300 group-hover:text-[#1a3a32] shrink-0" />
+                        <ExternalLink size={14} className="text-slate-300 shrink-0" />
                       </button>
                     ))}
                   </div>
 
                   {/* Assignee Notes */}
                   {subData.notes && (
-                    <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-200">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assignee Notes</p>
-                      <p className="text-xs font-medium text-slate-600">{subData.notes}</p>
+                    <div className="bg-[#fcfcf7] p-4 rounded-xl border border-dashed border-slate-200">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                        Assignee Notes
+                      </p>
+                      <p className="text-xs font-medium text-[#1a2c2c]">
+                        {subData.notes}
+                      </p>
                     </div>
                   )}
 
-                  {/* Admin Comment Field */}
+                  {/* Admin Comment */}
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-2 px-1">
-                      <Edit3 size={14} /> Internal Review Comment
+                    <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-2">
+                      <Edit3 size={14} /> Internal Audit Comment
                     </label>
                     <textarea
                       value={review.adminComment}
-                      onChange={(e) => handleDocReviewChange(review.submissionId, { adminComment: e.target.value })}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl text-[13px] font-semibold text-slate-700 outline-none focus:bg-white focus:border-slate-200 transition-all resize-none min-h-[80px]"
-                      placeholder="Comment on this specific evidence set..."
+                      onChange={(e) =>
+                        handleDocReviewChange(review.submissionId, {
+                          adminComment: e.target.value,
+                        })
+                      }
+                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-xl text-[13px] font-semibold outline-none focus:bg-white focus:border-[#1d3331]/20 transition-all resize-none min-h-[80px]"
+                      placeholder="Comment on this quarter's evidence..."
                     />
                   </div>
                 </div>
@@ -266,7 +347,6 @@ const AdminIndicatorModal: React.FC<AdminIndicatorModalProps> = ({
         </div>
       </div>
 
-      {/* ✅ FilePreviewModal — same pattern as UserTaskIdPage */}
       {previewFile && (
         <FilePreviewModal
           url={previewFile.url}

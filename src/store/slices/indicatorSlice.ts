@@ -5,21 +5,24 @@ import {
 } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
-/* ---------------- TYPES ---------------- */
+/* ─── TYPES ──────────────────────────────────────────────────────────── */
 
 export interface IDocument {
+  id?: string;
+  submissionId?: string;
   evidenceUrl: string;
   evidencePublicId: string;
   fileType: "image" | "video" | "raw";
   fileName?: string;
+  uploadedAt?: string;
 }
 
 export interface ISubmission {
-  _id: string;
+  id: string;
+  indicatorId?: string;
   quarter: 1 | 2 | 3 | 4;
   documents: IDocument[];
   notes: string;
-  submittedBy: string | { _id: string; name: string };
   adminDescriptionEdit?: string;
   submittedAt: string;
   achievedValue: number;
@@ -30,6 +33,7 @@ export interface ISubmission {
 }
 
 export interface IReviewHistory {
+  id?: string;
   action:
     | "Approved"
     | "Rejected"
@@ -38,7 +42,8 @@ export interface IReviewHistory {
     | "Correction Requested";
   reason: string;
   reviewerRole: "admin" | "superadmin" | "user";
-  reviewedBy: string | { _id: string; name: string };
+  reviewedBy: string;
+  reviewedByName?: string;
   at: string;
   nextDeadline?: string;
 }
@@ -52,87 +57,108 @@ export type PerformanceStatus =
   | "Completed";
 
 export interface IIndicator {
-  _id: string;
-  strategicPlanId: any;
-  objectiveId: string;
-  activityId: string;
-  assignee: { _id: string; name: string; email?: string; pjNumber?: string };
-  assignmentType: "User" | "Team";
-  reportingCycle: "Quarterly" | "Annual";
+  id: string;
+  status: PerformanceStatus;
   weight: number;
   unit: string;
   target: number;
-  deadline: string;
-  submissions: ISubmission[];
-  reviewHistory?: IReviewHistory[];
-  currentTotalAchieved: number;
   progress: number;
-  activeQuarter: 1 | 2 | 3 | 4;
-  status: PerformanceStatus;
+  deadline: string;
   instructions?: string;
-  assignedBy: any;
-  adminOverallComments?: string;
+  currentTotalAchieved: number;
+  activeQuarter: 1 | 2 | 3 | 4;
+  reportingCycle: "Quarterly" | "Annual";
+  assignmentType: "User" | "Team";
+
+  // ✅ Updated to match backend controller expectation
+  assignee: string; 
+  assignedBy: string;
+  strategicPlanId: string;
+  objectiveId: string;
+  activityId: string;
+
+  assigneeDisplayName?: string;
+  assignedByName?: string;
   perspective?: string;
   objectiveTitle?: string;
   activityDescription?: string;
-  assigneeDisplayName?: string;
+  assigneePjNumber?: string;
+
+  createdAt?: string;
+  updatedAt?: string;
+
+  submissions?: ISubmission[];
+  reviewHistory?: IReviewHistory[];
+
   needsAction?: boolean;
   isOverdue?: boolean;
+  adminOverallComments?: string;
 }
 
 export interface IQueueItem {
-  _id: string;
+  id: string;
+  submissionId: string;
   indicatorTitle: string;
   submittedBy: string;
   submittedOn: string;
   status: string;
-  progress: number;
   quarter: string;
+  achievedValue: number;
+  isReviewed: boolean;
+  reviewStatus: string;
+  adminComment?: string;
+  notes?: string;
   documentsCount: number;
-  documents?: IDocument[];
+  documents: IDocument[];
 }
 
-/* ---------------- STATE ---------------- */
+/* ─── STATE ──────────────────────────────────────────────────────────── */
 
 interface IndicatorState {
   indicators: IIndicator[];
+  selectedIndicator: IIndicator | null;
   rejectedByAdmin: IIndicator[];
   queue: IQueueItem[];
   loading: boolean;
+  detailLoading: boolean;
   actionLoading: boolean;
   error: string | null;
 }
 
 const initialState: IndicatorState = {
   indicators: [],
+  selectedIndicator: null,
   rejectedByAdmin: [],
   queue: [],
   loading: false,
+  detailLoading: false,
   actionLoading: false,
   error: null,
 };
 
-/* ---------------- HELPERS ---------------- */
+/* ─── HELPERS ─────────────────────────────────────────────────────────── */
 
 const getErrorMessage = (error: any): string =>
-  error.response?.data?.message || "An unexpected error occurred";
+  error?.response?.data?.message ?? "An unexpected error occurred";
 
-const updateIndicatorInState = (
-  state: IndicatorState,
-  updatedInd: IIndicator,
-) => {
-  const idx = state.indicators.findIndex(
-    (i: IIndicator) => i._id === updatedInd._id,
-  );
-  if (idx !== -1) state.indicators[idx] = updatedInd;
+const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
+  const replace = (list: IIndicator[]) => {
+    const idx = list.findIndex((i) => i.id === updated.id);
+    if (idx !== -1) {
+      list[idx] = updated;
+      return true;
+    }
+    return false;
+  };
+  if (!replace(state.indicators)) state.indicators.unshift(updated);
+  replace(state.rejectedByAdmin);
 
-  const rejIdx = state.rejectedByAdmin.findIndex(
-    (i: IIndicator) => i._id === updatedInd._id,
-  );
-  if (rejIdx !== -1) state.rejectedByAdmin[rejIdx] = updatedInd;
+  if (state.selectedIndicator?.id === updated.id) {
+    state.selectedIndicator = { ...state.selectedIndicator, ...updated };
+  }
 };
 
-/* ---------------- THUNKS ---------------- */
+/* ─── THUNKS ──────────────────────────────────────────────────────────── */
 
 export const fetchIndicators = createAsyncThunk(
   "indicators/fetchAll",
@@ -143,7 +169,19 @@ export const fetchIndicators = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
+);
+
+export const fetchIndicatorById = createAsyncThunk(
+  "indicators/fetchById",
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get(`/indicators/${id}`);
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
+  }
 );
 
 export const fetchSubmissionsQueue = createAsyncThunk(
@@ -155,7 +193,7 @@ export const fetchSubmissionsQueue = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const fetchRejectedByAdmin = createAsyncThunk(
@@ -163,13 +201,13 @@ export const fetchRejectedByAdmin = createAsyncThunk(
   async (_: void, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.get(
-        "/indicators/submissions/rejected-by-admin",
+        "/indicators/submissions/rejected-by-admin"
       );
       return res.data.data as IIndicator[];
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const createIndicator = createAsyncThunk(
@@ -181,14 +219,14 @@ export const createIndicator = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const updateIndicator = createAsyncThunk(
   "indicators/update",
   async (
     arg: { id: string; data: Partial<IIndicator> },
-    { rejectWithValue },
+    { rejectWithValue }
   ) => {
     try {
       const res = await apiPrivate.patch(`/indicators/${arg.id}`, arg.data);
@@ -196,7 +234,7 @@ export const updateIndicator = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const deleteIndicator = createAsyncThunk(
@@ -208,25 +246,28 @@ export const deleteIndicator = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const superAdminReview = createAsyncThunk(
   "indicators/superAdminReview",
-  async (arg: { id: string; reviewData: any }, { rejectWithValue }) => {
+  async (
+    arg: { id: string; reviewData: any },
+    { rejectWithValue }
+  ) => {
     try {
       const res = await apiPrivate.patch(
         `/indicators/${arg.id}/review`,
-        arg.reviewData,
+        arg.reviewData
       );
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
-/* ---------------- SLICE ---------------- */
+/* ─── SLICE ───────────────────────────────────────────────────────────── */
 
 const indicatorSlice = createSlice({
   name: "indicators",
@@ -235,80 +276,130 @@ const indicatorSlice = createSlice({
     clearIndicatorError: (state) => {
       state.error = null;
     },
+    clearSelectedIndicator: (state) => {
+      state.selectedIndicator = null;
+    },
   },
   extraReducers: (builder) => {
     builder
-      // All .addCase calls MUST come first
       .addCase(fetchIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(
-        fetchIndicators.fulfilled,
-        (state, action: PayloadAction<IIndicator[]>) => {
-          state.loading = false;
-          state.indicators = action.payload;
-        },
-      )
+      .addCase(fetchIndicators.fulfilled, (state, action: PayloadAction<IIndicator[]>) => {
+        state.loading = false;
+        state.indicators = action.payload;
+      })
       .addCase(fetchIndicators.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(fetchIndicatorById.pending, (state) => {
+        state.detailLoading = true;
+        state.error = null;
       })
-      .addCase(
-        fetchSubmissionsQueue.fulfilled,
-        (state, action: PayloadAction<IQueueItem[]>) => {
-          state.loading = false;
-          state.queue = action.payload;
-        },
-      )
-      .addCase(
-        fetchRejectedByAdmin.fulfilled,
-        (state, action: PayloadAction<IIndicator[]>) => {
-          state.loading = false;
-          state.rejectedByAdmin = action.payload;
-        },
-      )
-      .addCase(
-        createIndicator.fulfilled,
-        (state, action: PayloadAction<IIndicator>) => {
-          state.actionLoading = false;
-          state.indicators.unshift(action.payload);
-        },
-      )
-      .addCase(
-        deleteIndicator.fulfilled,
-        (state, action: PayloadAction<string>) => {
-          state.actionLoading = false;
-          state.indicators = state.indicators.filter(
-            (i: IIndicator) => i._id !== action.payload,
-          );
-          state.queue = state.queue.filter(
-            (q: IQueueItem) => q._id !== action.payload,
-          );
-          state.rejectedByAdmin = state.rejectedByAdmin.filter(
-            (i: IIndicator) => i._id !== action.payload,
-          );
-        },
-      )
-      // Matcher MUST come after all addCase calls
-      .addMatcher(
-        (action) =>
-          [
-            updateIndicator.fulfilled.type,
-            superAdminReview.fulfilled.type,
-          ].includes(action.type),
-        (state, action: PayloadAction<IIndicator>) => {
-          state.actionLoading = false;
-          updateIndicatorInState(state, action.payload);
-          if (action.type === superAdminReview.fulfilled.type) {
-            state.queue = state.queue.filter(
-              (q: IQueueItem) => q._id !== action.payload._id,
-            );
-          }
-        },
-      );
+      .addCase(fetchIndicatorById.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+        state.detailLoading = false;
+        state.selectedIndicator = action.payload;
+        upsertIndicator(state, action.payload);
+      })
+      .addCase(fetchIndicatorById.rejected, (state, action) => {
+        state.detailLoading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(fetchSubmissionsQueue.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchSubmissionsQueue.fulfilled, (state, action: PayloadAction<IQueueItem[]>) => {
+        state.loading = false;
+        state.queue = action.payload;
+      })
+      .addCase(fetchSubmissionsQueue.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(fetchRejectedByAdmin.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchRejectedByAdmin.fulfilled, (state, action: PayloadAction<IIndicator[]>) => {
+        state.loading = false;
+        state.rejectedByAdmin = action.payload;
+      })
+      .addCase(fetchRejectedByAdmin.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(createIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(createIndicator.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+        state.actionLoading = false;
+        state.indicators.unshift(action.payload);
+      })
+      .addCase(createIndicator.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(updateIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(updateIndicator.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+        state.actionLoading = false;
+        upsertIndicator(state, action.payload);
+      })
+      .addCase(updateIndicator.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(deleteIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteIndicator.fulfilled, (state, action: PayloadAction<string>) => {
+        state.actionLoading = false;
+        const id = action.payload;
+        state.indicators = state.indicators.filter((i) => i.id !== id);
+        state.queue = state.queue.filter((q) => q.id !== id);
+        state.rejectedByAdmin = state.rejectedByAdmin.filter((i) => i.id !== id);
+        if (state.selectedIndicator?.id === id) state.selectedIndicator = null;
+      })
+      .addCase(deleteIndicator.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(superAdminReview.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(superAdminReview.fulfilled, (state, action: PayloadAction<IIndicator>) => {
+        state.actionLoading = false;
+        upsertIndicator(state, action.payload);
+        state.queue = state.queue.filter((q) => q.id !== action.payload.id);
+      })
+      .addCase(superAdminReview.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
   },
 });
 
-export const { clearIndicatorError } = indicatorSlice.actions;
+export const { clearIndicatorError, clearSelectedIndicator } = indicatorSlice.actions;
 export default indicatorSlice.reducer;

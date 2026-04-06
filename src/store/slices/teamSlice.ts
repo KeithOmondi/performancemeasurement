@@ -6,7 +6,7 @@ import { apiPrivate } from "../../api/axios";
 /* ------------------------------------------------------------------ */
 
 export interface ITeamMember {
-  _id: string;
+  id: string;        // ✅ PostgreSQL returns id, not _id
   name: string;
   email: string;
   title?: string;
@@ -15,15 +15,23 @@ export interface ITeamMember {
 }
 
 export interface ITeam {
-  _id: string;
+  id: string;
   name: string;
   description?: string;
-  teamLead: ITeamMember;
+  teamLead?: ITeamMember;
+  teamLeadId?: string;
+  leadName?: string;
+  leadEmail?: string;
   members: ITeamMember[];
-  createdBy?: ITeamMember;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
+  createdBy?: string;
+  creatorName?: string;
+  isActive?: boolean;
+  is_active?: boolean;   // ← add this if your API returns snake_case
+  memberCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface TeamState {
@@ -56,7 +64,11 @@ export const fetchTeams = createAsyncThunk(
   async (_: void, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.get("/teams");
-      return res.data.data as ITeam[];
+      const teams = res.data.data.map((t: any) => ({
+        ...t,
+        isActive: t.isActive ?? t.is_active,  // normalize here
+      }));
+      return teams as ITeam[];
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
@@ -160,19 +172,25 @@ const teamSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    const setActionLoading = (state: TeamState) => { state.actionLoading = true; state.error = null; };
-    const clearActionLoading = (state: TeamState) => { state.actionLoading = false; };
+    const setActionLoading = (state: TeamState) => {
+      state.actionLoading = true;
+      state.error = null;
+    };
 
     const upsertTeam = (state: TeamState, action: PayloadAction<ITeam>) => {
       state.actionLoading = false;
-      const idx = state.teams.findIndex((t) => t._id === action.payload._id);
+      // ✅ Use .id not ._id
+      const idx = state.teams.findIndex((t) => t.id === action.payload.id);
       if (idx !== -1) state.teams[idx] = action.payload;
       else state.teams.unshift(action.payload);
     };
 
     builder
       // fetch
-      .addCase(fetchTeams.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(fetchTeams.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
       .addCase(fetchTeams.fulfilled, (state, action: PayloadAction<ITeam[]>) => {
         state.loading = false;
         state.teams = action.payload;
@@ -184,30 +202,49 @@ const teamSlice = createSlice({
       // create
       .addCase(createTeam.pending, setActionLoading)
       .addCase(createTeam.fulfilled, upsertTeam)
-      .addCase(createTeam.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; })
+      .addCase(createTeam.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      })
       // update
       .addCase(updateTeam.pending, setActionLoading)
       .addCase(updateTeam.fulfilled, upsertTeam)
-      .addCase(updateTeam.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; })
+      .addCase(updateTeam.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      })
       // addMembers
       .addCase(addTeamMembers.pending, setActionLoading)
       .addCase(addTeamMembers.fulfilled, upsertTeam)
-      .addCase(addTeamMembers.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; })
+      .addCase(addTeamMembers.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      })
       // removeMembers
       .addCase(removeTeamMembers.pending, setActionLoading)
       .addCase(removeTeamMembers.fulfilled, upsertTeam)
-      .addCase(removeTeamMembers.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; })
+      .addCase(removeTeamMembers.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      })
       // setStatus
       .addCase(setTeamActiveStatus.pending, setActionLoading)
       .addCase(setTeamActiveStatus.fulfilled, upsertTeam)
-      .addCase(setTeamActiveStatus.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; })
+      .addCase(setTeamActiveStatus.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      })
       // delete
       .addCase(deleteTeam.pending, setActionLoading)
       .addCase(deleteTeam.fulfilled, (state, action: PayloadAction<string>) => {
         state.actionLoading = false;
-        state.teams = state.teams.filter((t) => t._id !== action.payload);
+        // ✅ Use .id not ._id
+        state.teams = state.teams.filter((t) => t.id !== action.payload);
       })
-      .addCase(deleteTeam.rejected, (state, action) => { clearActionLoading(state); state.error = action.payload as string; });
+      .addCase(deleteTeam.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
   },
 });
 

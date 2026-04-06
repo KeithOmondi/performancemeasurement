@@ -5,23 +5,71 @@ import { Link } from "react-router-dom";
 
 // Thunks
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
-import { fetchDashboardStats } from "../../store/slices/dashboardSlice"; 
+import { fetchDashboardStats } from "../../store/slices/dashboardSlice";
 import { fetchAllAdminIndicators } from "../../store/slices/adminIndicatorSlice";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 
 // Types
 import type { AppDispatch, RootState } from "../../store/store";
 
+/**
+ * Statuses that mean the indicator is still awaiting human action.
+ * Completed / Rejected-final are terminal — they are NOT overdue candidates.
+ */
+const ACTIONABLE_STATUSES = new Set([
+  "Pending",
+  "Awaiting Admin Approval",
+  "Awaiting Super Admin",
+  "Partially Approved",
+  "Rejected by Admin",   // needs resubmission — still active
+  "Rejected by Super Admin",
+]);
+
+/**
+ * An indicator is overdue when:
+ *   1. It is still actionable (not Completed or fully closed), AND
+ *   2. Its deadline has passed (deadline < today)
+ *
+ * Falls back to quarter-based check only when no deadline is present.
+ */
+const isIndicatorOverdue = (indicator: any, currentQuarter: number): boolean => {
+  const status: string = indicator.status ?? "";
+
+  // Terminal statuses — never overdue
+  if (status === "Completed") return false;
+  if (!ACTIONABLE_STATUSES.has(status)) return false;
+
+  // Prefer explicit deadline from backend
+  if (indicator.deadline) {
+    return new Date(indicator.deadline) < new Date();
+  }
+
+  // Fallback: Annual indicators have no quarter concept
+  if (indicator.reportingCycle === "Annual") return false;
+
+  // Quarterly fallback: only overdue if STILL pending in a past quarter
+  // (i.e. not yet submitted/approved — status must still be "Pending")
+  return (
+    status === "Pending" &&
+    typeof indicator.activeQuarter === "number" &&
+    indicator.activeQuarter < currentQuarter
+  );
+};
+
 const AdminDashboardPage = () => {
   const dispatch = useDispatch<AppDispatch>();
 
-  // 1. Selectors
+  // ── Selectors ────────────────────────────────────────────────────────────────
   const { isLoading: uLoad } = useSelector((state: RootState) => state.users);
-  const { allAssignments: indicators = [], isLoading: iLoad } = useSelector((state: RootState) => state.adminIndicators); 
+  const { allAssignments: indicators = [], isLoading: iLoad } = useSelector(
+    (state: RootState) => state.adminIndicators
+  );
   const { stats, loading: sLoad } = useSelector((state: RootState) => state.dashboard);
-  const { plans = [], loading: pLoad } = useSelector((state: RootState) => state.strategicPlan);
+  const { plans = [], loading: pLoad } = useSelector(
+    (state: RootState) => state.strategicPlan
+  );
 
-  // 2. Data Lifecycle
+  // ── Data Lifecycle ────────────────────────────────────────────────────────────
   useEffect(() => {
     dispatch(fetchAllUsers());
     dispatch(fetchDashboardStats());
@@ -29,27 +77,39 @@ const AdminDashboardPage = () => {
     dispatch(getAllStrategicPlans());
   }, [dispatch]);
 
-  // 3. Derived Logic
+  // ── Derived Logic ─────────────────────────────────────────────────────────────
   const derivedData = useMemo(() => {
-    const totalActivities = (plans || []).reduce((acc, p) => 
-      acc + (p.objectives?.reduce((oAcc, obj) => oAcc + (obj.activities?.length || 0), 0) || 0), 0
+    const totalActivities = (plans ?? []).reduce(
+      (acc, p) =>
+        acc +
+        (p.objectives?.reduce(
+          (oAcc: number, obj: any) => oAcc + (obj.activities?.length ?? 0),
+          0
+        ) ?? 0),
+      0
     );
 
     const assignedCount = indicators.length;
-    
-    // Updated to include the new "Awaiting Admin Approval" status
-    const awaitingReview = indicators.filter(i => 
-      ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(i.status)
+
+    const awaitingReview = indicators.filter((i) =>
+      ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(
+        i.status
+      )
     ).length;
 
-    // Matches the "Completed" status from your Mongoose static engine
-    const approved = indicators.filter(i => i.status === "Completed").length;
-    
-    const rejected = indicators.filter(i => 
+    const approved = indicators.filter((i) => i.status === "Completed").length;
+
+    const rejected = indicators.filter((i) =>
       ["Rejected by Admin", "Rejected by Super Admin"].includes(i.status)
     ).length;
-    
-    const overdue = indicators.filter(i => i.isOverdue).length;
+
+    // ✅ Fixed overdue: uses deadline field first, quarter only as fallback,
+    //    and never counts terminal or non-actionable statuses.
+    const currentMonth = new Date().getMonth() + 1;
+    const currentQuarter = Math.ceil(currentMonth / 3);
+    const overdue = indicators.filter((i) =>
+      isIndicatorOverdue(i, currentQuarter)
+    ).length;
 
     return {
       totalActivities,
@@ -58,144 +118,260 @@ const AdminDashboardPage = () => {
       awaitingReview,
       approved,
       rejected,
-      overdue
+      overdue,
     };
   }, [plans, indicators]);
 
-  // 4. Loading Guard
   const isGlobalLoading = uLoad || sLoad || iLoad || pLoad;
-  if (isGlobalLoading && (plans || []).length === 0) {
+
+  if (isGlobalLoading && plans.length === 0) {
     return (
       <div className="min-h-screen bg-[#fcfcf7] flex flex-col items-center justify-center p-4">
         <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
-        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 text-center">Syncing Registry Intelligence...</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 text-center">
+          Syncing Registry Intelligence...
+        </p>
       </div>
     );
   }
 
+  // Pending queue — same filter as awaitingReview count, capped at 5
+  const pendingQueue = indicators
+    .filter((ind) =>
+      ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(
+        ind.status
+      )
+    )
+    .slice(0, 5);
+
   return (
     <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 text-[#1a2c2c] font-sans">
-      
-      {/* 🔹 HEADER */}
+
+      {/* HEADER */}
       <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-serif font-bold text-[#1d3331]">Management Intelligence</h1>
-          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">Institutional Performance Oversight</p>
+          <h1 className="text-3xl font-serif font-bold text-[#1d3331]">
+            Management Intelligence
+          </h1>
+          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-[0.2em]">
+            Institutional Performance Oversight
+          </p>
         </div>
         <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm">
-           <p className="text-[9px] text-slate-400 font-bold uppercase">Registry Status</p>
-           <p className="text-[10px] font-black text-emerald-700 uppercase">Operational / Real-time Sync</p>
+          <p className="text-[9px] text-slate-400 font-bold uppercase">Registry Status</p>
+          <p className="text-[10px] font-black text-emerald-700 uppercase">
+            Operational / Real-time Sync
+          </p>
         </div>
       </div>
 
-      {/* 🔹 TOP STATS GRID */}
+      {/* TOP STATS GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <StatCard label="Total Indicators" value={derivedData.totalActivities} border="border-[#1d3331]" />
-        <StatCard label="Assigned" value={derivedData.assignedCount} border="border-slate-300" />
-        <StatCard label="Unassigned" value={derivedData.unassignedCount} border="border-slate-200" textColor="text-slate-400" />
-        <StatCard label="Pending Action" value={derivedData.awaitingReview} border="border-yellow-500" textColor="text-yellow-600" />
-        <StatCard label="Certified Completed" value={derivedData.approved} border="border-emerald-700" textColor="text-emerald-700" />
+        <StatCard
+          label="Total Indicators"
+          value={derivedData.totalActivities}
+          border="border-[#1d3331]"
+        />
+        <StatCard
+          label="Assigned"
+          value={derivedData.assignedCount}
+          border="border-slate-300"
+        />
+        <StatCard
+          label="Unassigned"
+          value={derivedData.unassignedCount}
+          border="border-slate-200"
+          textColor="text-slate-400"
+        />
+        <StatCard
+          label="Pending Action"
+          value={derivedData.awaitingReview}
+          border="border-yellow-500"
+          textColor="text-yellow-600"
+        />
+        <StatCard
+          label="Certified Completed"
+          value={derivedData.approved}
+          border="border-emerald-700"
+          textColor="text-emerald-700"
+        />
       </div>
 
-      {/* 🔹 CRITICAL AUDIT METRICS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-10">
+      {/* CRITICAL AUDIT METRICS */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-10">
+        {/* Overdue */}
         <div className="bg-white p-5 rounded-xl border-t-4 border-red-800 shadow-sm flex flex-col justify-between h-32">
-          <div className="text-4xl font-serif font-bold text-red-800">{derivedData.overdue}</div>
-          <div className="text-[10px] font-bold text-slate-500 tracking-[0.2em] uppercase">Overdue & Critical</div>
-        </div>
-        
-        <div className="sm:col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-[#1d3331] shadow-sm flex items-center h-32">
-          <CheckCircle2 size={32} className="text-[#1d3331] mr-4 opacity-20" />
-          <div>
-            <span className="text-4xl font-serif font-bold text-[#1d3331]">{derivedData.approved}</span>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">Verified Final Output</p>
+          <div className="text-4xl font-serif font-bold text-red-800">
+            {derivedData.overdue}
+          </div>
+          <div className="text-[10px] font-bold text-slate-500 tracking-[0.2em] uppercase">
+            Overdue & Critical
           </div>
         </div>
 
-        <div className="sm:col-span-1 lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-orange-600 shadow-sm flex items-center h-32">
-          <AlertCircle size={32} className="text-orange-600 mr-4 opacity-20" />
+        {/* Verified Final */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-[#1d3331] shadow-sm flex items-center h-32 group hover:shadow-md transition-all">
+          <CheckCircle2
+            size={32}
+            className="text-[#1d3331] mr-4 opacity-20 group-hover:opacity-40 transition-opacity"
+          />
           <div>
-            <span className="text-4xl font-serif font-bold text-orange-600">{derivedData.rejected}</span>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">Returned for Correction</p>
+            <span className="text-4xl font-serif font-bold text-[#1d3331]">
+              {derivedData.approved}
+            </span>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">
+              Verified Final Output
+            </p>
+          </div>
+        </div>
+
+        {/* Returned for Correction */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl border-l-[6px] border-orange-600 shadow-sm flex items-center h-32 group hover:shadow-md transition-all">
+          <AlertCircle
+            size={32}
+            className="text-orange-600 mr-4 opacity-20 group-hover:opacity-40 transition-opacity"
+          />
+          <div>
+            <span className="text-4xl font-serif font-bold text-orange-600">
+              {derivedData.rejected}
+            </span>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-tight">
+              Returned for Correction
+            </p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+
+        {/* PENDING VERIFICATION QUEUE */}
         <div className="lg:col-span-8">
           <div className="flex justify-between items-end mb-6">
             <div>
-              <h3 className="text-xl font-serif font-bold text-[#1d3331]">Pending Verification Queue</h3>
-              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Submissions requiring administrative audit</p>
+              <h3 className="text-xl font-serif font-bold text-[#1d3331]">
+                Pending Verification Queue
+              </h3>
+              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">
+                Submissions requiring administrative audit
+              </p>
             </div>
-            <Link to="/admin/reviewer" className="text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:underline">View All →</Link>
+            <Link
+              to="/admin/reviewer"
+              className="text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:underline"
+            >
+              View All →
+            </Link>
           </div>
-          
+
           <div className="space-y-3">
-            {indicators
-              .filter(ind => ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(ind.status))
-              .slice(0, 5)
-              .map((item: any, idx) => (
-                <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between shadow-sm group hover:border-slate-200 transition-all">
-                  <div className="flex items-center space-x-4">
-                    <div className="relative">
-                       <Clock size={18} className={`${item.status === "Awaiting Super Admin" ? "text-emerald-600" : "text-yellow-500"} opacity-40`} />
-                       {item.isResubmission && <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full animate-pulse" />}
+            {pendingQueue.length > 0 ? (
+              pendingQueue.map((item) => {
+                const isEscalated = item.status === "Awaiting Super Admin";
+                const isResub = (item.submissions ?? []).some(
+                  (s: any) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+                );
+
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-white p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between shadow-sm group hover:border-slate-200 transition-all"
+                  >
+                    <div className="flex items-center space-x-4">
+                      <div className="relative">
+                        <Clock
+                          size={18}
+                          className={`${
+                            isEscalated ? "text-emerald-600" : "text-yellow-500"
+                          } opacity-40`}
+                        />
+                        {isResub && (
+                          <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full animate-pulse" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-[#1d3331] italic leading-snug line-clamp-1">
+                          "{item.activity?.description}"
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-1 font-bold uppercase tracking-tighter">
+                          {item.assigneeName} •{" "}
+                          <span
+                            className={
+                              isEscalated ? "text-emerald-700" : "text-yellow-600"
+                            }
+                          >
+                            {item.status}
+                          </span>
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-[#1d3331] italic leading-snug line-clamp-1">"{item.activityDescription}"</p>
-                      <p className="text-[10px] text-slate-400 mt-1 font-bold uppercase tracking-tighter">
-                         {item.assigneeDisplayName} • <span className={item.status === "Awaiting Super Admin" ? "text-emerald-700" : "text-yellow-600"}>{item.status}</span>
-                         {item.isResubmission && <span className="ml-2 text-red-800">[RESUBMISSION]</span>}
-                      </p>
+                    <div className="flex items-center gap-4 mt-3 sm:mt-0">
+                      <div className="text-right mr-2">
+                        <span className="block text-[11px] font-black text-[#1d3331]">
+                          {item.progress}%
+                        </span>
+                        <span className="block text-[8px] text-slate-400 font-bold uppercase">
+                          {item.unit}
+                        </span>
+                      </div>
+                      <Link
+                        to={`/admin/indicators/${item.id}`}
+                        className="bg-[#1d3331] text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all shadow-lg"
+                      >
+                        <ArrowRightCircle size={16} />
+                      </Link>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 mt-3 sm:mt-0">
-                    <div className="text-right mr-2">
-                       <span className="block text-[11px] font-black text-[#1d3331]">{item.progress}%</span>
-                       <span className="block text-[8px] text-slate-400 font-bold uppercase">{item.unit}</span>
-                    </div>
-                    <Link to={`/admin/indicators/${item._id}`} className="bg-[#1d3331] text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all shadow-lg">
-                      <ArrowRightCircle size={16} />
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            
-            {derivedData.awaitingReview === 0 && (
+                );
+              })
+            ) : (
               <div className="py-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
-                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Verification Queue Clear</p>
+                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                  Verification Queue Clear
+                </p>
               </div>
             )}
           </div>
         </div>
 
-        {/* 🔹 STRATEGIC MATRIX */}
+        {/* STRATEGIC MATRIX */}
         <div className="lg:col-span-4">
-          <h3 className="text-xl font-serif font-bold text-[#1d3331] mb-6">Strategic Matrix</h3>
+          <h3 className="text-xl font-serif font-bold text-[#1d3331] mb-6">
+            Strategic Matrix
+          </h3>
           <div className="space-y-4">
             {(stats?.perspectiveStats ?? []).length > 0 ? (
-              stats?.perspectiveStats?.map((p: any, idx: number) => (
-                <div key={idx} className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm group hover:border-[#1d3331]/20 transition-all">
+              (stats?.perspectiveStats ?? []).map((p: any, idx: number) => (
+                <div
+                  key={idx}
+                  className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm group hover:border-[#1d3331]/20 transition-all"
+                >
                   <div className="flex justify-between items-center mb-2">
-                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-[#1d3331] transition-colors">{p.name}</h4>
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-[#1d3331] transition-colors">
+                      {p.name}
+                    </h4>
                     <span className="text-[11px] font-black text-[#1d3331]">{p.val}%</span>
                   </div>
                   <div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
-                    <div 
-                      className="bg-[#1d3331] h-full transition-all duration-1000" 
-                      style={{ width: `${p.val}%` }} 
+                    <div
+                      className="bg-[#1d3331] h-full transition-all duration-1000"
+                      style={{ width: `${p.val}%` }}
                     />
                   </div>
                   <div className="flex justify-between mt-3">
-                     <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">{p.count} Indicators</p>
-                     <p className="text-[9px] text-[#1d3331] font-black uppercase tracking-tighter cursor-pointer">View Focus →</p>
+                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">
+                      {p.count} Indicators
+                    </p>
+                    <p className="text-[9px] text-[#1d3331] font-black uppercase tracking-tighter cursor-pointer">
+                      View Focus →
+                    </p>
                   </div>
                 </div>
               ))
             ) : (
               <div className="text-center p-8 border-2 border-dashed border-slate-100 rounded-xl">
-                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">No Perspective Data Available</p>
+                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                  No Perspective Data Available
+                </p>
               </div>
             )}
           </div>
@@ -205,13 +381,27 @@ const AdminDashboardPage = () => {
   );
 };
 
-/* --- SUPPORTING COMPONENTS --- */
-
-const StatCard = ({ label, value, border, textColor }: any) => (
+const StatCard = ({
+  label,
+  value,
+  border,
+  textColor,
+}: {
+  label: string;
+  value: number;
+  border: string;
+  textColor?: string;
+}) => (
   <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm relative h-32 flex flex-col justify-between group hover:shadow-md transition-all">
-    <div className={`text-4xl font-serif font-bold ${textColor || "text-[#1d3331]"}`}>{value}</div>
-    <div className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mb-2">{label}</div>
-    <div className={`absolute bottom-4 left-4 right-4 h-1 border-b-[3px] ${border} opacity-70 group-hover:opacity-100 transition-opacity`} />
+    <div className={`text-4xl font-serif font-bold ${textColor ?? "text-[#1d3331]"}`}>
+      {value}
+    </div>
+    <div className="text-[10px] font-bold text-slate-400 tracking-widest uppercase mb-2">
+      {label}
+    </div>
+    <div
+      className={`absolute bottom-4 left-4 right-4 h-1 border-b-[3px] ${border} opacity-70 group-hover:opacity-100 transition-opacity`}
+    />
   </div>
 );
 

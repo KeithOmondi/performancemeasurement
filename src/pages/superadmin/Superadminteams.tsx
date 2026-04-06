@@ -16,14 +16,14 @@ import type { AppDispatch, RootState } from "../../store/store";
 import toast from "react-hot-toast";
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                             */
+/* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
 const getInitials = (name: string) =>
   name ? name.split(" ").map((n) => n[0]).join("").toUpperCase().substring(0, 2) : "??";
 
 /* ------------------------------------------------------------------ */
-/*  Sub-component: Multi-select user picker                            */
+/* Sub-component: Multi-select user picker                             */
 /* ------------------------------------------------------------------ */
 const UserMultiSelect = ({
   label,
@@ -41,19 +41,21 @@ const UserMultiSelect = ({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const available = allUsers.filter(
-    (u) =>
-      u.isActive &&
-      !excludeIds.includes(u._id) &&
-      (u.name.toLowerCase().includes(search.toLowerCase()) ||
-        u.email.toLowerCase().includes(search.toLowerCase())),
-  );
+  const available = useMemo(() => {
+    return allUsers.filter(
+      (u) =>
+        (u.isActive) &&
+        !excludeIds.includes(u.id) &&           // ✅ u.id not u._id
+        (u.name.toLowerCase().includes(search.toLowerCase()) ||
+          u.email.toLowerCase().includes(search.toLowerCase()))
+    );
+  }, [allUsers, excludeIds, search]);
 
   const toggle = (id: string) => {
     onChange(
       selectedIds.includes(id)
         ? selectedIds.filter((i) => i !== id)
-        : [...selectedIds, id],
+        : [...selectedIds, id]
     );
   };
 
@@ -91,9 +93,9 @@ const UserMultiSelect = ({
             ) : (
               available.map((u) => (
                 <button
-                  key={u._id}
+                  key={u.id}                        // ✅ u.id
                   type="button"
-                  onClick={() => toggle(u._id)}
+                  onClick={() => toggle(u.id)}      // ✅ u.id
                   className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
                 >
                   <div className="flex items-center gap-3">
@@ -105,7 +107,7 @@ const UserMultiSelect = ({
                       <p className="text-[10px] text-slate-400">{u.title || u.role}</p>
                     </div>
                   </div>
-                  {selectedIds.includes(u._id) && (
+                  {selectedIds.includes(u.id) && (  // ✅ u.id
                     <Check size={14} className="text-emerald-500" />
                   )}
                 </button>
@@ -115,11 +117,10 @@ const UserMultiSelect = ({
         </div>
       )}
 
-      {/* Selected chips */}
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap gap-2 pt-2">
           {selectedIds.map((id) => {
-            const u = allUsers.find((u) => u._id === id);
+            const u = allUsers.find((user) => user.id === id);  // ✅ user.id
             return u ? (
               <div
                 key={id}
@@ -139,17 +140,15 @@ const UserMultiSelect = ({
 };
 
 /* ------------------------------------------------------------------ */
-/*  Main Page                                                           */
+/* Main Page                                                           */
 /* ------------------------------------------------------------------ */
 
 const SuperAdminTeams = () => {
   const dispatch = useDispatch<AppDispatch>();
 
-  /* Redux state */
   const { teams, loading, actionLoading } = useSelector((s: RootState) => s.teams);
   const { users } = useSelector((s: RootState) => s.users);
 
-  /* UI state */
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<ITeam | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -158,7 +157,6 @@ const SuperAdminTeams = () => {
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   const [membersToAdd, setMembersToAdd] = useState<string[]>([]);
 
-  /* Form state */
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -176,12 +174,13 @@ const SuperAdminTeams = () => {
       teams.filter(
         (t) =>
           t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          t.teamLead?.name?.toLowerCase().includes(searchTerm.toLowerCase()),
+          t.leadName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          t.teamLead?.name?.toLowerCase().includes(searchTerm.toLowerCase())
       ),
-    [teams, searchTerm],
+    [teams, searchTerm]
   );
 
-  /* ── Handlers ─────────────────────────────────────────────────── */
+  /* ── Handlers ──────────────────────────────────────────────────── */
 
   const openCreateModal = () => {
     setIsEditing(false);
@@ -195,8 +194,8 @@ const SuperAdminTeams = () => {
     setFormData({
       name: selectedTeam.name,
       description: selectedTeam.description || "",
-      teamLead: selectedTeam.teamLead._id,
-      memberIds: selectedTeam.members.map((m) => m._id),
+      teamLead: selectedTeam.teamLeadId || selectedTeam.teamLead?.id || "",  // ✅ .id
+      memberIds: selectedTeam.members?.map((m) => m.id) || [],              // ✅ .id
     });
     setIsFormOpen(true);
   };
@@ -209,13 +208,13 @@ const SuperAdminTeams = () => {
       if (isEditing && selectedTeam) {
         await dispatch(
           updateTeam({
-            id: selectedTeam._id,
+            id: selectedTeam.id,                  // ✅ .id
             data: {
               name: formData.name,
               description: formData.description,
               teamLead: formData.teamLead,
             },
-          }),
+          })
         ).unwrap();
         toast.success("Team updated");
       } else {
@@ -225,7 +224,7 @@ const SuperAdminTeams = () => {
             description: formData.description,
             teamLead: formData.teamLead,
             members: formData.memberIds,
-          }),
+          })
         ).unwrap();
         toast.success("Team created");
       }
@@ -240,7 +239,7 @@ const SuperAdminTeams = () => {
   const handleDelete = async () => {
     if (!selectedTeam) return;
     try {
-      await dispatch(deleteTeam(selectedTeam._id)).unwrap();
+      await dispatch(deleteTeam(selectedTeam.id)).unwrap();  // ✅ .id
       toast.success("Team deleted");
       setIsDeleteOpen(false);
       setSelectedTeam(null);
@@ -250,12 +249,14 @@ const SuperAdminTeams = () => {
   };
 
   const handleToggleStatus = async (team: ITeam) => {
+    const currentlyActive = team.isActive ?? team.is_active ?? true;
     try {
-      await dispatch(setTeamActiveStatus({ id: team._id, isActive: !team.isActive })).unwrap();
-      toast.success(`Team ${team.isActive ? "deactivated" : "activated"}`);
-      // Update selectedTeam if it's the one being toggled
-      if (selectedTeam?._id === team._id) {
-        setSelectedTeam((prev) => prev ? { ...prev, isActive: !prev.isActive } : null);
+      await dispatch(
+        setTeamActiveStatus({ id: team.id, isActive: !currentlyActive })  // ✅ .id
+      ).unwrap();
+      toast.success(`Team ${currentlyActive ? "deactivated" : "activated"}`);
+      if (selectedTeam?.id === team.id) {
+        setSelectedTeam((prev) => prev ? { ...prev, isActive: !currentlyActive } : null);
       }
     } catch (err: any) {
       toast.error(err || "Status update failed");
@@ -266,7 +267,7 @@ const SuperAdminTeams = () => {
     if (!selectedTeam || membersToAdd.length === 0) return;
     try {
       const updated = await dispatch(
-        addTeamMembers({ id: selectedTeam._id, memberIds: membersToAdd }),
+        addTeamMembers({ id: selectedTeam.id, memberIds: membersToAdd })  // ✅ .id
       ).unwrap();
       setSelectedTeam(updated);
       setMembersToAdd([]);
@@ -279,12 +280,13 @@ const SuperAdminTeams = () => {
 
   const handleRemoveMember = async (memberId: string) => {
     if (!selectedTeam) return;
-    if (memberId === selectedTeam.teamLead._id) {
+    const leadId = selectedTeam.teamLeadId || selectedTeam.teamLead?.id;
+    if (memberId === leadId) {
       return toast.error("Cannot remove the team lead");
     }
     try {
       const updated = await dispatch(
-        removeTeamMembers({ id: selectedTeam._id, memberIds: [memberId] }),
+        removeTeamMembers({ id: selectedTeam.id, memberIds: [memberId] })  // ✅ .id
       ).unwrap();
       setSelectedTeam(updated);
       toast.success("Member removed");
@@ -293,11 +295,10 @@ const SuperAdminTeams = () => {
     }
   };
 
-  /* ── Render ───────────────────────────────────────────────────── */
+  const isTeamActive = (team: ITeam) => team.isActive ?? true;
 
   return (
     <div className="min-h-screen bg-[#fcfcf7] p-6 md:p-10 text-[#1a2c2c] font-sans">
-
       {/* Header */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-start mb-6 gap-4">
         <div>
@@ -342,86 +343,84 @@ const SuperAdminTeams = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {filteredTeams.map((team) => (
-            <div
-              key={team._id}
-              onClick={() => setSelectedTeam(team)}
-              className={`bg-white p-6 rounded-3xl border shadow-sm relative group hover:shadow-xl transition-all cursor-pointer active:scale-[0.98] flex flex-col ${
-                team.isActive ? "border-slate-100 hover:border-[#1d3331]/30" : "border-slate-100 opacity-60"
-              }`}
-            >
-              {/* Status dot */}
-              <div className={`absolute top-5 right-5 w-2 h-2 rounded-full ${team.isActive ? "bg-emerald-400" : "bg-slate-300"}`} />
+          {filteredTeams.map((team) => {
+            const active = isTeamActive(team);
+            return (
+              <div
+                key={team.id}                          // ✅ .id
+                onClick={() => setSelectedTeam(team)}
+                className={`bg-white p-6 rounded-3xl border shadow-sm relative group hover:shadow-xl transition-all cursor-pointer active:scale-[0.98] flex flex-col ${
+                  active ? "border-slate-100 hover:border-[#1d3331]/30" : "border-slate-100 opacity-60"
+                }`}
+              >
+                <div className={`absolute top-5 right-5 w-2 h-2 rounded-full ${active ? "bg-emerald-400" : "bg-slate-300"}`} />
 
-              <div className="flex items-start gap-4 mb-5">
-                <div className="w-12 h-12 rounded-2xl bg-[#1d3331] text-white flex items-center justify-center font-bold text-lg shadow-inner flex-shrink-0">
-                  <Users size={20} />
+                <div className="flex items-start gap-4 mb-5">
+                  <div className="w-12 h-12 rounded-2xl bg-[#1d3331] text-white flex items-center justify-center font-bold text-lg shadow-inner flex-shrink-0">
+                    <Users size={20} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-[15px] font-bold text-[#1d3331] leading-tight truncate">{team.name}</h4>
+                    {team.description ? (
+                      <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{team.description}</p>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-[15px] font-bold text-[#1d3331] leading-tight truncate">{team.name}</h4>
-                  {team.description && (
-                    <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{team.description}</p>
-                  )}
+
+                <div className="space-y-2 mb-5 flex-1">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <Crown size={12} className="text-amber-400" />
+                    {/* leadName comes from getAllTeams JOIN, teamLead.name from getTeamById */}
+                    <span className="font-bold truncate">{team.leadName || team.teamLead?.name || "No lead"}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <Users size={12} className="text-slate-300" />
+                    <span>{team.memberCount || team.members?.length || 0} member{(team.memberCount || team.members?.length || 0) !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+
+                <div className="w-full border-t border-slate-50 pt-4 mt-auto flex items-center justify-between">
+                  <div className="flex -space-x-2">
+                    {team.members?.slice(0, 4).map((m) => (
+                      <div
+                        key={m.id}                     // ✅ .id
+                        title={m.name}
+                        className="w-6 h-6 rounded-full bg-[#1d3331] text-white border-2 border-white flex items-center justify-center text-[8px] font-bold"
+                      >
+                        {getInitials(m.name)}
+                      </div>
+                    ))}
+                    {(team.members?.length || 0) > 4 && (
+                      <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 border-2 border-white flex items-center justify-center text-[8px] font-bold">
+                        +{(team.members?.length || 0) - 4}
+                      </div>
+                    )}
+                  </div>
+                  <span className={`text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded-lg ${active ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
+                    {active ? "Active" : "Inactive"}
+                  </span>
                 </div>
               </div>
-
-              <div className="space-y-2 mb-5 flex-1">
-                <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                  <Crown size={12} className="text-amber-400" />
-                  <span className="font-bold truncate">{team.teamLead?.name || "No lead"}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                  <Users size={12} className="text-slate-300" />
-                  <span>{team.members?.length || 0} member{team.members?.length !== 1 ? "s" : ""}</span>
-                </div>
-              </div>
-
-              {/* Avatar stack */}
-              <div className="w-full border-t border-slate-50 pt-4 mt-auto flex items-center justify-between">
-                <div className="flex -space-x-2">
-                  {team.members.slice(0, 4).map((m) => (
-                    <div
-                      key={m._id}
-                      title={m.name}
-                      className="w-6 h-6 rounded-full bg-[#1d3331] text-white border-2 border-white flex items-center justify-center text-[8px] font-bold"
-                    >
-                      {getInitials(m.name)}
-                    </div>
-                  ))}
-                  {team.members.length > 4 && (
-                    <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 border-2 border-white flex items-center justify-center text-[8px] font-bold">
-                      +{team.members.length - 4}
-                    </div>
-                  )}
-                </div>
-                <span className={`text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded-lg ${team.isActive ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
-                  {team.isActive ? "Active" : "Inactive"}
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* ── Create / Edit Modal ────────────────────────────────────────── */}
+      {/* ── Create / Edit Modal ─────────────────────────────────────────── */}
       {isFormOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[#1d3331]/40 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[#1d3331]/40 backdrop-blur-sm">
           <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="bg-[#1d3331] p-8 text-white flex justify-between items-center flex-shrink-0">
               <div>
                 <h3 className="font-serif font-bold text-xl">{isEditing ? "Edit Team" : "Create Team"}</h3>
                 <p className="text-[9px] uppercase tracking-[0.2em] text-emerald-300 font-bold">Group Management</p>
               </div>
-              <button
-                onClick={() => setIsFormOpen(false)}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors"
-              >
+              <button onClick={() => setIsFormOpen(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                 <X size={24} />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="p-10 space-y-6 overflow-y-auto">
-              {/* Team Name */}
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Team Name</label>
                 <div className="relative">
@@ -436,19 +435,17 @@ const SuperAdminTeams = () => {
                 </div>
               </div>
 
-              {/* Description */}
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Description <span className="normal-case text-slate-300">(optional)</span></label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Description</label>
                 <textarea
                   rows={2}
                   className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm outline-none focus:border-[#1d3331] resize-none transition-all"
-                  placeholder="Brief description of this team's mandate..."
+                  placeholder="Brief description..."
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 />
               </div>
 
-              {/* Team Lead */}
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] ml-1">Team Lead</label>
                 <div className="relative">
@@ -461,13 +458,12 @@ const SuperAdminTeams = () => {
                   >
                     <option value="">Select team lead...</option>
                     {users.filter((u) => u.isActive).map((u) => (
-                      <option key={u._id} value={u._id}>{u.name} — {u.title || u.role}</option>
+                      <option key={u.id} value={u.id}>{u.name} — {u.title || u.role}</option>  // ✅ u.id
                     ))}
                   </select>
                 </div>
               </div>
 
-              {/* Members — only shown on create */}
               {!isEditing && (
                 <UserMultiSelect
                   label="Initial Members"
@@ -483,16 +479,14 @@ const SuperAdminTeams = () => {
                 disabled={actionLoading}
                 className="w-full bg-[#1d3331] text-white py-4 mt-2 rounded-2xl font-bold uppercase tracking-[0.25em] text-[10px] shadow-xl hover:bg-[#2a4542] transition-all disabled:opacity-50"
               >
-                {actionLoading ? (
-                  <Loader2 className="animate-spin mx-auto" size={18} />
-                ) : isEditing ? "Update Team" : "Create Team"}
+                {actionLoading ? <Loader2 className="animate-spin mx-auto" size={18} /> : isEditing ? "Update Team" : "Create Team"}
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* ── Delete Confirmation ───────────────────────────────────────── */}
+      {/* ── Delete Confirmation ──────────────────────────────────────────── */}
       {isDeleteOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-[#1d3331]/60 backdrop-blur-md">
           <div className="bg-white w-full max-w-sm rounded-[2rem] p-10 text-center shadow-2xl">
@@ -501,20 +495,13 @@ const SuperAdminTeams = () => {
             </div>
             <h3 className="text-xl font-bold text-[#1d3331] mb-3">Delete Team?</h3>
             <p className="text-sm text-slate-500 mb-8 leading-relaxed">
-              This will permanently remove <b>{selectedTeam?.name}</b> and unlink all its members. Indicators assigned to this team will need to be reassigned.
+              Permanently remove <b>{selectedTeam?.name}</b>.
             </p>
             <div className="flex gap-4">
-              <button
-                onClick={() => setIsDeleteOpen(false)}
-                className="flex-1 py-4 border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-colors"
-              >
+              <button onClick={() => setIsDeleteOpen(false)} className="flex-1 py-4 border border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
                 Go Back
               </button>
-              <button
-                onClick={handleDelete}
-                disabled={actionLoading}
-                className="flex-1 py-4 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-200 hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
+              <button onClick={handleDelete} disabled={actionLoading} className="flex-1 py-4 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 disabled:opacity-50">
                 {actionLoading ? <Loader2 className="animate-spin mx-auto" size={16} /> : "Delete"}
               </button>
             </div>
@@ -522,11 +509,10 @@ const SuperAdminTeams = () => {
         </div>
       )}
 
-      {/* ── Team Detail Panel ─────────────────────────────────────────── */}
+      {/* ── Team Detail Panel ──────────────────────────────────────────────── */}
       {selectedTeam && !isFormOpen && !isDeleteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in zoom-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-[0.5rem] shadow-2xl overflow-hidden flex flex-col">
-
             <div className="bg-[#1d3331] p-6 flex justify-between items-center text-white flex-shrink-0">
               <h3 className="font-serif font-bold text-lg px-2">Team Profile</h3>
               <button onClick={() => setSelectedTeam(null)} className="p-2 hover:bg-white/10 rounded-full">
@@ -535,7 +521,6 @@ const SuperAdminTeams = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-10">
-              {/* Header info */}
               <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
                 <div className="flex items-center gap-5">
                   <div className="w-14 h-14 rounded-2xl bg-[#1d3331] text-white flex items-center justify-center shadow-lg">
@@ -543,81 +528,69 @@ const SuperAdminTeams = () => {
                   </div>
                   <div>
                     <h4 className="text-2xl font-bold text-[#1d3331]">{selectedTeam.name}</h4>
-                    {selectedTeam.description && (
+                    {selectedTeam.description ? (
                       <p className="text-sm text-slate-400 mt-0.5">{selectedTeam.description}</p>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                    {selectedTeam.isActive ? "Active" : "Inactive"}
+                    {isTeamActive(selectedTeam) ? "Active" : "Inactive"}
                   </span>
-                  <button
-                    onClick={() => handleToggleStatus(selectedTeam)}
-                    disabled={actionLoading}
-                    className="text-slate-500 hover:text-[#1d3331] transition-colors disabled:opacity-40"
-                    title={selectedTeam.isActive ? "Deactivate team" : "Activate team"}
-                  >
-                    {selectedTeam.isActive
+                  <button onClick={() => handleToggleStatus(selectedTeam)} disabled={actionLoading} className="text-slate-500 hover:text-[#1d3331] disabled:opacity-40">
+                    {isTeamActive(selectedTeam)
                       ? <ToggleRight size={28} className="text-emerald-500" />
                       : <ToggleLeft size={28} />}
                   </button>
                 </div>
               </div>
 
-              {/* Team lead */}
               <div className="grid grid-cols-2 gap-8 border-b border-slate-50 pb-8 mb-8">
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Team Lead</p>
                   <div className="flex items-center gap-2 mt-2">
                     <div className="w-7 h-7 rounded-full bg-amber-400 text-white flex items-center justify-center text-[10px] font-bold">
-                      {getInitials(selectedTeam.teamLead?.name || "")}
+                      {getInitials(selectedTeam.teamLead?.name || selectedTeam.leadName || "")}
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-[#1d3331]">{selectedTeam.teamLead?.name}</p>
-                      <p className="text-[10px] text-slate-400">{selectedTeam.teamLead?.title || selectedTeam.teamLead?.email}</p>
+                      <p className="text-sm font-bold text-[#1d3331]">
+                        {selectedTeam.teamLead?.name || selectedTeam.leadName}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {selectedTeam.teamLead?.title || selectedTeam.teamLead?.email || selectedTeam.leadEmail}
+                      </p>
                     </div>
                   </div>
                 </div>
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Members</p>
-                  <p className="text-2xl font-bold text-[#1d3331] mt-2">{selectedTeam.members?.length}</p>
+                  <p className="text-2xl font-bold text-[#1d3331] mt-2">
+                    {selectedTeam.members?.length || selectedTeam.memberCount || 0}
+                  </p>
                 </div>
               </div>
 
-              {/* Members list */}
               <div className="flex items-center justify-between mb-4">
                 <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Members</h5>
-                <button
-                  onClick={() => setAddMembersOpen((o) => !o)}
-                  className="flex items-center gap-1.5 text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:text-emerald-600 transition-colors"
-                >
+                <button onClick={() => setAddMembersOpen((o) => !o)} className="flex items-center gap-1.5 text-[10px] font-black text-[#1d3331] uppercase tracking-widest hover:text-emerald-600 transition-colors">
                   <UserPlus size={14} /> Add Members
                 </button>
               </div>
 
-              {/* Add members inline panel */}
               {addMembersOpen && (
                 <div className="mb-6 p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-4">
                   <UserMultiSelect
                     label="Select staff to add"
                     allUsers={users}
                     selectedIds={membersToAdd}
-                    excludeIds={selectedTeam.members.map((m) => m._id)}
+                    excludeIds={selectedTeam.members?.map((m) => m.id) || []}  // ✅ .id
                     onChange={setMembersToAdd}
                   />
                   <div className="flex gap-3">
-                    <button
-                      onClick={() => { setAddMembersOpen(false); setMembersToAdd([]); }}
-                      className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white transition-colors"
-                    >
+                    <button onClick={() => { setAddMembersOpen(false); setMembersToAdd([]); }} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white">
                       Cancel
                     </button>
-                    <button
-                      onClick={handleAddMembers}
-                      disabled={membersToAdd.length === 0 || actionLoading}
-                      className="flex-1 py-2.5 bg-[#1d3331] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-40 hover:bg-[#2a4542] transition-colors"
-                    >
+                    <button onClick={handleAddMembers} disabled={membersToAdd.length === 0 || actionLoading} className="flex-1 py-2.5 bg-[#1d3331] text-white rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-40">
                       {actionLoading ? <Loader2 className="animate-spin mx-auto" size={14} /> : "Confirm"}
                     </button>
                   </div>
@@ -626,12 +599,10 @@ const SuperAdminTeams = () => {
 
               <div className="space-y-3">
                 {selectedTeam.members?.map((member) => {
-                  const isLead = member._id === selectedTeam.teamLead._id;
+                  const leadId = selectedTeam.teamLeadId || selectedTeam.teamLead?.id;
+                  const isLead = member.id === leadId;           // ✅ .id
                   return (
-                    <div
-                      key={member._id}
-                      className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors"
-                    >
+                    <div key={member.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-slate-200 transition-colors">  // ✅ .id
                       <div className="flex items-center gap-3">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${isLead ? "bg-amber-400" : "bg-[#1d3331]"}`}>
                           {getInitials(member.name)}
@@ -639,63 +610,47 @@ const SuperAdminTeams = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-bold text-[#1d3331]">{member.name}</p>
-                            {isLead && (
+                            {isLead ? (
                               <span className="flex items-center gap-1 text-[8px] font-black text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
                                 <Crown size={8} /> Lead
                               </span>
-                            )}
+                            ) : null}
                           </div>
                           <div className="flex items-center gap-3 mt-0.5">
-                            {member.email && (
+                            {member.email ? (
                               <span className="flex items-center gap-1 text-[10px] text-slate-400">
                                 <Mail size={9} /> {member.email}
                               </span>
-                            )}
-                            {member.pjNumber && (
+                            ) : null}
+                            {member.pjNumber ? (
                               <span className="flex items-center gap-1 text-[10px] text-slate-400">
                                 <Hash size={9} /> {member.pjNumber}
                               </span>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </div>
-
-                      {!isLead && (
-                        <button
-                          onClick={() => handleRemoveMember(member._id)}
-                          disabled={actionLoading}
-                          className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all disabled:opacity-40"
-                          title="Remove from team"
-                        >
+                      {!isLead ? (
+                        <button onClick={() => handleRemoveMember(member.id)} disabled={actionLoading} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all disabled:opacity-40">  // ✅ .id
                           <UserMinus size={16} />
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* Footer actions */}
             <div className="p-8 bg-slate-50 flex flex-col md:flex-row gap-4 md:justify-between border-t border-slate-100 flex-shrink-0">
               <div className="flex gap-3">
-                <button
-                  onClick={() => setIsDeleteOpen(true)}
-                  className="flex items-center justify-center px-5 py-3 border-2 border-red-50 text-red-600 text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-red-50 transition-colors"
-                >
+                <button onClick={() => setIsDeleteOpen(true)} className="flex items-center justify-center px-5 py-3 border-2 border-red-50 text-red-600 text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-red-50">
                   <Trash2 size={16} className="mr-2" /> Delete Team
                 </button>
-                <button
-                  onClick={openEditModal}
-                  className="flex items-center justify-center px-5 py-3 border-2 border-slate-200 text-[#1d3331] text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-white transition-colors"
-                >
+                <button onClick={openEditModal} className="flex items-center justify-center px-5 py-3 border-2 border-slate-200 text-[#1d3331] text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-white">
                   <Edit3 size={16} className="mr-2" /> Edit Details
                 </button>
               </div>
-              <button
-                onClick={() => setSelectedTeam(null)}
-                className="px-10 py-3 bg-white border border-[#1d3331] text-[#1d3331] text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-[#1d3331] hover:text-white transition-all shadow-sm"
-              >
+              <button onClick={() => setSelectedTeam(null)} className="px-10 py-3 bg-white border border-[#1d3331] text-[#1d3331] text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-[#1d3331] hover:text-white transition-all shadow-sm">
                 Close
               </button>
             </div>

@@ -36,7 +36,7 @@ const SuperAdminReviewer = () => {
   const derivedData = useMemo(() => {
     // 1. ENRICH THE QUEUE (For Table Display)
     const enrichedQueue = queue.map((qItem) => {
-      const parentIndicator = indicators.find((ind) => ind._id === qItem._id);
+      const parentIndicator = indicators.find((ind) => ind.id === qItem.id);
 
       const resolvedName =
         parentIndicator?.assigneeDisplayName ||
@@ -44,7 +44,7 @@ const SuperAdminReviewer = () => {
         "System Registry";
 
       const rawStatus = (parentIndicator?.status || qItem.status || "").toLowerCase();
-      const progress = parentIndicator?.progress ?? qItem.progress ?? 0;
+      const progress = parentIndicator?.progress ?? qItem.achievedValue ?? 0;
 
       let displayStatus: "Pending" | "Rejected" | "Verified" = "Pending";
       
@@ -220,7 +220,7 @@ const SuperAdminReviewer = () => {
                 </tr>
               ) : derivedData.filteredList.length > 0 ? (
                 derivedData.filteredList.map((item) => (
-                  <tr key={item._id} className="hover:bg-slate-50/50 transition-all group">
+                  <tr key={item.id} className="hover:bg-slate-50/50 transition-all group">
                     <td className="pl-10 pr-6 py-7">
                       <div className="flex flex-col items-center">
                         <div className="w-10 h-10 rounded-xl bg-[#1d3331] text-white flex items-center justify-center mb-2 shadow-lg shadow-[#1d3331]/20">
@@ -238,7 +238,7 @@ const SuperAdminReviewer = () => {
                           {item.indicatorTitle}
                         </p>
                         <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-black text-slate-300 uppercase tracking-tighter">ID: {item._id.slice(-6).toUpperCase()}</span>
+                          <span className="text-[9px] font-black text-slate-300 uppercase tracking-tighter">ID: {item.id.slice(-6).toUpperCase()}</span>
                           <span className="w-1 h-1 rounded-full bg-slate-200" />
                           <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">{item.cycle}</span>
                         </div>

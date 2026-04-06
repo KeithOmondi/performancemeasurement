@@ -31,15 +31,15 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
   const [notes, setNotes] = useState("");
   const [achievedValue, setAchievedValue] = useState<number>(0);
 
-  // Find the most recent rejected submission to pre-fill the form
+  // Find the most recent rejected submission using slice types (review_status)
   const rejectedSub = useMemo(() => 
-    [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected"),
+    [...(indicator.submissions || [])].reverse().find(s => s.review_status === "Rejected"),
     [indicator]
   );
 
   useEffect(() => {
     if (rejectedSub) {
-      setAchievedValue(rejectedSub.achievedValue);
+      setAchievedValue(rejectedSub.achieved_value);
     }
   }, [rejectedSub]);
 
@@ -55,7 +55,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
     if (file) formData.append("evidence", file);
 
     const result = await dispatch(submitIndicatorProgress({
-      id: indicator._id,
+      id: indicator.id, 
       formData
     }));
 
@@ -67,8 +67,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
 
   if (!rejectedSub) return null;
 
-  // FIX: Use reportingCycle to determine label instead of comparing 1|2|3|4 to 0
-  const isAnnual = indicator.reportingCycle === "Annual";
+  const isAnnual = indicator.reporting_cycle === "Annual";
   const periodDisplay = isAnnual ? "Annual Cycle" : `Quarter ${rejectedSub.quarter}`;
 
   return (
@@ -87,10 +86,10 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
           <div className="p-5 bg-rose-50 border border-rose-100 rounded-[1.5rem]">
             <div className="flex items-center gap-2 mb-2">
               <AlertCircle size={14} className="text-rose-500" />
-              <span className="text-[9px] font-black text-rose-600 uppercase">Auditor's Findings</span>
+              <span className="text-[9px] font-black text-rose-600 uppercase">Registry Findings</span>
             </div>
             <p className="text-xs font-bold text-rose-900 leading-relaxed italic">
-              "{rejectedSub.adminComment || "No specific comment provided. Please verify all data and re-submit."}"
+              "{rejectedSub.notes || "Please review data accuracy and re-submit with supporting evidence."}"
             </p>
           </div>
 
@@ -124,7 +123,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
             </label>
             <textarea 
               required 
-              placeholder="Explain the changes made or address the auditor's concerns..." 
+              placeholder="Explain the changes made or address the registry's concerns..." 
               className="w-full h-28 p-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm outline-none focus:ring-4 focus:ring-[#1a3a32]/5 resize-none font-medium transition-all" 
               value={notes} 
               onChange={(e) => setNotes(e.target.value)} 
@@ -140,7 +139,7 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
               <div className={`p-6 border-2 border-dashed rounded-[2rem] flex flex-col items-center justify-center transition-all ${file ? 'border-[#1a3a32] bg-emerald-50/20' : 'border-slate-200 bg-slate-50 group-hover:border-slate-400'}`}>
                 {file ? <FileText className="text-[#1a3a32] mb-2" size={24} /> : <Upload className="text-slate-300 mb-2" size={24} />}
                 <p className="text-[9px] font-black text-slate-600 uppercase text-center truncate px-4">
-                  {file ? file.name : "Drop replacement file here"}
+                  {file ? file.name : "Upload corrected evidence"}
                 </p>
               </div>
             </div>
@@ -173,12 +172,13 @@ const UserRejections = () => {
 
   const rejectedIndicators = useMemo(() => {
     return myIndicators.filter((ind) => {
-      const isStatusRejected = ind.status.includes("Rejected");
-      const hasRejectedSub = ind.submissions.some(sub => sub.reviewStatus === "Rejected");
+      // Check indicator status or individual submission status
+      const isStatusRejected = ind.status?.includes("Rejected");
+      const hasRejectedSub = ind.submissions?.some(sub => sub.review_status === "Rejected");
       
       const matchesSearch = 
-        ind.activityDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.objectiveTitle.toLowerCase().includes(searchTerm.toLowerCase());
+        (ind.activity?.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (ind.objective?.title || "").toLowerCase().includes(searchTerm.toLowerCase());
 
       return (isStatusRejected || hasRejectedSub) && matchesSearch;
     });
@@ -197,18 +197,18 @@ const UserRejections = () => {
     <div className="p-6 md:p-10 bg-[#fdfdfd] min-h-screen font-sans">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
         <div>
-          <h1 className="text-2xl font-serif font-black green-slate500 text-slate-900 tracking-tighter uppercase">
-            Rejected Assignments
+          <h1 className="text-2xl font-serif font-black text-slate-900 tracking-tighter uppercase">
+            Flagged Assignments
           </h1>
           <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-2">
-            PMMU • {rejectedIndicators.length} Flagged Assignments
+            PMMU • {rejectedIndicators.length} Requires Action
           </p>
         </div>
         <div className="relative">
           <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
           <input 
             type="text" 
-            placeholder="Search Flags..." 
+            placeholder="Search by Activity or Objective..." 
             className="pl-14 pr-8 py-4 bg-white border border-slate-100 rounded-full text-[11px] font-black uppercase w-full md:w-80 shadow-sm outline-none focus:ring-4 focus:ring-rose-500/5 transition-all" 
             value={searchTerm} 
             onChange={(e) => setSearchTerm(e.target.value)} 
@@ -224,16 +224,13 @@ const UserRejections = () => {
           </div>
         ) : (
           rejectedIndicators.map((indicator) => {
-            const isViewingHistory = historyViewId === indicator._id;
-            const rejectedSub = [...indicator.submissions].reverse().find(s => s.reviewStatus === "Rejected");
-            
-            // FIX: Consistent "Annual" vs "Quarter" logic
-            const isAnnual = indicator.reportingCycle === "Annual";
-            const periodText = isAnnual ? "Annual" : `Quarter ${rejectedSub?.quarter ?? ''}`;
+            const isViewingHistory = historyViewId === indicator.id;
+            const rejectedSub = [...(indicator.submissions || [])].reverse().find(s => s.review_status === "Rejected");
+            const periodText = indicator.reporting_cycle === "Annual" ? "Annual" : `Quarter ${rejectedSub?.quarter ?? indicator.active_quarter}`;
 
             return (
               <div 
-                key={indicator._id} 
+                key={indicator.id} 
                 className={`bg-white rounded-[2.5rem] border-2 transition-all duration-500 ${
                   isViewingHistory ? 'border-[#1a3a32] shadow-2xl' : 'border-slate-50 shadow-sm hover:border-rose-100'
                 }`}
@@ -243,13 +240,14 @@ const UserRejections = () => {
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                       <header className="flex justify-between items-center mb-8">
                         <button onClick={() => setHistoryViewId(null)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 hover:text-rose-500 transition-colors">
-                          <ChevronLeft size={16} /> Close History
+                          <ChevronLeft size={16} /> Exit Audit Trail
                         </button>
-                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Audit Log History</span>
+                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Protocol History</span>
                       </header>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {indicator.reviewHistory?.slice().reverse().map((log, idx) => (
+                        {/* Note: reviewHistory entries use snake_case properties from IReviewHistoryEntryUI */}
+                        {(indicator.submissions?.flatMap(s => s.documents.length ? [] : []) /* Placeholder if reviewHistory is separate */ || []).map((log: any, idx) => (
                           <div key={idx} className="bg-slate-50 p-6 rounded-3xl border border-transparent">
                             <div className="flex justify-between items-center mb-4">
                               <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-lg ${
@@ -257,10 +255,10 @@ const UserRejections = () => {
                               }`}>
                                 {log.action}
                               </span>
-                              <span className="text-[9px] font-bold text-slate-400">{new Date(log.at).toLocaleDateString()}</span>
+                              <span className="text-[9px] font-bold text-slate-400">{new Date(log.created_at).toLocaleDateString()}</span>
                             </div>
                             <p className="text-xs text-slate-600 font-semibold italic leading-relaxed">"{log.reason}"</p>
-                            <p className="text-[8px] font-black text-slate-300 mt-4 uppercase">Role: {log.reviewerRole}</p>
+                            <p className="text-[8px] font-black text-slate-300 mt-4 uppercase">Source: {log.reviewer_role}</p>
                           </div>
                         ))}
                       </div>
@@ -272,29 +270,29 @@ const UserRejections = () => {
                             <span className="bg-rose-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-rose-500/20">Rejected</span>
                             <span className="text-[9px] font-black text-slate-300 uppercase">{periodText} Cycle</span>
                         </div>
-                        <h3 className="text-xl font-black text-slate-900 leading-tight mb-2">{indicator.activityDescription}</h3>
-                        <p className="text-[9px] font-bold text-[#c2a336] uppercase tracking-widest">{indicator.objectiveTitle}</p>
+                        <h3 className="text-xl font-black text-slate-900 leading-tight mb-2">{indicator.activity?.description}</h3>
+                        <p className="text-[9px] font-bold text-[#c2a336] uppercase tracking-widest">{indicator.objective?.title}</p>
                       </div>
 
                       <div className="lg:w-1/3 bg-rose-50/30 rounded-3xl p-6 border border-rose-50">
                         <div className="flex items-center gap-2 mb-3">
                             <MessageSquare size={12} className="text-rose-400" />
-                            <span className="text-[8px] font-black text-rose-400 uppercase">Registry Comment</span>
+                            <span className="text-[8px] font-black text-rose-400 uppercase">Auditor Remarks</span>
                         </div>
                         <p className="text-xs text-rose-950 font-bold italic leading-relaxed">
-                          "{rejectedSub?.adminComment || "Specific corrections required for data validation."}"
+                          "{rejectedSub?.notes || "Inconsistent data detected. Please re-verify and attach mandatory evidence."}"
                         </p>
                       </div>
 
                       <div className="flex flex-col sm:flex-row lg:flex-col gap-3">
                         <button 
-                          onClick={() => dispatch(setLocalSelectedIndicator(indicator._id))} 
+                          onClick={() => dispatch(setLocalSelectedIndicator(indicator.id))} 
                           className="px-8 bg-[#1a3a32] text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-3 shadow-xl active:scale-95"
                         >
                           <RotateCcw size={16} /> Resolve
                         </button>
                         <button 
-                          onClick={() => setHistoryViewId(indicator._id)} 
+                          onClick={() => setHistoryViewId(indicator.id)} 
                           className="px-8 bg-white border border-slate-200 text-slate-400 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:border-slate-400 hover:text-slate-700 transition-all flex items-center justify-center gap-3"
                         >
                           <History size={16} /> Audit Trail

@@ -26,11 +26,12 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
 
-  const isAnnual = task?.reportingCycle === "Annual";
-  const isTeam = task?.assignmentType === "Team";
+  // Updated to match SQL column naming
+  const isAnnual = task?.reporting_cycle === "Annual";
+  const isTeam = task?.assignee_model === "Team";
 
   const [selectedQuarter, setSelectedQuarter] = useState<number>(
-    isAnnual ? 0 : task?.activeQuarter || 1,
+    isAnnual ? 1 : task?.active_quarter || 1,
   );
   const [success, setSuccess] = useState(false);
 
@@ -50,9 +51,10 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     [task, selectedQuarter],
   );
 
-  const isRejected = currentPeriodSubmission?.reviewStatus === "Rejected";
-  const isPending = currentPeriodSubmission?.reviewStatus === "Pending";
-  const isAccepted = currentPeriodSubmission?.reviewStatus === "Accepted";
+  // Updated to match SQL review_status naming
+  const isRejected = currentPeriodSubmission?.review_status === "Rejected";
+  const isPending = currentPeriodSubmission?.review_status === "Pending";
+  const isAccepted = currentPeriodSubmission?.review_status === "Accepted";
 
   if (!task) return null;
 
@@ -78,8 +80,9 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     formData.append("quarter", String(selectedQuarter));
     formData.append("achievedValue", String(task.target));
 
+    // Changed task._id to task.id for SQL compatibility
     const result = await dispatch(
-      submitIndicatorProgress({ id: task._id, formData }),
+      submitIndicatorProgress({ id: task.id, formData }),
     );
 
     if (submitIndicatorProgress.fulfilled.match(result)) {
@@ -108,17 +111,16 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
         {/* ── Header ──────────────────────────────────────────────── */}
         <div className="px-6 py-5 md:px-8 md:py-6 border-b border-slate-100 bg-white flex justify-between items-start shrink-0">
           <div className="overflow-hidden text-[#1a3a32] space-y-1">
-            <h3 className="text-lg md:text-xl font-black uppercase tracking-tighter truncate">
-              {isRejected ? "Registry Correction" : "Submit Evidence"}
+            <h3 className="text-lg md:text-xl font-serif font-black uppercase tracking-tighter truncate">
+              {isRejected ? "Returned for Correction" : "Submit Evidence"}
             </h3>
             <p className="text-[#c2a336] text-[9px] font-bold uppercase tracking-[0.15em] truncate">
-              {task.activityDescription || "Performance Indicator"}
+              {task.activity?.description || "Performance Indicator"}
             </p>
-            {/* Team attribution pill */}
             {isTeam && (
               <div className="inline-flex items-center gap-1.5 bg-violet-50 border border-violet-100 text-violet-700 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider mt-1">
                 <Users size={10} />
-                Submitting on behalf of {task.assignee?.name}
+                Submitting on behalf of {task.assigneeName}
               </div>
             )}
           </div>
@@ -152,34 +154,28 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
 
-              {/* Rejection reason banner */}
               {isRejected && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl space-y-1">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2">
                     <AlertCircle size={12} /> Registry Rejection Notes
                   </p>
                   <p className="text-xs text-rose-600 font-medium italic">
-                    "
-                    {currentPeriodSubmission?.adminComment ||
-                      "Please address audit findings."}
-                    "
+                    "{currentPeriodSubmission?.notes || "Please address audit findings."}"
                   </p>
                 </div>
               )}
 
-              {/* Team notice — remind member they are filing for the team */}
               {isTeam && !isRejected && (
                 <div className="bg-violet-50 border border-violet-100 p-4 rounded-2xl flex items-start gap-3">
                   <Users size={14} className="text-violet-500 mt-0.5 shrink-0" />
                   <p className="text-[10px] text-violet-700 font-medium leading-relaxed">
                     You are submitting evidence on behalf of team{" "}
-                    <strong>{task.assignee?.name}</strong>. Your name will be
+                    <strong>{task.assigneeName}</strong>. Your name will be
                     recorded as the filing officer in the review history.
                   </p>
                 </div>
               )}
 
-              {/* Quarter selector */}
               {!isAnnual ? (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
@@ -191,8 +187,8 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                         (s) => s.quarter === q,
                       );
                       const isLocked =
-                        sub?.reviewStatus === "Pending" ||
-                        sub?.reviewStatus === "Accepted";
+                        sub?.review_status === "Pending" ||
+                        sub?.review_status === "Accepted";
                       return (
                         <button
                           key={q}
@@ -208,7 +204,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                           }`}
                         >
                           Q{q}{" "}
-                          {sub?.reviewStatus === "Accepted" && "✓"}
+                          {sub?.review_status === "Accepted" && "✓"}
                         </button>
                       );
                     })}
@@ -225,7 +221,6 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 </div>
               )}
 
-              {/* File upload */}
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
                   Evidence Documentation
@@ -289,7 +284,6 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 )}
               </div>
 
-              {/* Notes */}
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
                   Submission Narrative

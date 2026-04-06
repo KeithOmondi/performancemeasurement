@@ -29,7 +29,6 @@ const UserTaskIdPage = () => {
     (state) => state.userIndicators,
   );
 
-
   useEffect(() => {
     if (id) dispatch(fetchIndicatorDetails(id));
     return () => {
@@ -41,7 +40,8 @@ const UserTaskIdPage = () => {
     if (!currentIndicator)
       return { isOpen: false, message: "Syncing Registry..." };
 
-    const targetQ = currentIndicator.activeQuarter;
+    // Updated to SQL snake_case keys
+    const targetQ = currentIndicator.active_quarter;
     const now = new Date();
     const deadline = new Date(currentIndicator.deadline);
 
@@ -51,6 +51,7 @@ const UserTaskIdPage = () => {
         message: "Dossier Certified",
         icon: <Lock size={12} />,
       };
+      
     if (
       ["Awaiting Admin Approval", "Awaiting Super Admin"].includes(
         currentIndicator.status,
@@ -65,21 +66,25 @@ const UserTaskIdPage = () => {
     const activeSub = currentIndicator.submissions?.find(
       (s: ISubmissionUI) => s.quarter === targetQ,
     );
+
+    // Using snake_case for review_status
     if (
       activeSub &&
-      (activeSub.reviewStatus === "Accepted" ||
-        activeSub.reviewStatus === "Verified")
+      (activeSub.review_status === "Accepted" ||
+        activeSub.review_status === "Verified")
     )
       return {
         isOpen: false,
         message: "Quarter Certified",
         icon: <ShieldAlert size={12} />,
       };
+
     if (now > deadline)
       return { isOpen: false, message: "Deadline Passed" };
+
     if (
       currentIndicator.status.includes("Rejected") ||
-      activeSub?.reviewStatus === "Rejected"
+      activeSub?.review_status === "Rejected"
     )
       return { isOpen: true, message: "Revision Required" };
 
@@ -119,15 +124,13 @@ const UserTaskIdPage = () => {
     );
   }
 
-  const isTeamAssignment = currentIndicator.assignmentType === "Team";
+  // Updated logic for SQL schema
+  const isTeamAssignment = currentIndicator.assignee_model === "Team";
   const activeSub = currentIndicator.submissions?.find(
-    (s: ISubmissionUI) => s.quarter === currentIndicator.activeQuarter,
+    (s: ISubmissionUI) => s.quarter === currentIndicator.active_quarter,
   );
   const submitLabel = activeSub ? "Update Filing" : "Submit Evidence";
-
-  // For team assignments, the assignee object is the Team document
-  // (has .name but no .email/.pjNumber)
-  const assigneeName = currentIndicator.assignee?.name ?? "Unassigned";
+  const assigneeName = currentIndicator.assigneeName ?? "Unassigned";
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] p-6 lg:p-12 font-sans">
@@ -149,7 +152,6 @@ const UserTaskIdPage = () => {
           </button>
 
           <div className="flex items-center gap-4 flex-wrap">
-            {/* Team badge — shown when this is a team assignment */}
             {isTeamAssignment && (
               <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border bg-violet-50 border-violet-100 text-violet-700">
                 <Users size={11} />
@@ -157,7 +159,6 @@ const UserTaskIdPage = () => {
               </div>
             )}
 
-            {/* Registry open/closed status */}
             <div
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all ${
                 registryStatus.isOpen
@@ -196,10 +197,10 @@ const UserTaskIdPage = () => {
               </span>
             </div>
             <h1 className="text-2xl font-serif font-black text-[#1a3a32] tracking-tight">
-              {currentIndicator.objectiveTitle}
+              {currentIndicator.objective?.title || "Strategic Objective"}
             </h1>
             <p className="text-gray-400 font-medium italic border-l-4 border-gray-100 pl-6">
-              {currentIndicator.activityDescription}
+              {currentIndicator.activity?.description}
             </p>
           </div>
 
@@ -224,7 +225,6 @@ const UserTaskIdPage = () => {
         <div className="grid lg:grid-cols-3 gap-12">
           <div className="lg:col-span-2 space-y-12">
 
-            {/* Team context banner — only for team assignments */}
             {isTeamAssignment && (
               <section className="bg-violet-50 border border-violet-100 rounded-[2rem] p-6 space-y-3">
                 <div className="flex items-center gap-2 text-[10px] font-black text-violet-700 uppercase tracking-widest">
@@ -260,39 +260,38 @@ const UserTaskIdPage = () => {
                 </div>
               ) : (
                 <div className="grid sm:grid-cols-2 gap-4">
-                  {currentIndicator.submissions?.flatMap(
-                    (sub: ISubmissionUI) =>
-                      sub.documents?.map((doc, i) => (
-                        <div
-                          key={`${sub._id}-${i}`}
-                          className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-[#c2a336]/30 transition-all"
-                        >
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <div className="p-2.5 bg-gray-50 rounded-xl text-gray-400 group-hover:text-[#c2a336]">
-                              <FileText size={18} />
-                            </div>
-                            <div className="overflow-hidden">
-                              <p className="text-[11px] font-black text-[#1a3a32] truncate uppercase tracking-tighter mb-1">
-                                {doc.fileName || "Evidence Document"}
-                              </p>
-                              <span className="text-[8px] font-black text-gray-300 uppercase">
-                                Q{sub.quarter}
-                              </span>
-                            </div>
+                  {currentIndicator.submissions?.map((sub: ISubmissionUI) => 
+                    sub.documents?.map((doc, i) => (
+                      <div
+                        key={`${doc.id}-${i}`}
+                        className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-[#c2a336]/30 transition-all"
+                      >
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <div className="p-2.5 bg-gray-50 rounded-xl text-gray-400 group-hover:text-[#c2a336]">
+                            <FileText size={18} />
                           </div>
-                          <button
-                            onClick={() =>
-                              setPreviewFile({
-                                url: doc.evidenceUrl,
-                                name: doc.fileName || "Evidence",
-                              })
-                            }
-                            className="p-2 hover:bg-gray-100 rounded-lg text-gray-300 hover:text-[#1a3a32] transition-colors"
-                          >
-                            <ExternalLink size={14} />
-                          </button>
+                          <div className="overflow-hidden">
+                            <p className="text-[11px] font-black text-[#1a3a32] truncate uppercase tracking-tighter mb-1">
+                              {doc.file_name || "Evidence Document"}
+                            </p>
+                            <span className="text-[8px] font-black text-gray-300 uppercase">
+                              Q{sub.quarter}
+                            </span>
+                          </div>
                         </div>
-                      )),
+                        <button
+                          onClick={() =>
+                            setPreviewFile({
+                              url: doc.evidence_url,
+                              name: doc.file_name || "Evidence",
+                            })
+                          }
+                          className="p-2 hover:bg-gray-100 rounded-lg text-gray-300 hover:text-[#1a3a32] transition-colors"
+                        >
+                          <ExternalLink size={14} />
+                        </button>
+                      </div>
+                    ))
                   )}
                 </div>
               )}
@@ -301,7 +300,6 @@ const UserTaskIdPage = () => {
 
           {/* ── Sidebar ─────────────────────────────────────────────── */}
           <aside className="space-y-6">
-            {/* Task spec card */}
             <div className="bg-white p-8 rounded-[2rem] border border-gray-100 sticky top-12 space-y-6">
               <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 border-b pb-4">
                 Task Specification
@@ -314,12 +312,12 @@ const UserTaskIdPage = () => {
               />
               <SpecRow
                 label="Reporting Cycle"
-                value={currentIndicator.reportingCycle}
+                value={currentIndicator.reporting_cycle}
               />
-              {currentIndicator.reportingCycle === "Quarterly" && (
+              {currentIndicator.reporting_cycle === "Quarterly" && (
                 <SpecRow
                   label="Active Quarter"
-                  value={`Q${currentIndicator.activeQuarter}`}
+                  value={`Q${currentIndicator.active_quarter}`}
                 />
               )}
               <SpecRow
@@ -328,7 +326,6 @@ const UserTaskIdPage = () => {
               />
             </div>
 
-            {/* Assignee card — shows team name for team, user name for individual */}
             <div className="bg-white p-6 rounded-[2rem] border border-gray-100 space-y-4">
               <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">
                 {isTeamAssignment ? "Assigned Group" : "Assigned To"}

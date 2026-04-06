@@ -49,10 +49,7 @@ export const updatePlan = createAsyncThunk(
     thunkAPI
   ) => {
     try {
-      const response = await strategicPlanService.updateStrategicPlan(
-        id,
-        planData
-      );
+      const response = await strategicPlanService.updateStrategicPlan(id, planData);
       return response.data;
     } catch (error: any) {
       return thunkAPI.rejectWithValue(
@@ -84,7 +81,6 @@ const strategicPlanSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // ── Fulfilled cases first (required before addMatcher) ──────────────
       .addCase(
         getAllStrategicPlans.fulfilled,
         (state, action: PayloadAction<IStrategicPlan[]>) => {
@@ -103,44 +99,34 @@ const strategicPlanSlice = createSlice({
         updatePlan.fulfilled,
         (state, action: PayloadAction<IStrategicPlan>) => {
           state.loading = false;
-          const index = state.plans.findIndex(
-            (p) => p._id === action.payload._id
-          );
-          if (index !== -1) state.plans[index] = action.payload;
+          // Updated to look for .id
+          const index = state.plans.findIndex((p) => p.id === action.payload.id);
+          if (index !== -1) {
+            state.plans[index] = action.payload;
+          }
         }
       )
       .addCase(
         deletePlan.fulfilled,
         (state, action: PayloadAction<string>) => {
           state.loading = false;
-          state.plans = state.plans.filter((p) => p._id !== action.payload);
+          // Updated to filter by .id
+          state.plans = state.plans.filter((p) => p.id !== action.payload);
         }
       )
-      // ── Matchers after all addCase calls ────────────────────────────────
+      // Matchers for Loading and Error states
       .addMatcher(
-        (action): action is PayloadAction =>
-          [
-            getAllStrategicPlans.pending.type,
-            createPlan.pending.type,
-            updatePlan.pending.type,
-            deletePlan.pending.type,
-          ].includes(action.type),
-        (state: IStrategicPlanState) => {
+        (action) => action.type.endsWith("/pending"),
+        (state) => {
           state.loading = true;
           state.error = null;
         }
       )
       .addMatcher(
-        (action): action is PayloadAction<string> =>
-          [
-            getAllStrategicPlans.rejected.type,
-            createPlan.rejected.type,
-            updatePlan.rejected.type,
-            deletePlan.rejected.type,
-          ].includes(action.type),
-        (state: IStrategicPlanState, action: PayloadAction<string>) => {
+        (action) => action.type.endsWith("/rejected"),
+        (state, action: PayloadAction<string>) => {
           state.loading = false;
-          state.error = action.payload || "An unexpected error occurred";
+          state.error = action.payload || "An error occurred";
         }
       );
   },

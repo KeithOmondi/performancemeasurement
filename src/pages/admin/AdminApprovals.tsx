@@ -10,7 +10,6 @@ import {
   Clock,
   Filter,
   FileSearch,
-  ChevronRight,
   ShieldAlert,
   ArrowRight
 } from "lucide-react";
@@ -28,18 +27,20 @@ const AdminApprovals = () => {
   const [fetchingId, setFetchingId] = useState<string | null>(null);
 
   useEffect(() => {
-    dispatch(fetchAllAdminIndicators());
+    // Passing 'all' to fetch all records for the vault view
+    dispatch(fetchAllAdminIndicators({ status: 'all' }));
   }, [dispatch]);
 
   const approvedItems = useMemo(() => {
-    const targets = ["Awaiting Super Admin", "Partially Approved", "Completed"];
+    // Statuses that represent verified or completed work in the Postgres workflow
+    const targets = ["Awaiting Super Admin", "Completed", "Verified"];
     
     return allAssignments.filter((ind) => {
       const matchesStatus = targets.includes(ind.status);
       const matchesSearch = 
-        ind.objectiveTitle?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.assigneeDisplayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.activityDescription?.toLowerCase().includes(searchTerm.toLowerCase());
+        ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
       
       return matchesStatus && matchesSearch;
     });
@@ -50,7 +51,7 @@ const AdminApprovals = () => {
     dispatch(setSelectedIndicator(null)); 
     try {
       await dispatch(getIndicatorByIdAdmin(id)).unwrap();
-      // Logic for opening modal would go here
+      // Logic for opening your specific review modal would trigger here
     } catch (err) {
       console.error("Failed to fetch dossier:", err);
     } finally {
@@ -82,8 +83,8 @@ const AdminApprovals = () => {
               <FileCheck size={24} />
             </div>
             <div>
-              <h1 className="text-3xl font-black text-[#1a3a32] tracking-tighter uppercase leading-none">
-                Verified Vault
+              <h1 className="text-3xl font-serif font-black text-[#1a3a32] tracking-tighter uppercase leading-none">
+                Verified Tasks
               </h1>
               <div className="flex gap-2 mt-2">
                 <span className="bg-emerald-50 text-emerald-700 text-[9px] px-3 py-1 rounded-lg font-black border border-emerald-100 uppercase tracking-widest">
@@ -93,7 +94,7 @@ const AdminApprovals = () => {
             </div>
           </div>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-relaxed">
-            Performance Management & Measurement Unit (PMMU)
+            ORHC Performance Management & Measurement Unit (PMMU)
           </p>
         </div>
 
@@ -137,24 +138,25 @@ const AdminApprovals = () => {
                   const isCompleted = indicator.status === "Completed";
                   const history = indicator.reviewHistory || [];
                   
+                  // Logic to check verification steps from history
                   const adminEntry = [...history].reverse().find(h => h.reviewerRole === 'admin' && h.action === "Verified");
                   const superEntry = [...history].reverse().find(h => h.reviewerRole === 'superadmin' && h.action === "Approved");
                   
-                  const isBeingFetched = fetchingId === indicator._id;
+                  const isBeingFetched = fetchingId === indicator.id;
 
                   return (
-                    <tr key={indicator._id} className="hover:bg-slate-50/60 transition-all group">
+                    <tr key={indicator.id} className="hover:bg-slate-50/60 transition-all group">
                       <td className="px-10 py-7">
                         <div className="max-w-md">
                           <h3 className="text-[13px] font-black text-[#1a3a32] tracking-tight mb-3 line-clamp-2 leading-snug">
-                            {indicator.activityDescription}
+                            {indicator.activity?.description}
                           </h3>
                           <div className="flex items-center gap-3">
                              <div className="w-7 h-7 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200 group-hover:bg-[#1a3a32] group-hover:border-[#1a3a32] transition-colors">
                                 <UserCheck size={12} className="text-slate-400 group-hover:text-white" />
                              </div>
                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-tight">
-                               {indicator.assigneeDisplayName}
+                               {indicator.assigneeName}
                              </span>
                           </div>
                         </div>
@@ -170,7 +172,7 @@ const AdminApprovals = () => {
                             />
                           </div>
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">
-                            {indicator.currentTotalAchieved} Units
+                            Target: {indicator.target} {indicator.unit}
                           </span>
                         </div>
                       </td>
@@ -222,22 +224,22 @@ const AdminApprovals = () => {
                       <td className="px-10 py-7 text-right">
                         <div className="flex justify-end items-center gap-3">
                           <button 
-                            onClick={() => handleViewDossier(indicator._id)}
+                            onClick={() => handleViewDossier(indicator.id)}
                             className="p-3 text-slate-400 hover:text-[#1a3a32] hover:bg-white hover:shadow-md rounded-2xl transition-all"
                             title="Review Timeline"
                           >
                             <HistoryIcon size={18} />
                           </button>
                           <button 
-                            onClick={() => handleViewDossier(indicator._id)}
+                            onClick={() => handleViewDossier(indicator.id)}
                             disabled={isBeingFetched}
-                            className="group/btn relative overflow-hidden px-6 py-3.5 bg-white border border-slate-200 text-[#1a3a32] rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:border-[#1a3a32] transition-all"
+                            className="group/btn relative overflow-hidden px-6 py-3.5 bg-white  text-[#1a3a32]  text-[10px] font-black uppercase tracking-[0.2em] hover:border-[#1a3a32] transition-all"
                           >
                             <span className="relative z-10 flex items-center gap-2">
                               {isBeingFetched ? (
                                 <Loader2 size={14} className="animate-spin" />
                               ) : (
-                                <>Dossier <ChevronRight size={14} className="group-hover/btn:translate-x-1 transition-transform" /></>
+                                <></>
                               )}
                             </span>
                           </button>

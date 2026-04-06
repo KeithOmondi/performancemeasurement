@@ -14,7 +14,6 @@ import { fetchMyAssignments, setLocalSelectedIndicator } from "../../store/slice
 const UserApprovals = () => {
   const dispatch = useAppDispatch();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
-  const { user } = useAppSelector((state) => state.auth); 
 
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -25,15 +24,15 @@ const UserApprovals = () => {
   const approvedAssignments = useMemo(() => {
     return myIndicators
       .filter((ind) => {
-        // Logic: Only show records that have reached the terminal 'Completed' state
+        // Logic: Only show records that have reached the terminal 'Approved' or 'Completed' state
         // and have been fully certified (progress 100%)
-        const isFinalized = ind.status === "Completed";
-        const isCertified = ind.progress >= 100;
+        const isFinalized = ind.status === "Approved" || ind.status === "Completed";
+        const isCertified = (ind.progress ?? 0) >= 100;
         return isFinalized && isCertified;
       })
       .filter(ind => 
-        ind.activityDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.objectiveTitle.toLowerCase().includes(searchTerm.toLowerCase())
+        (ind.activity?.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (ind.objective?.title || "").toLowerCase().includes(searchTerm.toLowerCase())
       );
   }, [myIndicators, searchTerm]);
 
@@ -98,14 +97,14 @@ const UserApprovals = () => {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {approvedAssignments.map((indicator) => (
-                  <tr key={indicator._id} className="hover:bg-emerald-50/30 transition-colors group">
+                  <tr key={indicator.id} className="hover:bg-emerald-50/30 transition-colors group">
                     <td className="px-6 py-5">
                       <div className="max-w-[300px]">
                         <p className="text-xs font-bold text-[#1a3a32] leading-tight mb-1">
-                          {indicator.activityDescription}
+                          {indicator.activity?.description}
                         </p>
                         <p className="text-[9px] font-black text-emerald-600/60 uppercase tracking-tight">
-                          ID: {indicator._id.slice(-6).toUpperCase()}
+                          REF: {indicator.id.split('-')[0].toUpperCase()}
                         </p>
                       </div>
                     </td>
@@ -136,7 +135,7 @@ const UserApprovals = () => {
                         </div>
                         <div className="flex flex-col">
                           <span className="text-[11px] font-black text-[#1a3a32] uppercase tracking-tighter">
-                            {user?.name || "Registry Officer"}
+                            {indicator.assigneeName || "System Assigned"}
                           </span>
                         </div>
                       </div>
@@ -162,7 +161,7 @@ const UserApprovals = () => {
 
                     <td className="px-6 py-5 text-right">
                       <button 
-                        onClick={() => dispatch(setLocalSelectedIndicator(indicator._id))}
+                        onClick={() => dispatch(setLocalSelectedIndicator(indicator.id))}
                         className="p-2.5 bg-[#1a3a32] text-white rounded-lg hover:bg-emerald-900 transition-all shadow-md group-hover:scale-110"
                       >
                         <FileText size={16} />

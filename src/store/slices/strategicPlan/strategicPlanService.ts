@@ -1,14 +1,14 @@
 import { apiPrivate } from "../../../api/axios";
 
 export interface IActivity {
-  _id: string;
+  id: string; // Updated from _id
   description: string;
   status?: "Pending" | "In Progress" | "Completed";
   reviewStatus?: "Pending" | "Accepted" | "Rejected";
 }
 
 export interface IObjective {
-  _id: string;
+  id: string; // Updated from _id
   title: string;
   activities: IActivity[];
   weight?: number;
@@ -16,9 +16,11 @@ export interface IObjective {
 }
 
 export interface IStrategicPlan {
-  _id: string;
+  id: string; // Updated from _id
   perspective: string;
   objectives: IObjective[];
+  objectiveCount?: number;
+  createdByName?: string;
   createdAt?: string;
   updatedAt?: string;
 }

@@ -2,11 +2,12 @@ import React, { useEffect, useState, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
   fetchMyAssignments, 
+  type IIndicatorUI 
 } from "../../store/slices/userIndicatorSlice";
 import { useNavigate } from "react-router-dom";
 import { 
   Loader2, Gavel, CheckCircle2, AlertTriangle, 
-  Clock, XCircle, Send, Scale, 
+  Clock, XCircle, Send, Scale
 } from "lucide-react";
 
 /* ============================================================
@@ -63,16 +64,18 @@ const UserDashboard: React.FC = () => {
     return () => clearInterval(t);
   }, [dispatch]);
 
-  // Helper to map backend status to UI theme keys
-  const getUIKey = (indicator: any) => {
+  // Helper to map SQL backend status to UI theme keys
+  const getUIKey = (indicator: IIndicatorUI) => {
     const status = indicator.status;
     if (status === "Completed") return "completed";
-    if (status.includes("Rejected")) return "rejected";
+    if (status?.includes("Rejected")) return "rejected";
     if (status === "Partially Approved" || status === "Awaiting Super Admin") return "partially";
     if (status === "Awaiting Admin Approval") return "awaiting";
     
-    // Check overdue
-    if (indicator.deadline && new Date(indicator.deadline).getTime() < now) return "overdue";
+    // Check overdue logic
+    if (indicator.deadline && new Date(indicator.deadline).getTime() < now) {
+        if (status !== "Completed") return "overdue";
+    }
     return "pending";
   };
 
@@ -80,7 +83,10 @@ const UserDashboard: React.FC = () => {
     const counts: Record<string, number> = {
       pending: 0, awaiting: 0, rejected: 0, partially: 0, completed: 0, overdue: 0
     };
-    myIndicators.forEach((i) => counts[getUIKey(i)]++);
+    myIndicators.forEach((i) => {
+        const key = getUIKey(i);
+        if (counts[key] !== undefined) counts[key]++;
+    });
     return Object.entries(counts).map(([key, value]) => ({ key, value }));
   }, [myIndicators, now]);
 
@@ -103,7 +109,7 @@ const UserDashboard: React.FC = () => {
             <Scale className="text-[#1E3A2B]" size={24} />
             <div>
               <h1 className="text-xl font-black text-[#1E3A2B] font-serif uppercase tracking-tight">Performance DashBoard</h1>
-              <p className="text-[#C69214] font-bold text-[9px] uppercase tracking-[0.2em]">PMMU Oversight</p>
+              <p className="text-[#C69214] font-bold text-[9px] uppercase tracking-[0.2em]">PMMU Oversight — Kenya Judiciary</p>
             </div>
           </div>
           <div className="hidden sm:block text-right">
@@ -113,19 +119,19 @@ const UserDashboard: React.FC = () => {
         </div>
 
         {/* 6-BOX COMPACT GRID */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           {stats.map(({ key, value }) => {
             const config = STATUS_CONFIG[key];
             const Icon = config.icon;
             return (
               <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
                 <div className="flex justify-between items-start mb-2">
-                  <Icon size={16} strokeWidth={2.5} />
-                  <span className="text-[8px] font-black uppercase opacity-50">Metrics</span>
+                  <Icon size={14} strokeWidth={2.5} />
+                  <span className="text-[7px] font-black uppercase opacity-40">Metric</span>
                 </div>
-                <div className="flex items-baseline gap-2">
-                  <p className="text-2xl font-black leading-none">{value}</p>
-                  <p className="text-[9px] font-bold uppercase truncate">{config.label}</p>
+                <div className="flex items-baseline gap-1.5">
+                  <p className="text-xl font-black leading-none">{value}</p>
+                  <p className="text-[8px] font-bold uppercase truncate">{config.label}</p>
                 </div>
               </div>
             );
@@ -143,35 +149,56 @@ const UserDashboard: React.FC = () => {
             </div>
             
             <div className="bg-white rounded-2xl border border-[#E5D5B0] overflow-hidden shadow-sm">
-              {myIndicators.map((indicator) => {
-                const uiKey = getUIKey(indicator);
-                const config = STATUS_CONFIG[uiKey];
-                return (
-                  <div 
-                    key={indicator._id} 
-                    onClick={() => navigate(`/user/assignments/${indicator._id}`)}
-                    className="group border-b border-gray-50 p-4 flex items-center justify-between hover:bg-[#F9F4E8]/40 cursor-pointer transition-colors"
-                  >
-                    <div className="flex-1 pr-4">
-                      <span className="text-[8px] font-bold text-[#C69214] uppercase tracking-tighter">{indicator.perspective}</span>
-                      <h3 className="font-bold text-sm text-[#1E3A2B] group-hover:text-[#C69214] transition-colors truncate">
-                        {indicator.objectiveTitle}
-                      </h3>
-                      <p className="text-[9px] text-gray-400 font-bold uppercase mt-0.5">
-                        Deadline: {new Date(indicator.deadline).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className={`px-3 py-1 rounded-lg text-[8px] font-black border uppercase ${config.theme}`}>
-                        {indicator.status}
-                      </div>
-                      <div className="w-24 h-1 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-[#1E3A2B]" style={{ width: `${indicator.progress}%` }} />
-                      </div>
-                    </div>
+              {myIndicators.length === 0 ? (
+                  <div className="p-12 text-center">
+                      <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">No active indicators assigned</p>
                   </div>
-                );
-              })}
+              ) : (
+                myIndicators.map((indicator) => {
+                    const uiKey = getUIKey(indicator);
+                    const config = STATUS_CONFIG[uiKey];
+                    return (
+                      <div 
+                        key={indicator.id} 
+                        onClick={() => navigate(`/user/assignments/${indicator.id}`)}
+                        className="group border-b border-gray-50 p-4 flex items-center justify-between hover:bg-[#F9F4E8]/40 cursor-pointer transition-colors"
+                      >
+                        <div className="flex-1 pr-4 overflow-hidden">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[8px] font-bold text-[#C69214] uppercase tracking-tighter shrink-0">
+                                {indicator.perspective}
+                            </span>
+                            {indicator.assignee_model === "Team" && (
+                                <span className="bg-violet-100 text-violet-700 text-[7px] px-1.5 py-0.5 rounded font-black uppercase">Team</span>
+                            )}
+                          </div>
+                          <h3 className="font-bold text-sm text-[#1E3A2B] group-hover:text-[#C69214] transition-colors truncate">
+                            {indicator.objective?.title || "Strategic Objective"}
+                          </h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <p className="text-[9px] text-gray-400 font-bold uppercase flex items-center gap-1">
+                              <Clock size={10} />
+                              Deadline: {new Date(indicator.deadline).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+    
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <div className={`px-3 py-1 rounded-lg text-[8px] font-black border uppercase tracking-wider ${config.theme}`}>
+                            {indicator.status}
+                          </div>
+                          <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div 
+                                className="h-full bg-[#1E3A2B] transition-all duration-700 ease-out" 
+                                style={{ width: `${indicator.progress || 0}%` }} 
+                            />
+                          </div>
+                          <span className="text-[8px] font-black text-[#1E3A2B] opacity-40">{Math.round(indicator.progress || 0)}% Complete</span>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
             </div>
           </div>
 
@@ -183,9 +210,12 @@ const UserDashboard: React.FC = () => {
             </div>
 
             <div className="p-5 bg-[#1E3A2B] rounded-2xl border-l-4 border-[#C69214] shadow-lg">
-                <p className="text-[9px] font-black text-[#C69214] uppercase mb-1">Judiciary Protocol</p>
-                <p className="text-[10px] text-white/80 leading-tight">
-                  All submissions are verified by the System Admin. Final "Completed" status requires Super-Admin clearance.
+                <div className="flex items-center gap-2 mb-2">
+                    <Gavel size={14} className="text-[#C69214]" />
+                    <p className="text-[9px] font-black text-[#C69214] uppercase">Protocol Notice</p>
+                </div>
+                <p className="text-[10px] text-white/80 leading-relaxed font-medium">
+                  Evidence uploads must be in PDF or Image format. Once "In Review", records are locked from further editing unless a correction is requested.
                 </p>
             </div>
           </div>
@@ -200,7 +230,7 @@ const UserDashboard: React.FC = () => {
 ============================================================ */
 const IndicatorStatusPieChart: React.FC<{ data: { key: string; value: number }[] }> = ({ data }) => {
   const total = data.reduce((s, i) => s + i.value, 0);
-  if (!total) return <div className="text-[10px] text-gray-300 py-10 italic">Registry Empty</div>;
+  if (!total) return <div className="text-[10px] text-gray-300 py-10 italic font-bold uppercase tracking-widest">Registry Empty</div>;
 
   return (
     <div className="relative flex justify-center items-center">

@@ -26,21 +26,21 @@ const AdminRejections = () => {
 
   useEffect(() => {
     // Fetch specifically with a rejected status or fetch all and filter client-side
-    dispatch(fetchAllAdminIndicators("all"));
+    dispatch(fetchAllAdminIndicators({ status: "all" }));
   }, [dispatch]);
 
   // Filter for indicators explicitly marked as Rejected at any admin level
   const rejectedItems = allAssignments.filter((ind) => 
     ind.status === "Rejected by Admin" || ind.status === "Rejected by Super Admin"
   ).filter(ind => 
-    ind.activityDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    ind.assigneeDisplayName.toLowerCase().includes(searchTerm.toLowerCase())
+    // UPDATED: Using activity.description and objective.title for search
+    ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleSelectIndicator = (indicator: IAdminIndicator) => {
     dispatch(setSelectedIndicator(indicator));
-    // Optional: navigate to a detail view if you have one
-    // navigate(`/admin/indicators/${indicator._id}`);
   };
 
   if (isLoading && allAssignments.length === 0) {
@@ -88,16 +88,16 @@ const AdminRejections = () => {
       ) : (
         <div className="space-y-6">
           {rejectedItems.map((indicator) => {
-            const isViewingHistory = selectedHistoryId === indicator._id;
+            const isViewingHistory = selectedHistoryId === indicator.id;
             
-            // Look for the specific submission that caused the rejection
+            // UPDATED: review_status (snake_case)
             const latestRejection = [...(indicator.submissions || [])]
               .reverse()
               .find(s => s.reviewStatus === "Rejected");
 
             return (
               <div 
-                key={indicator._id} 
+                key={indicator.id} 
                 className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden ${
                   isViewingHistory ? 'border-red-600 shadow-xl' : 'border-gray-100 shadow-sm'
                 }`}
@@ -115,7 +115,7 @@ const AdminRejections = () => {
                         </button>
                         <div className="text-right">
                           <span className="text-[10px] font-bold text-slate-900 uppercase tracking-tighter block">Audit Case ID</span>
-                          <span className="text-[9px] font-medium text-gray-400">#{indicator._id.slice(-8).toUpperCase()}</span>
+                          <span className="text-[9px] font-medium text-gray-400">#{indicator.id.slice(-8).toUpperCase()}</span>
                         </div>
                       </div>
                       
@@ -136,7 +136,8 @@ const AdminRejections = () => {
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className="text-[9px] font-bold text-gray-500 flex items-center gap-1">
                                       <User size={10}/> 
-                                      {typeof log.reviewedBy === 'object' ? log.reviewedBy.name : 'System/Admin'}
+                                      {/* UPDATED: reviewerName from IReviewHistoryEntry */}
+                                      {log.reviewerName || 'System/Admin'}
                                     </span>
                                   </div>
                                 </div>
@@ -155,29 +156,28 @@ const AdminRejections = () => {
                   ) : (
                     /* --- OVERVIEW CARD VIEW --- */
                     <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-gray-50">
-                      {/* Section 1: Record Identification */}
                       <div className="p-6 lg:w-1/3 bg-gray-50/30">
                         <div className="flex items-center gap-2 mb-4">
                           <AlertOctagon size={14} className="text-red-600" />
                           <span className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
-                            {indicator.status.replace(/by/g, 'By')}
+                            {indicator.status}
                           </span>
                         </div>
                         <h3 className="text-sm font-bold text-slate-800 leading-snug mb-4">
-                          {indicator.activityDescription}
+                          {/* UPDATED: Nested activity.description */}
+                          {indicator.activity?.description}
                         </h3>
                         <div className="space-y-2">
                           <p className="text-[9px] font-bold text-gray-400 uppercase">Primary Assignee</p>
                           <div className="flex items-center gap-2">
                             <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[8px] font-bold">
-                              {indicator.assigneeDisplayName?.charAt(0)}
+                              {indicator.assigneeName?.charAt(0)}
                             </div>
-                            <span className="text-[11px] font-bold text-slate-700">{indicator.assigneeDisplayName}</span>
+                            <span className="text-[11px] font-bold text-slate-700">{indicator.assigneeName}</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Section 2: Deficiency Details */}
                       <div className="p-6 flex-1">
                         <div className="flex justify-between items-start mb-3">
                           <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
@@ -187,29 +187,29 @@ const AdminRejections = () => {
                         </div>
                         <div className="bg-white border border-red-50 p-4 rounded-xl shadow-inner">
                           <p className="text-[12px] text-red-900 font-medium italic leading-relaxed">
+                            {/* UPDATED: admin_overall_comments and admin_comment (snake_case) */}
                             "{indicator.adminOverallComments || latestRejection?.adminComment || "Documentation provided does not align with the statutory reporting guidelines."}"
                           </p>
                         </div>
                         <div className="mt-4 flex gap-6">
-                           <div>
+                            <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Target / Unit</p>
                              <p className="text-xs font-bold text-slate-700">{indicator.target} {indicator.unit}</p>
-                           </div>
-                           <div>
+                            </div>
+                            <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Deficiency Quarter</p>
                              <p className="text-xs font-bold text-red-600">Q{latestRejection?.quarter || indicator.activeQuarter}</p>
-                           </div>
-                           <div>
+                            </div>
+                            <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Review Cycle</p>
                              <p className="text-xs font-bold text-red-600">Attempt #{latestRejection?.resubmissionCount ?? 1}</p>
-                           </div>
+                            </div>
                         </div>
                       </div>
 
-                      {/* Section 3: Archive Actions */}
                       <div className="p-6 lg:w-64 bg-gray-50/30 flex flex-col justify-center gap-2">
                         <button 
-                          onClick={() => setSelectedHistoryId(indicator._id)}
+                          onClick={() => setSelectedHistoryId(indicator.id)}
                           className="w-full bg-[#1a3a32] text-white py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                         >
                           <HistoryIcon size={14} /> Audit History

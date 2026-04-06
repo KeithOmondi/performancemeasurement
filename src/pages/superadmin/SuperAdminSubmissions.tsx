@@ -30,7 +30,8 @@ const SuperAdminSubmissions = () => {
   // 4. Enhanced Data Processing
   const processedQueue = useMemo(() => {
     return queue.map((qItem) => {
-      const parentIndicator = indicators.find((ind) => ind._id === qItem._id);
+      // UPDATED: Changed _id to id
+      const parentIndicator = indicators.find((ind) => ind.id === qItem.id);
       
       return {
         ...qItem,
@@ -59,16 +60,17 @@ const SuperAdminSubmissions = () => {
       if (cycleFilter === "QUARTERLY" && item.reportingCycle !== "Quarterly") return false;
       if (cycleFilter === "ANNUAL" && item.reportingCycle !== "Annual") return false;
 
-      // Search Logic
+      // Search Logic - UPDATED: Changed _id to id
       return (
         item.indicatorTitle?.toLowerCase().includes(searchLower) ||
         item.resolvedName?.toLowerCase().includes(searchLower) ||
-        item._id.toLowerCase().includes(searchLower)
+        item.id.toLowerCase().includes(searchLower)
       );
     });
   }, [processedQueue, searchTerm, statusFilter, cycleFilter]);
 
-  const activeIndicator = indicators.find((ind) => ind._id === selectedId);
+  // UPDATED: Changed _id to id
+  const activeIndicator = indicators.find((ind) => ind.id === selectedId);
 
   return (
     <div className="p-6 md:p-12 bg-[#fdfcfc] min-h-screen font-sans">
@@ -163,12 +165,12 @@ const SuperAdminSubmissions = () => {
             <table className="w-full text-left border-collapse min-w-[1100px]">
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-100">
-                  <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Reporting Cycle</th>
+                  <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Cycle</th>
                   <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Submitted By</th>
-                  <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Indicator Detail</th>
-                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Dossier</th>
+                  <th className="px-8 py-7 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Details</th>
+                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Documents</th>
                   <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Timestamp</th>
-                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Audit Status</th>
+                  <th className="px-8 py-7 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Status</th>
                   <th className="px-8 py-7 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Registry Access</th>
                 </tr>
               </thead>
@@ -176,7 +178,7 @@ const SuperAdminSubmissions = () => {
                 {filteredQueue.map((sub) => {
                   const isQuarterly = sub.reportingCycle === "Quarterly";
                   return (
-                    <tr key={sub._id} className="hover:bg-slate-50/30 transition-colors group">
+                    <tr key={sub.id} className="hover:bg-slate-50/30 transition-colors group">
                       <td className="px-8 py-6">
                         <div className={`flex items-center gap-2 text-[9px] font-black uppercase tracking-tighter px-3 py-1.5 rounded-lg w-fit ${isQuarterly ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
                           {isQuarterly ? <Layers size={14} /> : <CalendarDays size={14} />}
@@ -193,7 +195,6 @@ const SuperAdminSubmissions = () => {
                             <p className="text-xs font-black text-[#1d3331] uppercase truncate max-w-[140px]">
                               {sub.resolvedName}
                             </p>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Authorized Submitter</p>
                           </div>
                         </div>
                       </td>
@@ -204,7 +205,7 @@ const SuperAdminSubmissions = () => {
                             {sub.indicatorTitle}
                           </p>
                           <span className="flex items-center gap-1 text-[9px] font-mono text-slate-400">
-                            <Hash size={10} /> {sub._id.slice(-8).toUpperCase()}
+                            <Hash size={10} /> {sub.id.slice(-8).toUpperCase()}
                           </span>
                         </div>
                       </td>
@@ -236,7 +237,7 @@ const SuperAdminSubmissions = () => {
 
                       <td className="px-8 py-6 text-right">
                         <button 
-                          onClick={() => setSelectedId(sub._id)}
+                          onClick={() => setSelectedId(sub.id)}
                           className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#1d3331] text-white text-[9px] font-black uppercase tracking-[0.15em] rounded-xl hover:bg-black transition-all shadow-md group-hover:px-6"
                         >
                           Verify Evidence <ArrowRight size={14} />
