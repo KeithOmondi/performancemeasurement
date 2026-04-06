@@ -2,11 +2,11 @@ import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/tool
 import { apiPrivate } from "../../api/axios";
 
 /* ------------------------------------------------------------------ */
-/*  Types                                                               */
+/* Types                                                             */
 /* ------------------------------------------------------------------ */
 
 export interface ITeamMember {
-  id: string;        // ✅ PostgreSQL returns id, not _id
+  id: string; 
   name: string;
   email: string;
   title?: string;
@@ -26,7 +26,7 @@ export interface ITeam {
   createdBy?: string;
   creatorName?: string;
   isActive?: boolean;
-  is_active?: boolean;   // ← add this if your API returns snake_case
+  is_active?: boolean;
   memberCount?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -49,14 +49,24 @@ const initialState: TeamState = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                             */
+/* Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
 const getErrorMessage = (error: any): string =>
   error?.response?.data?.message || "An unexpected error occurred";
 
+/**
+ * Normalizes backend data (PostgreSQL/Snake Case) to Frontend (Camel Case)
+ */
+const normalizeTeam = (t: any): ITeam => ({
+  ...t,
+  isActive: t.isActive ?? t.is_active ?? true,
+  createdAt: t.createdAt ?? t.created_at,
+  updatedAt: t.updatedAt ?? t.updated_at,
+});
+
 /* ------------------------------------------------------------------ */
-/*  Thunks                                                              */
+/* Thunks                                                            */
 /* ------------------------------------------------------------------ */
 
 export const fetchTeams = createAsyncThunk(
@@ -64,45 +74,43 @@ export const fetchTeams = createAsyncThunk(
   async (_: void, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.get("/teams");
-      const teams = res.data.data.map((t: any) => ({
-        ...t,
-        isActive: t.isActive ?? t.is_active,  // normalize here
-      }));
+      // Normalize the entire array on fetch
+      const teams = (res.data.data || []).map(normalizeTeam);
       return teams as ITeam[];
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const createTeam = createAsyncThunk(
   "teams/create",
   async (
     data: { name: string; description?: string; teamLead: string; members: string[] },
-    { rejectWithValue },
+    { rejectWithValue }
   ) => {
     try {
       const res = await apiPrivate.post("/teams", data);
-      return res.data.data as ITeam;
+      return normalizeTeam(res.data.data);
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const updateTeam = createAsyncThunk(
   "teams/update",
   async (
     arg: { id: string; data: { name?: string; description?: string; teamLead?: string } },
-    { rejectWithValue },
+    { rejectWithValue }
   ) => {
     try {
       const res = await apiPrivate.patch(`/teams/${arg.id}`, arg.data);
-      return res.data.data as ITeam;
+      return normalizeTeam(res.data.data);
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const addTeamMembers = createAsyncThunk(
@@ -112,11 +120,11 @@ export const addTeamMembers = createAsyncThunk(
       const res = await apiPrivate.patch(`/teams/${arg.id}/members/add`, {
         memberIds: arg.memberIds,
       });
-      return res.data.data as ITeam;
+      return normalizeTeam(res.data.data);
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const removeTeamMembers = createAsyncThunk(
@@ -126,11 +134,11 @@ export const removeTeamMembers = createAsyncThunk(
       const res = await apiPrivate.patch(`/teams/${arg.id}/members/remove`, {
         memberIds: arg.memberIds,
       });
-      return res.data.data as ITeam;
+      return normalizeTeam(res.data.data);
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const setTeamActiveStatus = createAsyncThunk(
@@ -140,11 +148,11 @@ export const setTeamActiveStatus = createAsyncThunk(
       const res = await apiPrivate.patch(`/teams/${arg.id}/status`, {
         isActive: arg.isActive,
       });
-      return res.data.data as ITeam;
+      return normalizeTeam(res.data.data);
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 export const deleteTeam = createAsyncThunk(
@@ -156,11 +164,11 @@ export const deleteTeam = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
-  },
+  }
 );
 
 /* ------------------------------------------------------------------ */
-/*  Slice                                                               */
+/* Slice                                                             */
 /* ------------------------------------------------------------------ */
 
 const teamSlice = createSlice({
@@ -171,80 +179,83 @@ const teamSlice = createSlice({
       state.error = null;
     },
   },
-  extraReducers: (builder) => {
+ extraReducers: (builder) => {
+    // 1. Define explicit types for your internal helpers to fix the 'any' errors
     const setActionLoading = (state: TeamState) => {
       state.actionLoading = true;
       state.error = null;
     };
 
+    const handleActionError = (state: TeamState, action: any) => {
+      state.actionLoading = false;
+      state.error = action.payload as string;
+    };
+
     const upsertTeam = (state: TeamState, action: PayloadAction<ITeam>) => {
       state.actionLoading = false;
-      // ✅ Use .id not ._id
-      const idx = state.teams.findIndex((t) => t.id === action.payload.id);
-      if (idx !== -1) state.teams[idx] = action.payload;
-      else state.teams.unshift(action.payload);
+      const idx = state.teams.findIndex((t: ITeam) => t.id === action.payload.id);
+      if (idx !== -1) {
+        state.teams[idx] = { ...state.teams[idx], ...action.payload };
+      } else {
+        state.teams.unshift(action.payload);
+      }
     };
 
     builder
-      // fetch
-      .addCase(fetchTeams.pending, (state) => {
+      // 2. ALWAYS put .addCase calls BEFORE .addMatcher calls
+      .addCase(fetchTeams.pending, (state: TeamState) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchTeams.fulfilled, (state, action: PayloadAction<ITeam[]>) => {
+      .addCase(fetchTeams.fulfilled, (state: TeamState, action: PayloadAction<ITeam[]>) => {
         state.loading = false;
         state.teams = action.payload;
       })
-      .addCase(fetchTeams.rejected, (state, action) => {
+      .addCase(fetchTeams.rejected, (state: TeamState, action: any) => {
         state.loading = false;
         state.error = action.payload as string;
       })
-      // create
-      .addCase(createTeam.pending, setActionLoading)
-      .addCase(createTeam.fulfilled, upsertTeam)
-      .addCase(createTeam.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-      // update
-      .addCase(updateTeam.pending, setActionLoading)
-      .addCase(updateTeam.fulfilled, upsertTeam)
-      .addCase(updateTeam.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-      // addMembers
-      .addCase(addTeamMembers.pending, setActionLoading)
-      .addCase(addTeamMembers.fulfilled, upsertTeam)
-      .addCase(addTeamMembers.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-      // removeMembers
-      .addCase(removeTeamMembers.pending, setActionLoading)
-      .addCase(removeTeamMembers.fulfilled, upsertTeam)
-      .addCase(removeTeamMembers.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-      // setStatus
-      .addCase(setTeamActiveStatus.pending, setActionLoading)
-      .addCase(setTeamActiveStatus.fulfilled, upsertTeam)
-      .addCase(setTeamActiveStatus.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      })
-      // delete
       .addCase(deleteTeam.pending, setActionLoading)
-      .addCase(deleteTeam.fulfilled, (state, action: PayloadAction<string>) => {
+      .addCase(deleteTeam.fulfilled, (state: TeamState, action: PayloadAction<string>) => {
         state.actionLoading = false;
-        // ✅ Use .id not ._id
-        state.teams = state.teams.filter((t) => t.id !== action.payload);
+        state.teams = state.teams.filter((t: ITeam) => t.id !== action.payload);
       })
-      .addCase(deleteTeam.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
+      .addCase(deleteTeam.rejected, handleActionError)
+
+      // 3. Matchers go at the end of the chain
+      .addMatcher(
+        (action) =>
+          [
+            createTeam.pending.type,
+            updateTeam.pending.type,
+            addTeamMembers.pending.type,
+            removeTeamMembers.pending.type,
+            setTeamActiveStatus.pending.type,
+          ].includes(action.type),
+        setActionLoading
+      )
+      .addMatcher(
+        (action) =>
+          [
+            createTeam.fulfilled.type,
+            updateTeam.fulfilled.type,
+            addTeamMembers.fulfilled.type,
+            removeTeamMembers.fulfilled.type,
+            setTeamActiveStatus.fulfilled.type,
+          ].includes(action.type),
+        upsertTeam
+      )
+      .addMatcher(
+        (action) =>
+          [
+            createTeam.rejected.type,
+            updateTeam.rejected.type,
+            addTeamMembers.rejected.type,
+            removeTeamMembers.rejected.type,
+            setTeamActiveStatus.rejected.type,
+          ].includes(action.type),
+        handleActionError
+      );
   },
 });
 
