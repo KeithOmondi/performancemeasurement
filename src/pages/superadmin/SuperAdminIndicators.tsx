@@ -20,10 +20,10 @@ import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
 interface IndicatorSectionProps {
   perspective: string;
   objective: any;
-  plan: any; // ← added so we can pass strategicPlanId
+  plan: any;
   indicators: IIndicator[];
   userMap: Record<string, any>;
-  onAssign: (prefill: AssignPrefill) => void; // ← now carries prefill
+  onAssign: (prefill: AssignPrefill) => void;
   onSelectAssignment: (indicator: IIndicator) => void;
   activeFilter: string;
 }
@@ -228,7 +228,6 @@ const IndicatorSection = ({
               ) : (
                 <button
                   onClick={() =>
-                    // ← Pass all three IDs so SuperAdminAssign can auto-populate
                     onAssign({
                       strategicPlanId: plan.id ?? plan._id,
                       objectiveId: objective.id ?? objective._id,
@@ -266,7 +265,6 @@ const SuperAdminIndicators = () => {
     indicators,
     selectedIndicator,
     loading: indicatorsLoading,
-    detailLoading,
     actionLoading,
   } = useAppSelector((s) => s.indicators);
   const { users, isLoading: usersLoading } = useAppSelector((s) => s.users);
@@ -291,13 +289,11 @@ const SuperAdminIndicators = () => {
     dispatch(clearSelectedIndicator());
   };
 
-  // ← Opens modal with prefill from a row's Assign button
   const handleOpenAssign = (prefill?: AssignPrefill) => {
     setAssignPrefill(prefill);
     setIsAssignModalOpen(true);
   };
 
-  // ← Clears prefill when modal closes so global button stays blank
   const handleCloseAssign = () => {
     setIsAssignModalOpen(false);
     setAssignPrefill(undefined);
@@ -414,7 +410,6 @@ const SuperAdminIndicators = () => {
           {actionLoading && (
             <Loader2 className="animate-spin text-[#1a3a32]" size={20} />
           )}
-          {/* Global button — opens blank modal, no prefill */}
           <button
             onClick={() => handleOpenAssign()}
             className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all shadow-md shadow-[#1a3a32]/10"
@@ -473,7 +468,7 @@ const SuperAdminIndicators = () => {
                       key={objective.id ?? objective._id}
                       perspective={plan.perspective}
                       objective={objective}
-                      plan={plan} // ← pass plan down
+                      plan={plan}
                       indicators={(indicators ?? []).filter((ind) =>
                         matchId(
                           ind.objectiveId,
@@ -481,7 +476,7 @@ const SuperAdminIndicators = () => {
                         )
                       )}
                       userMap={userMap}
-                      onAssign={handleOpenAssign} // ← receives prefill from row
+                      onAssign={handleOpenAssign}
                       onSelectAssignment={handleSelectAssignment}
                       activeFilter={activeFilter}
                     />
@@ -511,9 +506,18 @@ const SuperAdminIndicators = () => {
         />
       )}
 
+      {/* ─── DRAWER: gated solely on selectedIndicator ─────────────────────
+          Previously, `detailLoading` was included in the visibility condition,
+          which caused the drawer to open (and show an infinite spinner) even
+          when no indicator had been selected yet, or when the fetch silently
+          failed and never reset detailLoading to false.
+          The inner IndicatorsPageIdModal already handles its own detailLoading
+          spinner, so the outer shell only needs to know whether there is a
+          selected indicator to display.
+      ──────────────────────────────────────────────────────────────────── */}
       <div
         className={`fixed inset-0 z-[300] transition-all duration-300 ${
-          selectedIndicator || detailLoading ? "visible opacity-100" : "invisible opacity-0"
+          selectedIndicator ? "visible opacity-100" : "invisible opacity-0"
         }`}
       >
         <div
@@ -522,14 +526,10 @@ const SuperAdminIndicators = () => {
         />
         <div
           className={`fixed right-0 top-0 h-full w-full md:w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${
-            selectedIndicator || detailLoading ? "translate-x-0" : "translate-x-full"
+            selectedIndicator ? "translate-x-0" : "translate-x-full"
           }`}
         >
-          {detailLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="animate-spin text-[#1a3a32]" size={36} />
-            </div>
-          ) : selectedIndicator ? (
+          {selectedIndicator ? (
             <IndicatorsPageIdModal
               indicator={selectedIndicator}
               allStaff={users}
