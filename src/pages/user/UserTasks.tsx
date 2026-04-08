@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { useNavigate } from "react-router-dom";
 import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
+import { fetchTeams } from "../../store/slices/teamSlice"; // Import fetchTeams
 import {
   ArrowUpRight,
   AlertCircle,
@@ -21,15 +22,19 @@ import type { IIndicatorUI } from "../../store/slices/userIndicatorSlice";
 const UserTasks = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const { myIndicators, loading } = useAppSelector(
+
+  // Pull both assignments and teams from the store
+  const { myIndicators, loading: assignmentsLoading } = useAppSelector(
     (state) => state.userIndicators,
   );
+  const { teams } = useAppSelector((state) => state.teams);
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
+    dispatch(fetchTeams()); // Ensure teams are loaded to map IDs to Names
   }, [dispatch]);
 
-  // Filter out fully completed tasks for the active work view
+  // Filter out fully completed tasks
   const filteredTasks = useMemo(
     () => myIndicators.filter((item) => item.status !== "Completed"),
     [myIndicators],
@@ -44,6 +49,14 @@ const UserTasks = () => {
     () => filteredTasks.filter((i) => i.assignee_model === "User"),
     [filteredTasks],
   );
+
+  /**
+   * Helper to find the team name based on assignee_id
+   */
+  const getTeamName = (teamId: string) => {
+    const team = teams.find((t) => t.id === teamId);
+    return team ? team.name : "Unknown Team";
+  };
 
   const getLifecycleConfig = (
     status: IIndicatorUI["status"],
@@ -88,7 +101,7 @@ const UserTasks = () => {
     }
   };
 
-  if (loading && myIndicators.length === 0) {
+  if (assignmentsLoading && myIndicators.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#f8f9fa] space-y-6">
         <div className="relative">
@@ -227,11 +240,15 @@ const UserTasks = () => {
 
                         <td className="px-6 py-7">
                           {isTeam ? (
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col gap-1.5">
                               <div className="inline-flex items-center gap-1.5 bg-violet-50 border border-violet-100 text-violet-700 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider w-fit">
                                 <Users size={10} />
                                 Team
                               </div>
+                              {/* DYNAMIC TEAM NAME FETCHED FROM STORE */}
+                              <p className="text-[10px] font-bold text-violet-900 truncate max-w-[150px] pl-1">
+                                {getTeamName(item.assignee_id)}
+                              </p>
                             </div>
                           ) : (
                             <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-500 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider w-fit">

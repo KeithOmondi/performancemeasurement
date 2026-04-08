@@ -1,335 +1,384 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { 
-  RotateCcw, 
-  MessageSquare, 
-  History, 
-  Search, 
-  Loader2, 
-  ChevronLeft,
-  X,
-  Upload,
-  FileText,
-  ShieldCheck,
-  TrendingUp,
-  AlertCircle
-} from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { 
-  fetchMyAssignments, 
-  setLocalSelectedIndicator,
-  submitIndicatorProgress, 
-  type IIndicatorUI
-} from "../../store/slices/userIndicatorSlice";
-import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
+import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
+import {
+  ArrowUpRight,
+  AlertCircle,
+  CheckCircle2,
+  PlayCircle,
+  ShieldCheck,
+  Clock,
+  Activity,
+  Hash,
+  Loader2,
+  RotateCcw,
+  Users,
+  User,
+} from "lucide-react";
+import type { IIndicatorUI } from "../../store/slices/userIndicatorSlice";
 
-/* --- TYPES --- */
-interface ILogEntry {
-  action: string;
-  created_at: string;
-  reason: string;
-  reviewer_role: string;
+/* ─── TYPES ──────────────────────────────────────────────────────────── */
+
+interface ILifecycleConfig {
+  label: string;
+  bg: string;
+  icon: React.ReactElement;
 }
 
-/* --- SUB-COMPONENT: SMART RESUBMISSION MODAL --- */
-const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; onClose: () => void }) => {
-  const dispatch = useAppDispatch();
-  const { uploading } = useAppSelector((state) => state.userIndicators);
-  
-  const [file, setFile] = useState<File | null>(null);
-  const [notes, setNotes] = useState("");
+/* ─── HELPERS ────────────────────────────────────────────────────────── */
 
-  // Memoize the rejected submission
-  const rejectedSub = useMemo(() => 
-    [...(indicator.submissions || [])].reverse().find(s => s.review_status === "Rejected"),
-    [indicator]
-  );
+const getLifecycleConfig = (
+  status: IIndicatorUI["status"],
+  activeQuarter: number,
+  cycle: "Quarterly" | "Annual",
+): ILifecycleConfig => {
+  const periodLabel = cycle === "Annual" ? "Annual" : `Q${activeQuarter || 1}`;
+  switch (status) {
+    case "Awaiting Admin Approval":
+      return { label: "Registry Audit",     bg: "bg-amber-50 text-amber-700 border-amber-100",   icon: <Clock size={12} /> };
+    case "Awaiting Super Admin":
+    case "Partially Approved":
+      return { label: "Final Certification", bg: "bg-blue-50 text-blue-700 border-blue-100",     icon: <ShieldCheck size={12} /> };
+    case "Rejected by Admin":
+    case "Rejected by Super Admin":
+      return { label: "Revision Required",   bg: "bg-rose-50 text-rose-700 border-rose-100",     icon: <AlertCircle size={12} /> };
+    case "Completed":
+      return { label: "Certified",           bg: "bg-emerald-50 text-emerald-700 border-emerald-100", icon: <CheckCircle2 size={12} /> };
+    case "Pending":
+    default:
+      return { label: `${periodLabel} Filing Open`, bg: "bg-slate-50 text-slate-500 border-slate-200", icon: <PlayCircle size={12} /> };
+  }
+};
 
-  /**
-   * FIX: State Initialization
-   * Instead of using useEffect to set the value after render, 
-   * we use a function in useState to set it during the first render pass.
-   */
-  const [achievedValue, setAchievedValue] = useState<number>(() => {
-    return rejectedSub ? rejectedSub.achieved_value : 0;
-  });
+/* ─── SUB-COMPONENT: Assignment Table ───────────────────────────────── */
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rejectedSub) return;
-    if (!notes.trim()) return toast.error("Clarification notes are required for re-audit.");
+interface AssignmentTableProps {
+  tasks: IIndicatorUI[];
+  onNavigate: (id: string) => void;
+}
 
-    const formData = new FormData();
-    formData.append("notes", notes.trim());
-    formData.append("quarter", rejectedSub.quarter.toString());
-    formData.append("achievedValue", achievedValue.toString());
-    if (file) formData.append("evidence", file);
-
-    const result = await dispatch(submitIndicatorProgress({
-      id: indicator.id, 
-      formData
-    }));
-
-    if (submitIndicatorProgress.fulfilled.match(result)) {
-      toast.success("Correction submitted to registry");
-      onClose();
-    }
-  };
-
-  if (!rejectedSub) return null;
-
-  const isAnnual = indicator.reporting_cycle === "Annual";
-  const periodDisplay = isAnnual ? "Annual Cycle" : `Quarter ${rejectedSub.quarter}`;
+const AssignmentTable = ({ tasks, onNavigate }: AssignmentTableProps) => {
+  if (tasks.length === 0) return null;
 
   return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-[#0c1a16]/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
-        <header className="p-8 border-b flex justify-between items-center bg-slate-50/50">
-          <div>
-            <h2 className="text-xl font-black text-[#1a3a32] uppercase tracking-tight">Correction Protocol</h2>
-            <p className="text-[10px] font-bold text-rose-500 uppercase mt-1">Re-submission • {periodDisplay}</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20} /></button>
-        </header>
+    <div className="overflow-x-auto">
+      <table className="w-full text-left border-collapse min-w-[1050px]">
+        <thead>
+          <tr className="bg-gray-50/50 border-b border-gray-100">
+            {[
+              "Indicator & Strategic Objective",
+              "Assignment",
+              "Cycle",
+              "Registry Status",
+              "Achievement",
+              "Action",
+            ].map((h) => (
+              <th
+                key={h}
+                className={`px-6 py-6 text-[9px] font-black text-gray-400 uppercase tracking-widest ${
+                  h === "Action" ? "text-right" : "text-left"
+                } ${h.includes("Indicator") ? "pl-10" : ""}`}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {tasks.map((item) => {
+            const lifecycle    = getLifecycleConfig(item.status, item.active_quarter, item.reporting_cycle);
+            const isFlagged    = item.status?.includes("Rejected");
+            const isUnderReview = item.status?.startsWith("Awaiting") || item.status === "Partially Approved";
+            const isTeam       = item.assignee_model === "Team";
 
-        <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-          <div className="p-5 bg-rose-50 border border-rose-100 rounded-[1.5rem]">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertCircle size={14} className="text-rose-500" />
-              <span className="text-[9px] font-black text-rose-600 uppercase">Registry Findings</span>
-            </div>
-            <p className="text-xs font-bold text-rose-900 leading-relaxed italic">
-              "{rejectedSub.notes || "Please review data accuracy and re-submit with supporting evidence."}"
-            </p>
-          </div>
+            return (
+              <tr
+                key={item.id}
+                className="group hover:bg-emerald-50/30 transition-all cursor-pointer"
+                onClick={() => onNavigate(item.id)}
+              >
+                {/* Indicator & Objective */}
+                <td className="px-10 py-7">
+                  <div className="max-w-md">
+                    <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">
+                      {item.perspective}
+                    </p>
+                    <p className="text-sm font-bold leading-tight">
+                      {item.objective?.title || "Strategic Objective"}
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-medium mt-1 leading-snug">
+                      {item.activity?.description}
+                    </p>
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <div className="flex items-center gap-1 opacity-40">
+                        <Hash size={10} />
+                        <span className="text-[9px] font-black uppercase">
+                          ID: {String(item.id).slice(0, 8).toUpperCase()}
+                        </span>
+                      </div>
+                      {isFlagged && (
+                        <div className="flex items-center gap-1 text-rose-600 bg-rose-50 px-2 py-0.5 rounded text-[8px] font-black uppercase animate-pulse border border-rose-100">
+                          <RotateCcw size={10} />
+                          <span>Revision Required</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </td>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <TrendingUp size={14}/> Corrected Value ({indicator.unit})
-              </label>
-              <input 
-                type="number"
-                required
-                className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-[#1a3a32]/5"
-                value={achievedValue}
-                onChange={(e) => setAchievedValue(Number(e.target.value))}
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                Target Period
-              </label>
-              <div className="w-full p-4 bg-slate-100/50 border border-slate-100 rounded-2xl text-sm font-black text-slate-400">
-                {periodDisplay}
-              </div>
-            </div>
-          </div>
+                {/* Assignment type */}
+                <td className="px-6 py-7">
+                  {isTeam ? (
+                    <div className="inline-flex items-center gap-1.5 bg-violet-50 border border-violet-100 text-violet-700 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider w-fit">
+                      <Users size={10} /> Team
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-500 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider w-fit">
+                      <User size={10} /> Individual
+                    </div>
+                  )}
+                </td>
 
-          <div className="space-y-3">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <MessageSquare size={14}/> Corrective Remarks
-            </label>
-            <textarea 
-              required 
-              placeholder="Explain the changes made or address the registry's concerns..." 
-              className="w-full h-28 p-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm outline-none focus:ring-4 focus:ring-[#1a3a32]/5 resize-none font-medium transition-all" 
-              value={notes} 
-              onChange={(e) => setNotes(e.target.value)} 
-            />
-          </div>
+                {/* Cycle */}
+                <td className="px-6 py-7">
+                  <span className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${
+                    item.reporting_cycle === "Annual"
+                      ? "bg-blue-50 text-blue-600 border-blue-100"
+                      : "bg-gray-100 text-gray-500 border-gray-200"
+                  }`}>
+                    {item.reporting_cycle}
+                  </span>
+                </td>
 
-          <div className="space-y-3">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <Upload size={14}/> Updated Evidence (Optional)
-            </label>
-            <div className="relative group">
-              <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-              <div className={`p-6 border-2 border-dashed rounded-[2rem] flex flex-col items-center justify-center transition-all ${file ? 'border-[#1a3a32] bg-emerald-50/20' : 'border-slate-200 bg-slate-50 group-hover:border-slate-400'}`}>
-                {file ? <FileText className="text-[#1a3a32] mb-2" size={24} /> : <Upload className="text-slate-300 mb-2" size={24} />}
-                <p className="text-[9px] font-black text-slate-600 uppercase text-center truncate px-4">
-                  {file ? file.name : "Upload corrected evidence"}
-                </p>
-              </div>
-            </div>
-          </div>
+                {/* Status */}
+                <td className="px-6 py-7">
+                  <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all group-hover:shadow-md ${lifecycle.bg}`}>
+                    {lifecycle.icon}
+                    {lifecycle.label}
+                  </div>
+                </td>
 
-          <button 
-            disabled={uploading} 
-            type="submit" 
-            className="w-full bg-[#1a3a32] text-white py-5 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 shadow-xl hover:bg-black transition-all disabled:opacity-50 active:scale-[0.98]"
-          >
-            {uploading ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={18} />}
-            Commit Correction
-          </button>
-        </form>
-      </div>
+                {/* Progress */}
+                <td className="px-6 py-7">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-[100px]">
+                      <div
+                        className={`h-full transition-all duration-1000 ease-out ${isFlagged ? "bg-rose-500" : "bg-[#1a3a32]"}`}
+                        style={{ width: `${Math.min(item.progress || 0, 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] font-black tabular-nums text-gray-400">
+                      {Math.round(item.progress || 0)}%
+                    </span>
+                  </div>
+                </td>
+
+                {/* Action */}
+                <td className="px-10 py-7 text-right">
+                  <button
+                    disabled={isUnderReview}
+                    onClick={(e) => { e.stopPropagation(); onNavigate(item.id); }}
+                    className={`p-3 rounded-xl border transition-all inline-flex items-center gap-3 group/btn ${
+                      isUnderReview
+                        ? "bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed"
+                        : "bg-white text-[#1a3a32] border-gray-200 hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32] hover:shadow-lg"
+                    }`}
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-widest">
+                      {isUnderReview ? "In Audit" : isFlagged ? "Resolve" : "View"}
+                    </span>
+                    <ArrowUpRight
+                      size={14}
+                      className="group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform"
+                    />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 };
 
-/* --- MAIN PAGE COMPONENT --- */
-const UserRejections = () => {
-  const dispatch = useAppDispatch();
-  const { myIndicators, loading, currentIndicator } = useAppSelector((state) => state.userIndicators);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [historyViewId, setHistoryViewId] = useState<string | null>(null);
+/* ─── SECTION HEADER ─────────────────────────────────────────────────── */
+
+interface SectionHeaderProps {
+  icon: React.ReactElement;
+  title: string;
+  subtitle: string;
+  count: number;
+  accent: string;
+}
+
+const SectionHeader = ({ icon, title, subtitle, count, accent }: SectionHeaderProps) => (
+  <div className={`flex items-center justify-between px-8 py-5 border-b border-gray-100 ${accent}`}>
+    <div className="flex items-center gap-3">
+      <div className="text-current opacity-60">{icon}</div>
+      <div>
+        <p className="text-xs font-black uppercase tracking-widest">{title}</p>
+        <p className="text-[10px] opacity-60 font-medium mt-0.5">{subtitle}</p>
+      </div>
+    </div>
+    <span className="text-xs font-black tabular-nums opacity-50">{count} task{count !== 1 ? "s" : ""}</span>
+  </div>
+);
+
+/* ─── EMPTY STATE ────────────────────────────────────────────────────── */
+
+const EmptyState = () => (
+  <div className="py-40 flex flex-col items-center justify-center text-gray-300">
+    <div className="bg-gray-50 p-12 rounded-[3rem] border border-gray-100 mb-6">
+      <Activity size={48} className="opacity-10" />
+    </div>
+    <h3 className="text-xs font-black uppercase tracking-[0.4em] mb-2 text-gray-400">
+      Registry Clear
+    </h3>
+    <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gray-400 text-center max-w-xs">
+      All assigned indicators have been finalized for this cycle.
+    </p>
+  </div>
+);
+
+/* ─── MAIN COMPONENT ─────────────────────────────────────────────────── */
+
+const UserTasks = () => {
+  const dispatch  = useAppDispatch();
+  const navigate  = useNavigate();
+
+  const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
   }, [dispatch]);
 
-  const rejectedIndicators = useMemo(() => {
-    return myIndicators.filter((ind) => {
-      const isStatusRejected = ind.status?.includes("Rejected");
-      const hasRejectedSub = ind.submissions?.some(sub => sub.review_status === "Rejected");
-      
-      const matchesSearch = 
-        (ind.activity?.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (ind.objective?.title || "").toLowerCase().includes(searchTerm.toLowerCase());
+  // Active work only — exclude fully completed
+  const activeTasks = useMemo(
+    () => myIndicators.filter((item) => item.status !== "Completed"),
+    [myIndicators],
+  );
 
-      return (isStatusRejected || hasRejectedSub) && matchesSearch;
-    });
-  }, [myIndicators, searchTerm]);
+  const teamTasks = useMemo(
+    () => activeTasks.filter((i) => i.assignee_model === "Team"),
+    [activeTasks],
+  );
 
+  const individualTasks = useMemo(
+    () => activeTasks.filter((i) => i.assignee_model === "User"),
+    [activeTasks],
+  );
+
+  const handleNavigate = (id: string) => navigate(`/user/assignments/${id}`);
+
+  /* ── Loading ── */
   if (loading && myIndicators.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin text-rose-500 mb-4" size={40} />
-        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Scanning Registry...</p>
+      <div className="flex flex-col items-center justify-center h-screen bg-[#f8f9fa] space-y-6">
+        <div className="relative">
+          <Loader2 className="w-14 h-14 animate-spin text-[#1a3a32]" />
+          <ShieldCheck
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[#c2a336]"
+            size={16}
+          />
+        </div>
+        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#8c94a4]">
+          Syncing Judicial Ledger...
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 md:p-10 bg-[#fdfdfd] min-h-screen font-sans">
-      {/* HEADER SECTION */}
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-        <div>
-          <h1 className="text-2xl font-serif font-black text-slate-900 tracking-tighter uppercase">
-            Flagged Assignments
-          </h1>
-          <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-2">
-            PMMU • {rejectedIndicators.length} Requires Action
-          </p>
-        </div>
-        <div className="relative">
-          <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-          <input 
-            type="text" 
-            placeholder="Search by Activity or Objective..." 
-            className="pl-14 pr-8 py-4 bg-white border border-slate-100 rounded-full text-[11px] font-black uppercase w-full md:w-80 shadow-sm outline-none focus:ring-4 focus:ring-rose-500/5 transition-all" 
-            value={searchTerm} 
-            onChange={(e) => setSearchTerm(e.target.value)} 
-          />
-        </div>
-      </div>
+    <div className="min-h-screen bg-[#f8f9fa] p-6 md:p-10 lg:p-14 text-[#1a3a32] font-sans">
+      <div className="max-w-7xl mx-auto">
 
-      <div className="max-w-7xl mx-auto space-y-6">
-        {rejectedIndicators.length === 0 ? (
-          <div className="bg-white rounded-[4rem] py-32 text-center border-4 border-dashed border-slate-50">
-            <ShieldCheck className="mx-auto mb-6 text-emerald-100" size={80} />
-            <h2 className="text-xs font-black text-slate-300 uppercase tracking-[0.3em]">Compliance Verified</h2>
+        {/* ── Header ── */}
+        <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-gray-200 pb-12">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-[#c2a336] text-[10px] font-black uppercase tracking-[0.3em]">
+              <Activity size={16} /> Strategic Performance Unit
+            </div>
+            <h1 className="text-2xl font-black font-serif tracking-tighter leading-tight">
+              Active{" "}
+              <span className="text-gray-300 font-serif font-light italic">Assignments</span>
+            </h1>
+          </div>
+
+          {/* Stats card */}
+          <div className="bg-[#1a3a32] text-white p-6 rounded-2xl shadow-2xl flex items-center gap-6 border border-white/5 relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              <ShieldCheck size={60} />
+            </div>
+            <div className="relative z-10">
+              <p className="text-[#c2a336] text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                Filing Queue
+              </p>
+              <p className="text-4xl font-black leading-none tracking-tighter">
+                {activeTasks.length.toString().padStart(2, "0")}
+              </p>
+            </div>
+            <div className="h-10 w-[1px] bg-white/10 relative z-10" />
+            <div className="relative z-10 space-y-1">
+              <div className="flex items-center gap-2">
+                <User size={11} className="text-white/50" />
+                <span className="text-[9px] text-white/60 font-bold uppercase tracking-widest">
+                  {individualTasks.length} Individual
+                </span>
+              </div>
+              {teamTasks.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Users size={11} className="text-[#c2a336]" />
+                  <span className="text-[9px] text-[#c2a336] font-bold uppercase tracking-widest">
+                    {teamTasks.length} Team
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* ── Content ── */}
+        {activeTasks.length === 0 ? (
+          <div className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
+            <EmptyState />
           </div>
         ) : (
-          rejectedIndicators.map((indicator) => {
-            const isViewingHistory = historyViewId === indicator.id;
-            const rejectedSub = [...(indicator.submissions || [])].reverse().find(s => s.review_status === "Rejected");
-            const periodText = indicator.reporting_cycle === "Annual" ? "Annual" : `Quarter ${rejectedSub?.quarter ?? indicator.active_quarter}`;
+          <div className="space-y-8">
 
-            return (
-              <div 
-                key={indicator.id} 
-                className={`bg-white rounded-[2.5rem] border-2 transition-all duration-500 ${
-                  isViewingHistory ? 'border-[#1a3a32] shadow-2xl' : 'border-slate-50 shadow-sm hover:border-rose-100'
-                }`}
-              >
-                <div className="p-8 md:p-10">
-                  {isViewingHistory ? (
-                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-                      <header className="flex justify-between items-center mb-8">
-                        <button onClick={() => setHistoryViewId(null)} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-400 hover:text-rose-500 transition-colors">
-                          <ChevronLeft size={16} /> Exit Audit Trail
-                        </button>
-                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Protocol History</span>
-                      </header>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {/* FIX: Replaced 'any' with ILogEntry interface */}
-                        {(indicator.submissions?.map(s => ({
-                          action: s.review_status,
-                          created_at: s.submitted_at,
-                          reason: s.notes,
-                          reviewer_role: "Registry Auditor"
-                        })) || []).map((log: ILogEntry, idx) => (
-                          <div key={idx} className="bg-slate-50 p-6 rounded-3xl border border-transparent">
-                            <div className="flex justify-between items-center mb-4">
-                              <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-lg ${
-                                log.action === 'Rejected' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'
-                              }`}>
-                                {log.action}
-                              </span>
-                              <span className="text-[9px] font-bold text-slate-400">{new Date(log.created_at).toLocaleDateString()}</span>
-                            </div>
-                            <p className="text-xs text-slate-600 font-semibold italic leading-relaxed">"{log.reason}"</p>
-                            <p className="text-[8px] font-black text-slate-300 mt-4 uppercase">Source: {log.reviewer_role}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col lg:flex-row gap-8 lg:items-center">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-4">
-                            <span className="bg-rose-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-rose-500/20">Rejected</span>
-                            <span className="text-[9px] font-black text-slate-300 uppercase">{periodText} Cycle</span>
-                        </div>
-                        <h3 className="text-xl font-black text-slate-900 leading-tight mb-2">{indicator.activity?.description}</h3>
-                        <p className="text-[9px] font-bold text-[#c2a336] uppercase tracking-widest">{indicator.objective?.title}</p>
-                      </div>
+            {/* Individual assignments */}
+            {individualTasks.length > 0 && (
+              <section className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
+                <SectionHeader
+                  icon={<User size={16} />}
+                  title="Individual Assignments"
+                  subtitle="Tasks assigned directly to you"
+                  count={individualTasks.length}
+                  accent="bg-slate-50/60 text-slate-600"
+                />
+                <AssignmentTable tasks={individualTasks} onNavigate={handleNavigate} />
+              </section>
+            )}
 
-                      <div className="lg:w-1/3 bg-rose-50/30 rounded-3xl p-6 border border-rose-50">
-                        <div className="flex items-center gap-2 mb-3">
-                            <MessageSquare size={12} className="text-rose-400" />
-                            <span className="text-[8px] font-black text-rose-400 uppercase">Auditor Remarks</span>
-                        </div>
-                        <p className="text-xs text-rose-950 font-bold italic leading-relaxed">
-                          "{rejectedSub?.notes || "Inconsistent data detected. Please re-verify and attach mandatory evidence."}"
-                        </p>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row lg:flex-col gap-3">
-                        <button 
-                          onClick={() => dispatch(setLocalSelectedIndicator(indicator.id))} 
-                          className="px-8 bg-[#1a3a32] text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-3 shadow-xl active:scale-95"
-                        >
-                          <RotateCcw size={16} /> Resolve
-                        </button>
-                        <button 
-                          onClick={() => setHistoryViewId(indicator.id)} 
-                          className="px-8 bg-white border border-slate-200 text-slate-400 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:border-slate-400 hover:text-slate-700 transition-all flex items-center justify-center gap-3"
-                        >
-                          <History size={16} /> Audit Trail
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })
+            {/* Team assignments */}
+            {teamTasks.length > 0 && (
+              <section className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
+                <SectionHeader
+                  icon={<Users size={16} />}
+                  title="Team Assignments"
+                  subtitle="Tasks assigned to your team — all members share these"
+                  count={teamTasks.length}
+                  accent="bg-violet-50/60 text-violet-700"
+                />
+                <AssignmentTable tasks={teamTasks} onNavigate={handleNavigate} />
+              </section>
+            )}
+          </div>
         )}
       </div>
-
-      {currentIndicator && (
-        <ResubmissionModal 
-          indicator={currentIndicator} 
-          onClose={() => dispatch(setLocalSelectedIndicator(null))} 
-        />
-      )}
     </div>
   );
 };
 
-export default UserRejections;
+export default UserTasks;
