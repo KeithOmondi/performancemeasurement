@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import {
   Loader2,
   Search,
@@ -17,10 +17,37 @@ import {
   fetchIndicators,
 } from "../../store/slices/indicatorSlice";
 
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
+type FilterStatus = "ALL" | "Pending" | "Rejected" | "Verified";
+
+interface MetricCardProps {
+  title: string;
+  value: number;
+  color: "amber" | "red" | "emerald";
+  icon: ReactNode;
+}
+
+interface FilterChipProps {
+  active: boolean;
+  label: string;
+  icon?: ReactNode;
+  onClick: () => void;
+  color?: "amber" | "red" | "emerald";
+}
+
+interface StatusBadgeProps {
+  status: "Pending" | "Rejected" | "Verified";
+  rawStatus: string;
+  progress: number;
+}
+
+/* ─── MAIN COMPONENT ───────────────────────────────────────────────── */
+
 const SuperAdminReviewer = () => {
   const dispatch = useAppDispatch();
   const [searchTerm, setSearchTerm] = useState("");
-  const [filter, setFilter] = useState<"ALL" | "Pending" | "Rejected" | "Verified">("ALL");
+  const [filter, setFilter] = useState<FilterStatus>("ALL");
 
   const {
     queue = [],
@@ -34,7 +61,7 @@ const SuperAdminReviewer = () => {
   }, [dispatch]);
 
   const derivedData = useMemo(() => {
-    // 1. ENRICH THE QUEUE (For Table Display)
+    // 1. ENRICH THE QUEUE
     const enrichedQueue = queue.map((qItem) => {
       const parentIndicator = indicators.find((ind) => ind.id === qItem.id);
 
@@ -46,7 +73,7 @@ const SuperAdminReviewer = () => {
       const rawStatus = (parentIndicator?.status || qItem.status || "").toLowerCase();
       const progress = parentIndicator?.progress ?? qItem.achievedValue ?? 0;
 
-      let displayStatus: "Pending" | "Rejected" | "Verified" = "Pending";
+      let displayStatus: "Pending" | "Rejected" | "Verified";
       
       if (rawStatus.includes("rejected")) {
         displayStatus = "Rejected";
@@ -63,15 +90,14 @@ const SuperAdminReviewer = () => {
         resolvedName,
         displayStatus,
         progress,
-        rawStatus: parentIndicator?.status || qItem.status,
+        rawStatus: parentIndicator?.status || qItem.status || "",
         cycle: parentIndicator?.reportingCycle || "Quarterly",
         assignmentType: parentIndicator?.assignmentType || "User",
       };
     });
 
-    // 2. GLOBAL METRICS (FIXED: Derived from Indicators to ensure "Awaiting" clears on completion)
+    // 2. GLOBAL METRICS
     const metrics = {
-      // 🔹 FIX: Only count as 'awaiting' if status is an 'Awaiting' state AND not yet completed/verified
       awaiting: indicators.filter((ind) => {
         const s = ind.status?.toLowerCase() || "";
         return (s.includes("awaiting") || s === "pending") && 
@@ -288,16 +314,16 @@ const SuperAdminReviewer = () => {
   );
 };
 
-/* --- SHARED COMPONENTS --- */
+/* ─── SHARED COMPONENTS ────────────────────────────────────────────── */
 
-const MetricCard = ({ title, value, color, icon }: any) => {
+const MetricCard = ({ title, value, color, icon }: MetricCardProps) => {
   const colors = {
     amber: "border-amber-400 text-amber-600 bg-amber-50/50",
     red: "border-red-700 text-red-800 bg-red-50/50",
     emerald: "border-[#1d3331] text-[#1d3331] bg-emerald-50/30",
   };
   return (
-    <div className={`bg-white p-8 rounded-[2rem] border-b-4 shadow-[0_10px_30px_rgba(0,0,0,0.02)] flex items-center justify-between ${colors[color as keyof typeof colors]}`}>
+    <div className={`bg-white p-8 rounded-[2rem] border-b-4 shadow-[0_10px_30px_rgba(0,0,0,0.02)] flex items-center justify-between ${colors[color]}`}>
       <div>
         <span className="text-4xl font-serif font-bold block mb-1">{value}</span>
         <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{title}</span>
@@ -307,14 +333,14 @@ const MetricCard = ({ title, value, color, icon }: any) => {
   );
 };
 
-const FilterChip = ({ active, label, icon, onClick, color }: any) => {
+const FilterChip = ({ active, label, icon, onClick, color }: FilterChipProps) => {
   const themes = {
     amber: active ? "bg-amber-500 text-white border-amber-500" : "text-slate-400",
     red: active ? "bg-red-700 text-white border-red-700" : "text-slate-400",
     emerald: active ? "bg-[#1d3331] text-white border-[#1d3331]" : "text-slate-400",
     default: active ? "bg-[#1d3331] text-white border-[#1d3331]" : "text-slate-400",
   };
-  const theme = color ? themes[color as keyof typeof themes] : themes.default;
+  const theme = color ? themes[color] : themes.default;
   return (
     <button
       onClick={onClick}
@@ -325,8 +351,8 @@ const FilterChip = ({ active, label, icon, onClick, color }: any) => {
   );
 };
 
-const StatusBadge = ({ status, rawStatus, progress }: { status: "Pending" | "Rejected" | "Verified", rawStatus: string, progress: number }) => {
-  const s = rawStatus?.toLowerCase() || "";
+const StatusBadge = ({ status, rawStatus, progress }: StatusBadgeProps) => {
+  const s = rawStatus.toLowerCase();
   const isAwaitingAction = s.includes("awaiting") || s === "pending";
   
   const config = {

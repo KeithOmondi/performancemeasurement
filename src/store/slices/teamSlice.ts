@@ -1,9 +1,7 @@
-import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk, type PayloadAction, isAnyOf } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
-/* ------------------------------------------------------------------ */
-/* Types                                                             */
-/* ------------------------------------------------------------------ */
+/* ─── TYPES ────────────────────────────────────────────────────────── */
 
 export interface ITeamMember {
   id: string; 
@@ -26,12 +24,20 @@ export interface ITeam {
   createdBy?: string;
   creatorName?: string;
   isActive?: boolean;
-  is_active?: boolean;
   memberCount?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/**
+ * Interface for backend responses that might use snake_case
+ * or have missing optional fields.
+ */
+interface IRawTeam extends Partial<ITeam> {
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string;
+  members?: ITeamMember[];
 }
 
 interface TeamState {
@@ -41,6 +47,13 @@ interface TeamState {
   error: string | null;
 }
 
+interface KnownError {
+  response?: { data?: { message?: string } };
+  message?: string;
+}
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
+
 const initialState: TeamState = {
   teams: [],
   loading: false,
@@ -48,116 +61,134 @@ const initialState: TeamState = {
   error: null,
 };
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                           */
-/* ------------------------------------------------------------------ */
+/* ─── HELPERS ──────────────────────────────────────────────────────── */
 
-const getErrorMessage = (error: any): string =>
-  error?.response?.data?.message || "An unexpected error occurred";
+const getErrorMessage = (error: unknown): string => {
+  const err = error as KnownError;
+  return err.response?.data?.message || err.message || "An unexpected error occurred";
+};
 
 /**
- * Normalizes backend data (PostgreSQL/Snake Case) to Frontend (Camel Case)
+ * Normalization Engine: 
+ * Converts Raw backend data into strict ITeam format.
  */
-const normalizeTeam = (t: any): ITeam => ({
-  ...t,
-  isActive: t.isActive ?? t.is_active ?? true,
-  createdAt: t.createdAt ?? t.created_at,
-  updatedAt: t.updatedAt ?? t.updated_at,
+const normalizeTeam = (t: IRawTeam): ITeam => {
+  // Extract snake_case fields for mapping
+  const { 
+    is_active, 
+    created_at, 
+    updated_at, 
+    members: rawMembers, 
+    ...rest 
+  } = t;
+
+  return {
+    ...(rest as ITeam),
+    id: t.id || "",
+    name: t.name || "Unnamed Team",
+    
+    // CRITICAL FIX: Ensure members is never undefined/null for .slice() calls
+    members: Array.isArray(rawMembers) ? rawMembers : [],
+    
+    // Mapping keys
+    isActive: t.isActive ?? is_active ?? true,
+    createdAt: t.createdAt ?? created_at,
+    updatedAt: t.updatedAt ?? updated_at,
+    
+    // Lead Fallbacks
+    leadName: t.leadName ?? t.teamLead?.name ?? "Unknown Lead",
+    leadEmail: t.leadEmail ?? t.teamLead?.email,
+  };
+};
+
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
+
+export const fetchTeams = createAsyncThunk<ITeam[], void, { rejectValue: string }>(
+  "teams/fetchAll",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get<{ data: IRawTeam[] }>("/teams");
+      return (res.data.data || []).map(normalizeTeam);
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
+  }
+);
+
+export const createTeam = createAsyncThunk<
+  ITeam,
+  { name: string; description?: string; teamLead: string; members: string[] },
+  { rejectValue: string }
+>("teams/create", async (data, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.post<{ data: IRawTeam }>("/teams", data);
+    return normalizeTeam(res.data.data);
+  } catch (err) {
+    return rejectWithValue(getErrorMessage(err));
+  }
 });
 
-/* ------------------------------------------------------------------ */
-/* Thunks                                                            */
-/* ------------------------------------------------------------------ */
-
-export const fetchTeams = createAsyncThunk(
-  "teams/fetchAll",
-  async (_: void, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get("/teams");
-      // Normalize the entire array on fetch
-      const teams = (res.data.data || []).map(normalizeTeam);
-      return teams as ITeam[];
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
+export const updateTeam = createAsyncThunk<
+  ITeam,
+  { id: string; data: { name?: string; description?: string; teamLead?: string } },
+  { rejectValue: string }
+>("teams/update", async (arg, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.patch<{ data: IRawTeam }>(`/teams/${arg.id}`, arg.data);
+    return normalizeTeam(res.data.data);
+  } catch (err) {
+    return rejectWithValue(getErrorMessage(err));
   }
-);
+});
 
-export const createTeam = createAsyncThunk(
-  "teams/create",
-  async (
-    data: { name: string; description?: string; teamLead: string; members: string[] },
-    { rejectWithValue }
-  ) => {
-    try {
-      const res = await apiPrivate.post("/teams", data);
-      return normalizeTeam(res.data.data);
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
+export const addTeamMembers = createAsyncThunk<
+  ITeam,
+  { id: string; memberIds: string[] },
+  { rejectValue: string }
+>("teams/addMembers", async (arg, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.patch<{ data: IRawTeam }>(`/teams/${arg.id}/members/add`, {
+      memberIds: arg.memberIds,
+    });
+    return normalizeTeam(res.data.data);
+  } catch (err) {
+    return rejectWithValue(getErrorMessage(err));
   }
-);
+});
 
-export const updateTeam = createAsyncThunk(
-  "teams/update",
-  async (
-    arg: { id: string; data: { name?: string; description?: string; teamLead?: string } },
-    { rejectWithValue }
-  ) => {
-    try {
-      const res = await apiPrivate.patch(`/teams/${arg.id}`, arg.data);
-      return normalizeTeam(res.data.data);
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
+export const removeTeamMembers = createAsyncThunk<
+  ITeam,
+  { id: string; memberIds: string[] },
+  { rejectValue: string }
+>("teams/removeMembers", async (arg, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.patch<{ data: IRawTeam }>(`/teams/${arg.id}/members/remove`, {
+      memberIds: arg.memberIds,
+    });
+    return normalizeTeam(res.data.data);
+  } catch (err) {
+    return rejectWithValue(getErrorMessage(err));
   }
-);
+});
 
-export const addTeamMembers = createAsyncThunk(
-  "teams/addMembers",
-  async (arg: { id: string; memberIds: string[] }, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.patch(`/teams/${arg.id}/members/add`, {
-        memberIds: arg.memberIds,
-      });
-      return normalizeTeam(res.data.data);
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
+export const setTeamActiveStatus = createAsyncThunk<
+  ITeam,
+  { id: string; isActive: boolean },
+  { rejectValue: string }
+>("teams/setStatus", async (arg, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.patch<{ data: IRawTeam }>(`/teams/${arg.id}/status`, {
+      isActive: arg.isActive,
+    });
+    return normalizeTeam(res.data.data);
+  } catch (err) {
+    return rejectWithValue(getErrorMessage(err));
   }
-);
+});
 
-export const removeTeamMembers = createAsyncThunk(
-  "teams/removeMembers",
-  async (arg: { id: string; memberIds: string[] }, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.patch(`/teams/${arg.id}/members/remove`, {
-        memberIds: arg.memberIds,
-      });
-      return normalizeTeam(res.data.data);
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
-  }
-);
-
-export const setTeamActiveStatus = createAsyncThunk(
-  "teams/setStatus",
-  async (arg: { id: string; isActive: boolean }, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.patch(`/teams/${arg.id}/status`, {
-        isActive: arg.isActive,
-      });
-      return normalizeTeam(res.data.data);
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
-  }
-);
-
-export const deleteTeam = createAsyncThunk(
+export const deleteTeam = createAsyncThunk<string, string, { rejectValue: string }>(
   "teams/delete",
-  async (id: string, { rejectWithValue }) => {
+  async (id, { rejectWithValue }) => {
     try {
       await apiPrivate.delete(`/teams/${id}`);
       return id;
@@ -167,9 +198,7 @@ export const deleteTeam = createAsyncThunk(
   }
 );
 
-/* ------------------------------------------------------------------ */
-/* Slice                                                             */
-/* ------------------------------------------------------------------ */
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const teamSlice = createSlice({
   name: "teams",
@@ -179,81 +208,77 @@ const teamSlice = createSlice({
       state.error = null;
     },
   },
- extraReducers: (builder) => {
-    // 1. Define explicit types for your internal helpers to fix the 'any' errors
+  extraReducers: (builder) => {
     const setActionLoading = (state: TeamState) => {
       state.actionLoading = true;
       state.error = null;
     };
 
-    const handleActionError = (state: TeamState, action: any) => {
+    const handleActionError = (state: TeamState, action: PayloadAction<string | undefined>) => {
       state.actionLoading = false;
-      state.error = action.payload as string;
+      state.error = action.payload ?? "An unexpected error occurred";
     };
 
     const upsertTeam = (state: TeamState, action: PayloadAction<ITeam>) => {
       state.actionLoading = false;
-      const idx = state.teams.findIndex((t: ITeam) => t.id === action.payload.id);
+      const teamData = action.payload; // Already normalized by Thunks
+      
+      const idx = state.teams.findIndex((t) => t.id === teamData.id);
       if (idx !== -1) {
-        state.teams[idx] = { ...state.teams[idx], ...action.payload };
+        state.teams[idx] = { ...state.teams[idx], ...teamData };
       } else {
-        state.teams.unshift(action.payload);
+        state.teams.unshift(teamData);
       }
     };
 
     builder
-      // 2. ALWAYS put .addCase calls BEFORE .addMatcher calls
-      .addCase(fetchTeams.pending, (state: TeamState) => {
+      .addCase(fetchTeams.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchTeams.fulfilled, (state: TeamState, action: PayloadAction<ITeam[]>) => {
+      .addCase(fetchTeams.fulfilled, (state, action) => {
         state.loading = false;
-        state.teams = action.payload;
+        state.teams = action.payload; 
       })
-      .addCase(fetchTeams.rejected, (state: TeamState, action: any) => {
+      .addCase(fetchTeams.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = action.payload ?? "Failed to load teams";
       })
       .addCase(deleteTeam.pending, setActionLoading)
-      .addCase(deleteTeam.fulfilled, (state: TeamState, action: PayloadAction<string>) => {
+      .addCase(deleteTeam.fulfilled, (state, action) => {
         state.actionLoading = false;
-        state.teams = state.teams.filter((t: ITeam) => t.id !== action.payload);
+        state.teams = state.teams.filter((t) => t.id !== action.payload);
       })
       .addCase(deleteTeam.rejected, handleActionError)
 
-      // 3. Matchers go at the end of the chain
       .addMatcher(
-        (action) =>
-          [
-            createTeam.pending.type,
-            updateTeam.pending.type,
-            addTeamMembers.pending.type,
-            removeTeamMembers.pending.type,
-            setTeamActiveStatus.pending.type,
-          ].includes(action.type),
+        isAnyOf(
+          createTeam.pending,
+          updateTeam.pending,
+          addTeamMembers.pending,
+          removeTeamMembers.pending,
+          setTeamActiveStatus.pending
+        ),
         setActionLoading
       )
       .addMatcher(
-        (action) =>
-          [
-            createTeam.fulfilled.type,
-            updateTeam.fulfilled.type,
-            addTeamMembers.fulfilled.type,
-            removeTeamMembers.fulfilled.type,
-            setTeamActiveStatus.fulfilled.type,
-          ].includes(action.type),
+        isAnyOf(
+          createTeam.fulfilled,
+          updateTeam.fulfilled,
+          addTeamMembers.fulfilled,
+          removeTeamMembers.fulfilled,
+          setTeamActiveStatus.fulfilled
+        ),
         upsertTeam
       )
       .addMatcher(
-        (action) =>
-          [
-            createTeam.rejected.type,
-            updateTeam.rejected.type,
-            addTeamMembers.rejected.type,
-            removeTeamMembers.rejected.type,
-            setTeamActiveStatus.rejected.type,
-          ].includes(action.type),
+        isAnyOf(
+          createTeam.rejected,
+          updateTeam.rejected,
+          addTeamMembers.rejected,
+          removeTeamMembers.rejected,
+          setTeamActiveStatus.rejected
+        ),
         handleActionError
       );
   },

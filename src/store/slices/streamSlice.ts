@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { apiPrivate } from "../../api/axios"; // ✅ adjust path
+import { apiPrivate } from "../../api/axios";
 
-/* ---------------- TYPES ---------------- */
+/* ─── TYPES ────────────────────────────────────────────────────────── */
 
 interface StreamFileState {
   blobUrl: string | null;
@@ -9,7 +9,16 @@ interface StreamFileState {
   error: string | null;
 }
 
-/* ---------------- INITIAL STATE ---------------- */
+interface KnownError {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
 
 const initialState: StreamFileState = {
   blobUrl: null,
@@ -17,29 +26,35 @@ const initialState: StreamFileState = {
   error: null,
 };
 
-/* ---------------- THUNK ---------------- */
+/* ─── THUNK ───────────────────────────────────────────────────────── */
 
-export const streamFile = createAsyncThunk(
+export const streamFile = createAsyncThunk<
+  string, // Return type (the blob URL)
+  string, // Argument type (the url to fetch)
+  { rejectValue: string }
+>(
   "streamFile/fetch",
-  async (url: string, thunkAPI) => {
+  async (url, thunkAPI) => {
     try {
-      const response = await apiPrivate.get("/user-indicators/stream-file", {
+      // ✅ responseType: "blob" tells axios to treat the response as binary
+      const response = await apiPrivate.get<Blob>("/user-indicators/stream-file", {
         params: { url },
-        responseType: "blob", // ✅ axios returns raw binary
+        responseType: "blob", 
       });
 
       // ✅ Create a local blob URL the browser can render inline
       const blobUrl = URL.createObjectURL(response.data);
       return blobUrl;
-    } catch (error: any) {
+    } catch (err) {
+      const error = err as KnownError;
       return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to stream file"
+        error.response?.data?.message || error.message || "Failed to stream file"
       );
     }
   }
 );
 
-/* ---------------- SLICE ---------------- */
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const streamFileSlice = createSlice({
   name: "streamFile",
@@ -62,7 +77,7 @@ const streamFileSlice = createSlice({
       .addCase(streamFile.pending, (state) => {
         state.loading = true;
         state.error = null;
-        // ✅ Revoke previous blob URL before loading a new one
+        // ✅ Revoke previous blob URL before loading a new one to prevent memory leaks
         if (state.blobUrl) {
           URL.revokeObjectURL(state.blobUrl);
           state.blobUrl = null;
@@ -74,7 +89,7 @@ const streamFileSlice = createSlice({
       })
       .addCase(streamFile.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = action.payload ?? "An unexpected error occurred while streaming";
       });
   },
 });

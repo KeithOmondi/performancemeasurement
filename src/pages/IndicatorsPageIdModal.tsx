@@ -396,24 +396,27 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   /* ── handlers ── */
 
   const handleReview = async () => {
-    if (reviewAction === "reject" && !comment.trim()) {
-      setCommentError("A reason is required when rejecting.");
-      return;
-    }
-    setCommentError("");
-    await dispatch(
-      superAdminReview({
-        id: indicator.id,
-        reviewData: {
-          action: reviewAction === "approve" ? "Approved" : "Rejected",
-          reason: comment.trim() || "Approved by Super Admin",
-          reviewerRole: "superadmin",
-        },
-      })
-    );
-    setReviewAction(null);
-    setComment("");
-  };
+  if (reviewAction === "reject" && !comment.trim()) {
+    setCommentError("A reason is required when rejecting.");
+    return;
+  }
+  setCommentError("");
+
+  await dispatch(
+    superAdminReview({
+      id: indicator.id,
+      reviewData: {
+        // Change 'action' to 'decision' to match ISuperAdminReviewPayload
+        decision: reviewAction === "approve" ? "Approved" : "Rejected",
+        reason: comment.trim() || "Approved by Super Admin",
+        // Note: reviewerRole was removed because it's not in your interface
+      },
+    })
+  );
+
+  setReviewAction(null);
+  setComment("");
+};
 
   const cancelReview = () => {
     setReviewAction(null);

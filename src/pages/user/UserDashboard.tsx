@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
   fetchMyAssignments, 
@@ -7,13 +7,28 @@ import {
 import { useNavigate } from "react-router-dom";
 import { 
   Loader2, Gavel, CheckCircle2, AlertTriangle, 
-  Clock, XCircle, Send, Scale
+  Clock, XCircle, Send, Scale, type LucideIcon
 } from "lucide-react";
+
+/* ============================================================
+    INTERFACES & TYPES
+============================================================ */
+interface IStat {
+  key: string;
+  value: number;
+}
+
+interface IStatusItem {
+  label: string;
+  color: string;
+  theme: string;
+  icon: LucideIcon;
+}
 
 /* ============================================================
     JUDICIARY COLOR PALETTE & MAPPING
 ============================================================ */
-const STATUS_CONFIG: Record<string, { color: string; theme: string; icon: any; label: string }> = {
+const STATUS_CONFIG: Record<string, IStatusItem> = {
   pending: { 
     label: "Pending",
     color: "#4B5563", 
@@ -56,7 +71,9 @@ const UserDashboard: React.FC = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
-  const [now, setNow] = useState(Date.now());
+  
+  // FIX: Passing a function to useState makes the initialization pure
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
@@ -64,31 +81,32 @@ const UserDashboard: React.FC = () => {
     return () => clearInterval(t);
   }, [dispatch]);
 
-  // Helper to map SQL backend status to UI theme keys
-  const getUIKey = (indicator: IIndicatorUI) => {
+  // FIX: useCallback prevents this function from changing on every render
+  const getUIKey = useCallback((indicator: IIndicatorUI) => {
     const status = indicator.status;
     if (status === "Completed") return "completed";
     if (status?.includes("Rejected")) return "rejected";
     if (status === "Partially Approved" || status === "Awaiting Super Admin") return "partially";
     if (status === "Awaiting Admin Approval") return "awaiting";
     
-    // Check overdue logic
     if (indicator.deadline && new Date(indicator.deadline).getTime() < now) {
         if (status !== "Completed") return "overdue";
     }
     return "pending";
-  };
+  }, [now]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {
       pending: 0, awaiting: 0, rejected: 0, partially: 0, completed: 0, overdue: 0
     };
+    
     myIndicators.forEach((i) => {
         const key = getUIKey(i);
         if (counts[key] !== undefined) counts[key]++;
     });
-    return Object.entries(counts).map(([key, value]) => ({ key, value }));
-  }, [myIndicators, now]);
+    
+    return Object.entries(counts).map(([key, value]) => ({ key, value })) as IStat[];
+  }, [myIndicators, getUIKey]); // getUIKey is now a stable dependency
 
   if (loading && myIndicators.length === 0) {
     return (
@@ -118,7 +136,7 @@ const UserDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* 6-BOX COMPACT GRID */}
+        {/* 6-BOX GRID */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           {stats.map(({ key, value }) => {
             const config = STATUS_CONFIG[key];
@@ -139,7 +157,6 @@ const UserDashboard: React.FC = () => {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* ASSIGNMENTS LIST */}
           <div className="lg:col-span-2 space-y-3">
             <div className="flex items-center justify-between px-1">
                <h2 className="text-[10px] font-black text-[#1E3A2B] uppercase tracking-widest flex items-center gap-2">
@@ -202,7 +219,6 @@ const UserDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* SIDEBAR ANALYTICS */}
           <div className="space-y-4">
             <div className="bg-white rounded-2xl border border-[#E5D5B0] p-6 shadow-sm text-center">
                 <h3 className="text-[9px] font-black text-[#C69214] uppercase tracking-widest mb-6">Execution Distribution</h3>
@@ -226,9 +242,9 @@ const UserDashboard: React.FC = () => {
 };
 
 /* ============================================================
-    PIE CHART (Matches STATUS_CONFIG colors)
+    PIE CHART (Strictly Typed)
 ============================================================ */
-const IndicatorStatusPieChart: React.FC<{ data: { key: string; value: number }[] }> = ({ data }) => {
+const IndicatorStatusPieChart: React.FC<{ data: IStat[] }> = ({ data }) => {
   const total = data.reduce((s, i) => s + i.value, 0);
   if (!total) return <div className="text-[10px] text-gray-300 py-10 italic font-bold uppercase tracking-widest">Registry Empty</div>;
 

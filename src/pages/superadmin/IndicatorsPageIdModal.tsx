@@ -14,11 +14,30 @@ import {
 } from "../../store/slices/indicatorSlice";
 import type { User as StaffUser } from "../../store/slices/user/userSlice";
 import FilePreviewModal from "../PreviewModal";
-import SuperAdminEditIndicator from "./SuperAdminEditIndicator"; // Import the new modal
+import SuperAdminEditIndicator from "./SuperAdminEditIndicator";
 import toast from "react-hot-toast";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 
 /* ─── TYPES & HELPERS ────────────────────────────────────────────────── */
+
+interface IActivity {
+  id?: string;
+  _id?: string;
+  description: string;
+}
+
+interface IObjective {
+  id?: string;
+  _id?: string;
+  title: string;
+  activities?: IActivity[];
+}
+
+interface IStrategicPlan {
+  id: string;
+  perspective?: string;
+  objectives?: IObjective[];
+}
 
 export interface Props {
   indicator: IIndicator | null | undefined;
@@ -52,17 +71,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const isProcessing = useAppSelector((s) => s.indicators.actionLoading);
   const detailLoading = useAppSelector((s) => s.indicators.detailLoading);
   const fullIndicator = useAppSelector((s) => s.indicators.selectedIndicator);
-  const { plans } = useAppSelector((s) => s.strategicPlan);
+  const { plans } = useAppSelector((s) => s.strategicPlan) as { plans: IStrategicPlan[] };
 
-  // Local UI State
-  const [decisionReason, setDecisionReason] = useState("");
-  const [progressOverride, setProgressOverride] = useState<number>(0);
-  const [nextDeadline, setNextDeadline] = useState<string>("");
-  const [showRejectReason, setShowRejectReason] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false); // NEW: State for Edit Modal
-
-  // STABILIZED DATA SOURCE
+  // Stabilized Data Source
   const ind = useMemo(() => {
     if (!fullIndicator || String(fullIndicator.id) !== String(indicator?.id)) {
       return indicator;
@@ -70,8 +81,37 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     return fullIndicator;
   }, [fullIndicator, indicator]);
 
-  /* ── Lifecycle ── */
+  // Derived Progress Calculation
+  const calculatedProgress = useMemo(() => {
+    const targetQ = ind?.activeQuarter ?? 1;
+    const activeSub = pickActiveSubmission(ind?.submissions ?? [], targetQ);
+    return activeSub ? activeSub.achievedValue : (ind?.currentTotalAchieved ?? 0);
+  }, [ind]);
 
+  /* ── Local UI State ── */
+  const [decisionReason, setDecisionReason] = useState("");
+  const [nextDeadline, setNextDeadline] = useState<string>("");
+  const [showRejectReason, setShowRejectReason] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [progressOverride, setProgressOverride] = useState<number>(calculatedProgress);
+
+  /**
+   * FIX: Cascading Render Error Solution
+   * We store the last processed ID in state. If the current indicator ID 
+   * doesn't match, we update the state synchronously during render.
+   */
+  const [prevId, setPrevId] = useState(ind?.id);
+
+  if (ind?.id !== prevId) {
+    setPrevId(ind?.id);
+    setDecisionReason("");
+    setNextDeadline("");
+    setShowRejectReason(false);
+    setProgressOverride(calculatedProgress);
+  }
+
+  /* ── Lifecycle ── */
   useEffect(() => {
     if (indicator?.id) {
       dispatch(fetchIndicatorById(indicator.id));
@@ -84,12 +124,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     }
   }, [dispatch, plans.length]);
 
-  useEffect(() => {
-    setDecisionReason("");
-    setNextDeadline("");
-    setShowRejectReason(false);
-  }, [indicator?.id]);
-
   /* ── Actions ── */
   const handleInternalClose = useCallback(() => {
     if (isClosingRef.current) return;
@@ -99,56 +133,27 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   const handleUnassign = async () => {
     if (!ind?.id) return;
-    const confirm = window.confirm("Are you sure you want to unassign this activity?");
-    if (!confirm) return;
+    const confirmUnassign = window.confirm("Are you sure you want to unassign this activity?");
+    if (!confirmUnassign) return;
 
     try {
       await dispatch(deleteIndicator(ind.id)).unwrap();
       toast.success("Activity successfully unassigned.");
       handleInternalClose();
-    } catch (err: any) {
-      toast.error(err || "Failed to unassign activity.");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to unassign activity.";
+      toast.error(errorMessage);
     }
   };
-
-  /* ── Derived Data ── */
-  const targetQ = ind?.activeQuarter ?? 1;
-  const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
-  const cycleLabel = ind?.reportingCycle === "Annual" ? "Annual" : `Q${targetQ}`;
-  
-  const activeSubmission = useMemo(() => 
-    pickActiveSubmission(ind?.submissions ?? [], targetQ), 
-  [ind?.submissions, targetQ]);
-
-  useEffect(() => {
-    if (activeSubmission) {
-      setProgressOverride(activeSubmission.achievedValue);
-    } else if (ind) {
-      setProgressOverride(ind.currentTotalAchieved ?? 0);
-    }
-  }, [activeSubmission, ind]);
-
-  const planContext = useMemo(() => {
-    if (!ind || plans.length === 0) return { perspective: "N/A", objectiveTitle: "N/A", activityDescription: "N/A" };
-    const plan = plans.find((p) => String(p.id ?? p.id) === String(ind.strategicPlanId));
-    const objective = plan?.objectives?.find((o: any) => String(o.id ?? o._id) === String(ind.objectiveId));
-    const activity = objective?.activities?.find((a: any) => String(a.id ?? a._id) === String(ind.activityId));
-    
-    return {
-      perspective: plan?.perspective ?? ind.perspective ?? "N/A",
-      objectiveTitle: objective?.title ?? ind.objectiveTitle ?? "Strategic Objective",
-      activityDescription: activity?.description ?? ind.activityDescription ?? "No description provided",
-    };
-  }, [ind, plans]);
-
-  const isCertified = activeSubmission?.reviewStatus === "Accepted" || ind?.status === "Completed";
-  const canAct = ind?.status === "Awaiting Super Admin" && !isCertified;
-  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
   const handleCertification = useCallback(async (decision: "Approved" | "Rejected") => {
     if (!ind?.id) return;
     if (decision === "Rejected" && !showRejectReason) return setShowRejectReason(true);
     if (decision === "Rejected" && !decisionReason.trim()) return toast.error("Please provide a reason for rejection.");
+    
+    const targetQ = ind?.activeQuarter ?? 1;
+    const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
+
     if (decision === "Approved" && ind.reportingCycle === "Quarterly" && !isLastQuarter && !nextDeadline) {
       return toast.error(`Please set the Q${targetQ + 1} deadline.`);
     }
@@ -165,10 +170,37 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       })).unwrap();
       toast.success(decision === "Approved" ? "Certified successfully" : "Returned for correction");
       handleInternalClose();
-    } catch (err: any) {
-      toast.error(err?.message ?? "Certification failed.");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Certification failed.";
+      toast.error(errorMessage);
     }
-  }, [dispatch, decisionReason, ind, isLastQuarter, nextDeadline, handleInternalClose, progressOverride, showRejectReason, targetQ]);
+  }, [dispatch, decisionReason, ind, nextDeadline, handleInternalClose, progressOverride, showRejectReason]);
+
+  /* ── Derived Data for UI ── */
+  const targetQ = ind?.activeQuarter ?? 1;
+  const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
+  const cycleLabel = ind?.reportingCycle === "Annual" ? "Annual" : `Q${targetQ}`;
+  
+  const activeSubmission = useMemo(() => 
+    pickActiveSubmission(ind?.submissions ?? [], targetQ), 
+  [ind?.submissions, targetQ]);
+
+  const planContext = useMemo(() => {
+    if (!ind || plans.length === 0) return { perspective: "N/A", objectiveTitle: "N/A", activityDescription: "N/A" };
+    const plan = plans.find((p) => String(p.id) === String(ind.strategicPlanId));
+    const objective = plan?.objectives?.find((o) => String(o.id || o._id) === String(ind.objectiveId));
+    const activity = objective?.activities?.find((a) => String(a.id || a._id) === String(ind.activityId));
+    
+    return {
+      perspective: plan?.perspective ?? ind.perspective ?? "N/A",
+      objectiveTitle: objective?.title ?? ind.objectiveTitle ?? "Strategic Objective",
+      activityDescription: activity?.description ?? ind.activityDescription ?? "No description provided",
+    };
+  }, [ind, plans]);
+
+  const isCertified = activeSubmission?.reviewStatus === "Accepted" || ind?.status === "Completed";
+  const canAct = ind?.status === "Awaiting Super Admin" && !isCertified;
+  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
   if (!ind) {
     return (
@@ -181,7 +213,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   return (
     <div className="bg-[#fcfcf7] w-full h-full flex flex-col shadow-2xl overflow-hidden font-sans relative">
-      {/* Header */}
       <header className="bg-[#1d3331] px-8 py-7 flex justify-between items-start shrink-0 border-b-4 border-[#c2a336]">
         <div className="flex items-start gap-5">
           <div className={`h-12 w-12 rounded-xl flex items-center justify-center border mt-1 ${
@@ -207,7 +238,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
         <button onClick={handleInternalClose} className="text-white/30 hover:text-white p-2 bg-white/5 rounded-lg transition-colors"><X size={20} /></button>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-white">
         {detailLoading && !fullIndicator ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
@@ -216,7 +246,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto py-8 px-8 space-y-12">
-            {/* Stats Grid */}
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-6 border-b border-slate-100 pb-8">
               {[
                 { label: "Weight", val: `${ind.weight}%` },
@@ -231,12 +260,10 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               ))}
             </section>
 
-            {/* Assignee & Management Section */}
             <section className="space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em]">KPI Management</h3>
                 <div className="flex items-center gap-4">
-                    {/* NEW: Edit KPI Button */}
                     <button 
                         onClick={() => setIsEditModalOpen(true)}
                         className="flex items-center gap-2 text-[#1d3331] hover:text-[#c2a336] text-[10px] font-black uppercase transition-colors"
@@ -274,7 +301,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               )}
             </section>
 
-            {/* Submission & Evidence */}
             {activeSubmission && (
               <section className="space-y-6">
                 <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em] border-b border-slate-100 pb-3">
@@ -305,7 +331,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </section>
             )}
 
-            {/* Verdict Card */}
             <div className={`p-8 rounded-[2.5rem] shadow-2xl space-y-8 border-b-[10px] transition-all duration-500 ${
               isCertified ? "bg-emerald-900 border-emerald-500" : "bg-[#1d3331] border-[#c2a336]"
             } text-white`}>
@@ -358,10 +383,8 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
         )}
       </main>
 
-      {/* Modals & Overlays */}
       {previewFile && <FilePreviewModal url={previewFile.url} fileName={previewFile.name} onClose={() => setPreviewFile(null)} />}
       
-      {/* NEW: Edit KPI Modal */}
       {isEditModalOpen && (
         <SuperAdminEditIndicator 
           indicator={ind} 

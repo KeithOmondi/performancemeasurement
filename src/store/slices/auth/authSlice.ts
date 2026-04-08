@@ -1,11 +1,11 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { authService } from "./authService";
+import { api } from "../../../api/axios";
 
-// Session hint key — a lightweight flag (NOT the token)
-// Set on login, cleared on logout. Used to skip checkAuth for guests.
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
 export const SESSION_KEY = "hasSession";
 
-interface User {
+export interface User {
   id: string;
   name: string;
   email: string;
@@ -22,97 +22,118 @@ interface AuthState {
   message: string;
 }
 
+interface KnownError {
+  response?: { data?: { message?: string } };
+  message?: string;
+}
+
+/* ─── SERVICE ──────────────────────────────────────────────────────── */
+
+const authService = {
+  requestOTP: async (pjNumber: string) => {
+    const response = await api.post<{ message: string }>("/auth/request-otp", { pjNumber });
+    return response.data;
+  },
+  login: async (loginData: { pjNumber: string; otp: string }) => {
+    const response = await api.post<{ user: User }>("/auth/login", loginData);
+    return response.data;
+  },
+  register: async (userData: Partial<User>) => {
+    const response = await api.post<{ message: string }>("/auth/register", userData);
+    return response.data;
+  },
+  logout: async () => {
+    const response = await api.post<{ message: string }>("/auth/logout");
+    return response.data;
+  },
+  checkAuth: async () => {
+    const response = await api.get<{ user: User }>("/auth/refresh");
+    return response.data;
+  },
+};
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
+
 const hasSessionHint = !!localStorage.getItem(SESSION_KEY);
 
 const initialState: AuthState = {
   user: null,
   isLoading: false,
-  // Only block UI with spinner if there's a session worth checking
   isCheckingAuth: hasSessionHint,
   otpSent: false,
   isError: false,
   message: "",
 };
 
-export const requestOTP = createAsyncThunk(
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
+
+const getErr = (err: unknown) => {
+  const error = err as KnownError;
+  return error.response?.data?.message || error.message || "An error occurred";
+};
+
+export const requestOTP = createAsyncThunk<{ message: string }, string, { rejectValue: string }>(
   "auth/requestOTP",
-  async (pjNumber: string, thunkAPI) => {
+  async (pjNumber, { rejectWithValue }) => {
     try {
       return await authService.requestOTP(pjNumber);
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const login = createAsyncThunk(
+export const login = createAsyncThunk<{ user: User }, { pjNumber: string; otp: string }, { rejectValue: string }>(
   "auth/login",
-  async (loginData: { pjNumber: string; otp: string }, thunkAPI) => {
+  async (loginData, { rejectWithValue }) => {
     try {
       const data = await authService.login(loginData);
-      // Mark session as active — skips checkAuth network call next load
       localStorage.setItem(SESSION_KEY, "true");
       return data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const register = createAsyncThunk(
+export const register = createAsyncThunk<{ message: string }, Partial<User>, { rejectValue: string }>(
   "auth/register",
-  async (userData: any, thunkAPI) => {
+  async (userData, { rejectWithValue }) => {
     try {
       return await authService.register(userData);
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const logout = createAsyncThunk(
+export const logout = createAsyncThunk<void, void, { rejectValue: string }>(
   "auth/logout",
-  async (_, thunkAPI) => {
+  async (_, { rejectWithValue }) => {
     try {
-      const data = await authService.logout();
-      // Clear session hint so next load skips the auth check
+      await authService.logout();
       localStorage.removeItem(SESSION_KEY);
-      return data;
-    } catch (error: any) {
+    } catch (error) {
       localStorage.removeItem(SESSION_KEY);
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-// Runs once on app load — only if session hint exists
-export const checkAuth = createAsyncThunk(
+export const checkAuth = createAsyncThunk<{ user: User }, void, { rejectValue: string }>(
   "auth/checkAuth",
-  async (_, thunkAPI) => {
-    // No hint → skip the network round-trip entirely
-    if (!localStorage.getItem(SESSION_KEY)) {
-      return thunkAPI.rejectWithValue("no session");
-    }
-
+  async (_, { rejectWithValue }) => {
+    if (!localStorage.getItem(SESSION_KEY)) return rejectWithValue("no session");
     try {
       return await authService.checkAuth();
-    } catch (error: any) {
-      // Stale hint (cookie expired) — clean up
+    } catch (error) {
       localStorage.removeItem(SESSION_KEY);
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+      return rejectWithValue(getErr(error));
     }
   }
 );
+
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 export const authSlice = createSlice({
   name: "auth",
@@ -127,11 +148,10 @@ export const authSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // ── Request OTP ────────────────────────────────────────────────────
+      // OTP
       .addCase(requestOTP.pending, (state) => {
         state.isLoading = true;
         state.isError = false;
-        state.message = "";
       })
       .addCase(requestOTP.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -141,15 +161,10 @@ export const authSlice = createSlice({
       .addCase(requestOTP.rejected, (state, action) => {
         state.isLoading = false;
         state.isError = true;
-        state.message = action.payload as string;
+        state.message = action.payload ?? "Failed to send OTP";
       })
 
-      // ── Login ──────────────────────────────────────────────────────────
-      .addCase(login.pending, (state) => {
-        state.isLoading = true;
-        state.isError = false;
-        state.message = "";
-      })
+      // Login
       .addCase(login.fulfilled, (state, action) => {
         state.isLoading = false;
         state.user = action.payload.user;
@@ -158,36 +173,10 @@ export const authSlice = createSlice({
       .addCase(login.rejected, (state, action) => {
         state.isLoading = false;
         state.isError = true;
-        state.message = action.payload as string;
+        state.message = action.payload ?? "Login failed";
       })
 
-      // ── Register ───────────────────────────────────────────────────────
-      .addCase(register.pending, (state) => {
-        state.isLoading = true;
-        state.isError = false;
-      })
-      .addCase(register.fulfilled, (state) => {
-        state.isLoading = false;
-        state.message = "User registered successfully.";
-      })
-      .addCase(register.rejected, (state, action) => {
-        state.isLoading = false;
-        state.isError = true;
-        state.message = action.payload as string;
-      })
-
-      // ── Logout ─────────────────────────────────────────────────────────
-      .addCase(logout.fulfilled, (state) => {
-        state.user = null;
-        state.otpSent = false;
-        state.message = "";
-      })
-      .addCase(logout.rejected, (state) => {
-        // Clear user locally even if the server call fails
-        state.user = null;
-      })
-
-      // ── Check Auth (on page refresh) ───────────────────────────────────
+      // Check Auth
       .addCase(checkAuth.pending, (state) => {
         state.isCheckingAuth = true;
       })
@@ -197,6 +186,15 @@ export const authSlice = createSlice({
       })
       .addCase(checkAuth.rejected, (state) => {
         state.isCheckingAuth = false;
+        state.user = null;
+      })
+
+      // Logout
+      .addCase(logout.fulfilled, (state) => {
+        state.user = null;
+        state.otpSent = false;
+      })
+      .addCase(logout.rejected, (state) => {
         state.user = null;
       });
   },

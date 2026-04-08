@@ -1,29 +1,84 @@
 import { useState, useMemo, useEffect } from "react";
 import {
-  X, Loader2, Hash, Percent,
-  ChevronRight, ShieldAlert, Activity,
-  User, Users, CalendarRange, CalendarDays,
-  Info, Crown, Plus, Check, ChevronDown,
+  X,
+  Loader2,
+  Hash,
+  Percent,
+  ChevronRight,
+  ShieldAlert,
+  Activity,
+  User,
+  Users,
+  CalendarRange,
+  CalendarDays,
+  Info,
+  Crown,
+  Plus,
+  Check,
+  ChevronDown,
 } from "lucide-react";
 import { useAppSelector, useAppDispatch } from "../../store/hooks";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import { fetchTeams, createTeam } from "../../store/slices/teamSlice";
-import { createIndicator, type IIndicator } from "../../store/slices/indicatorSlice";
+import {
+  createIndicator,
+  type IIndicator,
+} from "../../store/slices/indicatorSlice";
 import toast from "react-hot-toast";
+import type {
+  InlineCreateTeamProps,
+  IUser,
+  MetricCardProps,
+  SuperAdminAssignProps,
+  UserMultiSelectProps,
+} from "../../types/types";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────── */
+/* ─── Local domain shapes ────────────────────────────────────────────── */
 
-export interface AssignPrefill {
-  strategicPlanId?: string;
-  objectiveId?: string;
-  activityId?: string;
-  assigneeId?: string;
-  assignmentType?: "Individual" | "Team";
+interface IActivity {
+  id: string;
+  description: string;
 }
 
-/* ─── SUB-COMPONENTS ─────────────────────────────────────────────────── */
+interface IObjective {
+  id: string;
+  title: string;
+  weight?: number;
+  unit?: string;
+  activities: IActivity[];
+}
 
-const MetricCard = ({ label, icon, value, onChange, disabled, isString }: any) => (
+interface IPlan {
+  id: string;
+  perspective: string;
+  objectives: IObjective[];
+}
+
+interface ITeamMember {
+  id: string;
+  name: string;
+}
+
+interface ITeam {
+  id: string;
+  name: string;
+  isActive: boolean;
+  members: ITeamMember[];
+  memberCount?: number;
+  teamLead?: { name: string };
+  leadName?: string;
+}
+
+/* ─── MetricCard ─────────────────────────────────────────────────────── */
+
+const MetricCard = ({
+  label,
+  icon,
+  value,
+  onChange,
+  disabled,
+  isString,
+}: MetricCardProps) => (
   <div className="group bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md hover:border-[#1a3a32]/20 transition-all duration-300">
     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
       {icon} {label}
@@ -32,13 +87,15 @@ const MetricCard = ({ label, icon, value, onChange, disabled, isString }: any) =
       type={isString ? "text" : "number"}
       className="w-full bg-transparent text-xl font-bold text-[#1a3a32] outline-none placeholder:text-slate-200 disabled:opacity-30"
       value={value}
-      onChange={(e) => onChange(isString ? e.target.value : Number(e.target.value))}
+      onChange={(e) =>
+        onChange(isString ? e.target.value : Number(e.target.value))
+      }
       disabled={disabled}
     />
   </div>
 );
 
-/* ─── INLINE MULTI-SELECT ────────────────────────────────────────────── */
+/* ─── UserMultiSelect ────────────────────────────────────────────────── */
 
 const UserMultiSelect = ({
   label,
@@ -46,13 +103,7 @@ const UserMultiSelect = ({
   selectedIds,
   excludeIds = [],
   onChange,
-}: {
-  label: string;
-  allUsers: any[];
-  selectedIds: string[];
-  excludeIds?: string[];
-  onChange: (ids: string[]) => void;
-}) => {
+}: UserMultiSelectProps) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -61,18 +112,18 @@ const UserMultiSelect = ({
       allUsers.filter(
         (u) =>
           u.isActive &&
-          !excludeIds.includes(u._id ?? u.id) &&
+          !excludeIds.includes((u.id ?? u.id) as string) &&
           (u.name.toLowerCase().includes(search.toLowerCase()) ||
-            u.email?.toLowerCase().includes(search.toLowerCase()))
+            u.email?.toLowerCase().includes(search.toLowerCase())),
       ),
-    [allUsers, excludeIds, search]
+    [allUsers, excludeIds, search],
   );
 
   const toggle = (id: string) =>
     onChange(
       selectedIds.includes(id)
         ? selectedIds.filter((i) => i !== id)
-        : [...selectedIds, id]
+        : [...selectedIds, id],
     );
 
   return (
@@ -80,13 +131,21 @@ const UserMultiSelect = ({
       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
         {label}
       </label>
+
+      {/* FIX: type="button" prevents any parent form submission */}
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-sm outline-none"
       >
-        <span className={selectedIds.length ? "font-bold text-[#1a3a32]" : "text-slate-400"}>
-          {selectedIds.length ? `${selectedIds.length} member(s) selected` : "Select members..."}
+        <span
+          className={
+            selectedIds.length ? "font-bold text-[#1a3a32]" : "text-slate-400"
+          }
+        >
+          {selectedIds.length
+            ? `${selectedIds.length} member(s) selected`
+            : "Select members..."}
         </span>
         <ChevronDown
           size={16}
@@ -107,15 +166,17 @@ const UserMultiSelect = ({
           </div>
           <div className="max-h-44 overflow-y-auto">
             {available.length === 0 ? (
-              <p className="text-center text-xs text-slate-400 py-6">No staff found</p>
+              <p className="text-center text-xs text-slate-400 py-6">
+                No staff found
+              </p>
             ) : (
               available.map((u) => {
-                const id = u._id ?? u.id;
+                const id = (u._id ?? u.id) as string;
                 return (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => toggle(id)}
+                    onClick={(e) => { e.stopPropagation(); toggle(id); }}
                     className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
                   >
                     <div className="flex items-center gap-3">
@@ -128,8 +189,12 @@ const UserMultiSelect = ({
                           .substring(0, 2)}
                       </div>
                       <div className="text-left">
-                        <p className="text-xs font-bold text-[#1a3a32]">{u.name}</p>
-                        <p className="text-[10px] text-slate-400">{u.title || u.role}</p>
+                        <p className="text-xs font-bold text-[#1a3a32]">
+                          {u.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          {u.title ?? u.role}
+                        </p>
                       </div>
                     </div>
                     {selectedIds.includes(id) && (
@@ -153,7 +218,10 @@ const UserMultiSelect = ({
                 className="flex items-center gap-1.5 bg-[#1a3a32] text-white text-[10px] font-bold px-3 py-1.5 rounded-full"
               >
                 {u.name}
-                <button type="button" onClick={() => toggle(id)}>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggle(id); }}
+                >
                   <X size={11} className="hover:text-red-300" />
                 </button>
               </div>
@@ -165,17 +233,13 @@ const UserMultiSelect = ({
   );
 };
 
-/* ─── INLINE CREATE-TEAM FORM ────────────────────────────────────────── */
+/* ─── InlineCreateTeam ───────────────────────────────────────────────── */
 
 const InlineCreateTeam = ({
   users,
   onCreated,
   onCancel,
-}: {
-  users: any[];
-  onCreated: (teamId: string) => void;
-  onCancel: () => void;
-}) => {
+}: InlineCreateTeamProps) => {
   const dispatch = useAppDispatch();
   const { actionLoading } = useAppSelector((s) => s.teams);
 
@@ -184,28 +248,41 @@ const InlineCreateTeam = ({
   const [teamLead, setTeamLead] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
 
-  const handleCreate = async () => {
+  // FIX: async handler is not triggered by any form submit — purely onClick
+  const handleCreate = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
     if (!name.trim()) return toast.error("Team name is required");
     if (!teamLead) return toast.error("Please select a team lead");
 
     try {
       const result = await dispatch(
-        createTeam({ name: name.trim(), description, teamLead, members: memberIds })
+        createTeam({
+          name: name.trim(),
+          description,
+          teamLead,
+          members: memberIds,
+        }),
       ).unwrap();
       toast.success(`Team "${result.name}" created`);
       onCreated(result.id);
-    } catch (err: any) {
-      toast.error(err || "Failed to create team");
+    } catch (err: unknown) {
+      const errorMessage =
+        typeof err === "string" ? err : "Failed to create team";
+      toast.error(errorMessage);
     }
   };
 
   return (
-    <div className="mt-4 p-5 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4">
+    <div
+      className="mt-4 p-5 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4"
+      onClick={(e) => e.stopPropagation()} // FIX: prevent clicks bubbling to parent
+    >
       <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest flex items-center gap-2">
         <Users size={12} /> New Team
       </p>
 
-      {/* Team name */}
       <input
         placeholder="Team name..."
         value={name}
@@ -213,7 +290,6 @@ const InlineCreateTeam = ({
         className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-[#1a3a32] outline-none"
       />
 
-      {/* Description */}
       <input
         placeholder="Description (optional)..."
         value={description}
@@ -221,29 +297,29 @@ const InlineCreateTeam = ({
         className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm text-[#1a3a32] outline-none"
       />
 
-      {/* Team lead */}
       <div className="space-y-1">
         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">
           <Crown size={10} className="text-amber-400" /> Team Lead
         </label>
         <select
           value={teamLead}
-          onChange={(e) => setTeamLead(e.target.value)}
+          onChange={(e) => { e.stopPropagation(); setTeamLead(e.target.value); }}
           className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm font-bold text-[#1a3a32] outline-none"
         >
           <option value="">Select lead...</option>
-          {users.filter((u) => u.isActive).map((u) => {
-            const id = u._id ?? u.id;
-            return (
-              <option key={id} value={id}>
-                {u.name} — {u.title || u.role}
-              </option>
-            );
-          })}
+          {users
+            .filter((u) => u.isActive)
+            .map((u) => {
+              const id = (u._id ?? u.id) as string;
+              return (
+                <option key={id} value={id}>
+                  {u.name} — {u.title ?? u.role}
+                </option>
+              );
+            })}
         </select>
       </div>
 
-      {/* Members multi-select */}
       <UserMultiSelect
         label="Members"
         allUsers={users}
@@ -252,11 +328,10 @@ const InlineCreateTeam = ({
         onChange={setMemberIds}
       />
 
-      {/* Actions */}
       <div className="flex gap-3 pt-1">
         <button
           type="button"
-          onClick={onCancel}
+          onClick={(e) => { e.stopPropagation(); onCancel(); }}
           className="flex-1 py-2.5 border border-slate-200 bg-white rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50"
         >
           Cancel
@@ -270,7 +345,9 @@ const InlineCreateTeam = ({
           {actionLoading ? (
             <Loader2 className="animate-spin" size={14} />
           ) : (
-            <><Plus size={12} /> Create & Select</>
+            <>
+              <Plus size={12} /> Create & Select
+            </>
           )}
         </button>
       </div>
@@ -278,36 +355,55 @@ const InlineCreateTeam = ({
   );
 };
 
-/* ─── MAIN COMPONENT ─────────────────────────────────────────────────── */
-
-interface SuperAdminAssignProps {
-  onClose: () => void;
-  prefill?: AssignPrefill;
-}
+/* ─── SuperAdminAssign ───────────────────────────────────────────────── */
 
 const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
   const dispatch = useAppDispatch();
-  const { plans }                               = useAppSelector((s) => s.strategicPlan);
-  const { users, isLoading: usersLoading }      = useAppSelector((s) => s.users);
-  const { teams, loading: teamsLoading }        = useAppSelector((s) => s.teams);
-  const { actionLoading: createLoading }        = useAppSelector((s) => s.indicators);
 
-  const [selectedPerspectiveId, setSelectedPerspectiveId] = useState(prefill?.strategicPlanId ?? "");
-  const [selectedObjectiveId, setSelectedObjectiveId]     = useState(prefill?.objectiveId ?? "");
-  const [selectedActivityId, setSelectedActivityId]       = useState(prefill?.activityId ?? "");
-  const [assignmentType, setAssignmentType] = useState<"Individual" | "Team">(prefill?.assignmentType ?? "Individual");
-  const [reportingCycle, setReportingCycle] = useState<"Quarterly" | "Annual">("Quarterly");
-  const [weight, setWeight] = useState<number>(5);
-  const [unit, setUnit]     = useState<string>("%");
-  const [selectedUserId, setSelectedUserId] = useState<string>(
-    prefill?.assignmentType === "Individual" ? (prefill?.assigneeId ?? "") : ""
+  const { plans } = useAppSelector(
+    (s) => s.strategicPlan as { plans: IPlan[] },
   );
-  const [selectedTeamId, setSelectedTeamId] = useState<string>(
-    prefill?.assignmentType === "Team" ? (prefill?.assigneeId ?? "") : ""
+  const { users, isLoading: usersLoading } = useAppSelector(
+    (s) => s.users as { users: IUser[]; isLoading: boolean },
   );
-  const [deadline, setDeadline]           = useState("");
-  const [instructions]                    = useState("");
-  const [showCreateTeam, setShowCreateTeam] = useState(false); // ← new
+  const { teams, loading: teamsLoading } = useAppSelector(
+    (s) =>
+      s.teams as {
+        teams: ITeam[];
+        loading: boolean;
+        actionLoading: boolean;
+      },
+  );
+  const { actionLoading: createLoading } = useAppSelector(
+    (s) => s.indicators as { actionLoading: boolean },
+  );
+
+  const [selectedPlanId, setSelectedPlanId] = useState(
+    prefill?.strategicPlanId ?? "",
+  );
+  const [selectedObjectiveId, setSelectedObjectiveId] = useState(
+    prefill?.objectiveId ?? "",
+  );
+  const [selectedActivityId, setSelectedActivityId] = useState(
+    prefill?.activityId ?? "",
+  );
+
+  const [assignmentType, setAssignmentType] = useState<"Individual" | "Team">(
+    prefill?.assignmentType ?? "Individual",
+  );
+  const [reportingCycle, setReportingCycle] = useState<"Quarterly" | "Annual">(
+    "Quarterly",
+  );
+
+  const [selectedUserId, setSelectedUserId] = useState(
+    prefill?.assignmentType === "Individual" ? (prefill?.assigneeId ?? "") : "",
+  );
+  const [selectedTeamId, setSelectedTeamId] = useState(
+    prefill?.assignmentType === "Team" ? (prefill?.assigneeId ?? "") : "",
+  );
+
+  const [deadline, setDeadline] = useState("");
+  const [showCreateTeam, setShowCreateTeam] = useState(false);
 
   useEffect(() => {
     dispatch(fetchAllUsers());
@@ -315,41 +411,59 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
   }, [dispatch]);
 
   const selectedPlan = useMemo(
-    () => plans.find((p) => p.id === selectedPerspectiveId),
-    [plans, selectedPerspectiveId]
+    () => plans.find((p) => p.id === selectedPlanId),
+    [plans, selectedPlanId],
   );
 
   const selectedObjective = useMemo(
-    () => selectedPlan?.objectives.find((obj) => obj.id === selectedObjectiveId),
-    [selectedPlan, selectedObjectiveId]
+    () =>
+      selectedPlan?.objectives.find((obj) => obj.id === selectedObjectiveId),
+    [selectedPlan, selectedObjectiveId],
   );
+
+  const baseWeight = selectedObjective?.weight ?? 5;
+  const baseUnit = selectedObjective?.unit ?? "%";
+
+  const [weightOverride, setWeightOverride] = useState<number | null>(null);
+  const [unitOverride, setUnitOverride] = useState<string | null>(null);
+  const [overrideObjectiveId, setOverrideObjectiveId] = useState<string>("");
+
+  const effectiveObjectiveId = selectedObjective?.id ?? "";
+
+  const displayWeight =
+    overrideObjectiveId === effectiveObjectiveId && weightOverride !== null
+      ? weightOverride
+      : baseWeight;
+  const displayUnit =
+    overrideObjectiveId === effectiveObjectiveId && unitOverride !== null
+      ? unitOverride
+      : baseUnit;
+
+  const handleWeightChange = (val: string | number) => {
+    setWeightOverride(Number(val));
+    setOverrideObjectiveId(effectiveObjectiveId);
+  };
+
+  const handleUnitChange = (val: string | number) => {
+    setUnitOverride(String(val));
+    setOverrideObjectiveId(effectiveObjectiveId);
+  };
 
   const selectedTeam = useMemo(
     () => teams.find((t) => t.id === selectedTeamId),
-    [teams, selectedTeamId]
+    [teams, selectedTeamId],
   );
 
-  useEffect(() => {
-    if (selectedObjective) {
-      setWeight(selectedObjective.weight || 5);
-      setUnit(selectedObjective.unit || "%");
-    }
-  }, [selectedObjective]);
+  const hasPrefill = !!(
+    prefill?.strategicPlanId ||
+    prefill?.objectiveId ||
+    prefill?.activityId
+  );
 
-  useEffect(() => {
-    if (prefill?.strategicPlanId && !selectedPerspectiveId)
-      setSelectedPerspectiveId(prefill.strategicPlanId);
-  }, [plans, prefill]);
+  const activeTeams = useMemo(() => teams.filter((t) => t.isActive), [teams]);
 
-  useEffect(() => {
-    if (prefill?.objectiveId && selectedPerspectiveId && !selectedObjectiveId)
-      setSelectedObjectiveId(prefill.objectiveId);
-  }, [selectedPerspectiveId, prefill]);
-
-  useEffect(() => {
-    if (prefill?.activityId && selectedObjectiveId && !selectedActivityId)
-      setSelectedActivityId(prefill.activityId);
-  }, [selectedObjectiveId, prefill]);
+  const isAssigneeSelected =
+    assignmentType === "Individual" ? !!selectedUserId : !!selectedTeamId;
 
   const handleModeSwitch = (mode: "Individual" | "Team") => {
     setAssignmentType(mode);
@@ -358,51 +472,68 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
     setShowCreateTeam(false);
   };
 
-  const isAssigneeSelected =
-    assignmentType === "Individual" ? !!selectedUserId : !!selectedTeamId;
+  const handleAssign = async (e: React.MouseEvent) => {
+    // FIX: always stop propagation on the submit action
+    e.preventDefault();
+    e.stopPropagation();
 
-  const handleAssign = async () => {
     if (!isAssigneeSelected) return toast.error("Please select an assignee");
-    if (!deadline)           return toast.error("Deadline required");
+    if (!deadline) return toast.error("Deadline required");
     if (!selectedActivityId) return toast.error("Please select an activity");
 
     const payload: Partial<IIndicator> = {
-      strategicPlanId: selectedPerspectiveId,
-      objectiveId:     selectedObjectiveId,
-      activityId:      selectedActivityId,
-      assignee:        assignmentType === "Individual" ? selectedUserId : selectedTeamId,
-      assignmentType:  assignmentType === "Individual" ? "User" : "Team",
+      strategicPlanId: selectedPlanId,
+      objectiveId: selectedObjectiveId,
+      activityId: selectedActivityId,
+      assignee:
+        assignmentType === "Individual" ? selectedUserId : selectedTeamId,
+      assignmentType: assignmentType === "Individual" ? "User" : "Team",
       reportingCycle,
       status: "Pending",
-      weight,
-      unit,
+      weight: displayWeight,
+      unit: displayUnit,
       deadline,
-      instructions,
+      instructions: "",
     };
 
     try {
       await dispatch(createIndicator(payload)).unwrap();
       toast.success(`${reportingCycle} KPI assigned successfully`);
       onClose();
-    } catch (error: any) {
-      toast.error(error || "Failed to create assignment");
+    } catch (error: unknown) {
+      const errorMessage =
+        typeof error === "string" ? error : "Failed to create assignment";
+      toast.error(errorMessage);
     }
   };
 
-  const hasPrefill = !!(prefill?.strategicPlanId || prefill?.objectiveId || prefill?.activityId);
-  const activeTeams = teams.filter((t) => t.isActive);
+  // FIX: clicking the backdrop overlay calls onClose, but
+  // clicks on the modal panel itself must not bubble up to the backdrop
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) onClose();
+  };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#0d1a17]/60 z-[500] backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="bg-[#f8fafb] w-full max-w-4xl h-[90vh] rounded-[1rem] shadow-2xl flex overflow-hidden border border-white/20">
+    // FIX: backdrop click handler only fires when clicking the overlay itself
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-[#0d1a17]/60 z-[500] backdrop-blur-md p-4 animate-in fade-in duration-300"
+      onClick={handleBackdropClick}
+    >
+      {/* FIX: stop all click propagation at the modal panel level */}
+      <div
+        className="bg-[#f8fafb] w-full max-w-4xl h-[90vh] rounded-[1rem] shadow-2xl flex overflow-hidden border border-white/20"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
 
-          {/* Header */}
+          {/* ── Header ── */}
           <div className="px-10 py-6 border-b border-slate-100 flex justify-between items-center">
             <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
               <span>Strategic Registry</span>
               <ChevronRight size={12} />
-              <span className="text-[#d9b929]">{reportingCycle} deployment</span>
+              <span className="text-[#d9b929]">
+                {reportingCycle} deployment
+              </span>
               {hasPrefill && (
                 <>
                   <ChevronRight size={12} />
@@ -412,29 +543,40 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                 </>
               )}
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClose(); }}
+              className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+            >
               <X size={20} className="text-slate-400" />
             </button>
           </div>
 
+          {/* ── Prefill notice ── */}
           {hasPrefill && (
             <div className="mx-10 mt-6 p-3 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
               <p className="text-[11px] text-emerald-800 font-bold">
-                Activity context was pre-loaded from your selection. Review and complete the remaining fields below.
+                Activity context was pre-loaded from your selection. Review and
+                complete the remaining fields below.
               </p>
             </div>
           )}
 
+          {/* ── Scrollable body ── */}
           <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
 
-            {/* 01: Strategic Mapping */}
+            {/* ── 01: Strategic Mapping ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">01</span>
+                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
+                  01
+                </span>
                 Strategic Mapping
               </h3>
+
               <div className="grid gap-4">
+                {/* Plan */}
                 <div className="relative">
                   {prefill?.strategicPlanId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -443,22 +585,28 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   )}
                   <select
                     className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none transition-colors ${
-                      prefill?.strategicPlanId ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-100"
+                      prefill?.strategicPlanId
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-slate-50 border-slate-100"
                     }`}
-                    value={selectedPerspectiveId}
+                    value={selectedPlanId}
                     onChange={(e) => {
-                      setSelectedPerspectiveId(e.target.value);
+                      e.stopPropagation();
+                      setSelectedPlanId(e.target.value);
                       setSelectedObjectiveId("");
                       setSelectedActivityId("");
                     }}
                   >
                     <option value="">Select Perspective...</option>
                     {plans.map((p) => (
-                      <option key={p.id} value={p.id}>{p.perspective}</option>
+                      <option key={p.id} value={p.id}>
+                        {p.perspective}
+                      </option>
                     ))}
                   </select>
                 </div>
 
+                {/* Objective */}
                 <div className="relative">
                   {prefill?.objectiveId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -467,19 +615,28 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   )}
                   <select
                     className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50 transition-colors ${
-                      prefill?.objectiveId ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-100"
+                      prefill?.objectiveId
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-slate-50 border-slate-100"
                     }`}
                     value={selectedObjectiveId}
-                    onChange={(e) => { setSelectedObjectiveId(e.target.value); setSelectedActivityId(""); }}
-                    disabled={!selectedPerspectiveId}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedObjectiveId(e.target.value);
+                      setSelectedActivityId("");
+                    }}
+                    disabled={!selectedPlanId}
                   >
                     <option value="">Select Primary Objective...</option>
                     {selectedPlan?.objectives.map((obj) => (
-                      <option key={obj.id} value={obj.id}>{obj.title}</option>
+                      <option key={obj.id} value={obj.id}>
+                        {obj.title}
+                      </option>
                     ))}
                   </select>
                 </div>
 
+                {/* Activity */}
                 <div className="relative">
                   {prefill?.activityId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -488,39 +645,76 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   )}
                   <select
                     className={`w-full border-2 border-dashed rounded-xl p-4 text-sm font-bold text-[#1a3a32] outline-none disabled:opacity-50 transition-colors ${
-                      prefill?.activityId ? "bg-emerald-50 border-emerald-300" : "bg-[#1a3a32]/5 border-[#1a3a32]/10"
+                      prefill?.activityId
+                        ? "bg-emerald-50 border-emerald-300"
+                        : "bg-[#1a3a32]/5 border-[#1a3a32]/10"
                     }`}
                     value={selectedActivityId}
-                    onChange={(e) => setSelectedActivityId(e.target.value)}
+                    onChange={(e) => { e.stopPropagation(); setSelectedActivityId(e.target.value); }}
                     disabled={!selectedObjectiveId}
                   >
                     <option value="">Connect Specific Activity...</option>
                     {selectedObjective?.activities.map((act) => (
-                      <option key={act.id} value={act.id}>{act.description}</option>
+                      <option key={act.id} value={act.id}>
+                        {act.description}
+                      </option>
                     ))}
                   </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <MetricCard label="Weighting" icon={<Hash size={12} />} value={weight} onChange={setWeight} disabled={!selectedObjectiveId} />
-                <MetricCard label="Unit" icon={<Percent size={12} />} value={unit} onChange={setUnit} disabled={!selectedObjectiveId} isString />
+                <MetricCard
+                  label="Weighting"
+                  icon={<Hash size={12} />}
+                  value={displayWeight}
+                  onChange={handleWeightChange}
+                  disabled={!selectedObjectiveId}
+                />
+                <MetricCard
+                  label="Unit"
+                  icon={<Percent size={12} />}
+                  value={displayUnit}
+                  onChange={handleUnitChange}
+                  disabled={!selectedObjectiveId}
+                  isString
+                />
               </div>
             </div>
 
-            {/* 02: Deployment Logistics */}
+            {/* ── 02: Deployment Logistics ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">02</span>
+                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
+                  02
+                </span>
                 Deployment Logistics
               </h3>
 
-              <div className={`p-4 rounded-2xl border flex items-start gap-4 transition-colors duration-500 ${reportingCycle === "Annual" ? "bg-amber-50 border-amber-100" : "bg-blue-50 border-blue-100"}`}>
-                <div className={`p-2 rounded-xl ${reportingCycle === "Annual" ? "bg-amber-500 text-white" : "bg-blue-500 text-white"}`}>
+              <div
+                className={`p-4 rounded-2xl border flex items-start gap-4 transition-colors duration-500 ${
+                  reportingCycle === "Annual"
+                    ? "bg-amber-50 border-amber-100"
+                    : "bg-blue-50 border-blue-100"
+                }`}
+              >
+                <div
+                  className={`p-2 rounded-xl ${
+                    reportingCycle === "Annual"
+                      ? "bg-amber-500 text-white"
+                      : "bg-blue-500 text-white"
+                  }`}
+                >
                   <Info size={16} />
                 </div>
                 <div>
-                  <p className={`text-[10px] font-black uppercase tracking-wider ${reportingCycle === "Annual" ? "text-amber-700" : "text-blue-700"}`}>
+                  <p
+                    className={`text-[10px] font-black uppercase tracking-wider ${
+                      reportingCycle === "Annual"
+                        ? "text-amber-700"
+                        : "text-blue-700"
+                    }`}
+                  >
                     {reportingCycle} Logic Enabled
                   </p>
                   <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
@@ -532,17 +726,27 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                {/* Review Cycle */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Review Cycle</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    Review Cycle
+                  </label>
                   <div className="flex p-1 bg-slate-100 rounded-2xl">
-                    {[
-                      { id: "Quarterly", icon: <CalendarRange size={14} /> },
-                      { id: "Annual",    icon: <CalendarDays size={14} /> },
-                    ].map((opt) => (
+                    {(
+                      [
+                        { id: "Quarterly", icon: <CalendarRange size={14} /> },
+                        { id: "Annual", icon: <CalendarDays size={14} /> },
+                      ] as const
+                    ).map((opt) => (
                       <button
                         key={opt.id}
-                        onClick={() => setReportingCycle(opt.id as any)}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${reportingCycle === opt.id ? "bg-white text-[#1a3a32] shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+                        type="button" // FIX: explicit type="button"
+                        onClick={(e) => { e.stopPropagation(); setReportingCycle(opt.id); }}
+                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${
+                          reportingCycle === opt.id
+                            ? "bg-white text-[#1a3a32] shadow-sm"
+                            : "text-slate-400 hover:text-slate-600"
+                        }`}
                       >
                         {opt.icon} {opt.id}
                       </button>
@@ -550,17 +754,27 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   </div>
                 </div>
 
+                {/* Command Mode */}
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Command Mode</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    Command Mode
+                  </label>
                   <div className="flex p-1 bg-slate-100 rounded-2xl">
-                    {[
-                      { id: "Individual", icon: <User size={14} /> },
-                      { id: "Team",       icon: <Users size={14} /> },
-                    ].map((opt) => (
+                    {(
+                      [
+                        { id: "Individual", icon: <User size={14} /> },
+                        { id: "Team", icon: <Users size={14} /> },
+                      ] as const
+                    ).map((opt) => (
                       <button
                         key={opt.id}
-                        onClick={() => handleModeSwitch(opt.id as any)}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${assignmentType === opt.id ? "bg-white text-[#1a3a32] shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+                        type="button" // FIX: explicit type="button"
+                        onClick={(e) => { e.stopPropagation(); handleModeSwitch(opt.id); }}
+                        className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${
+                          assignmentType === opt.id
+                            ? "bg-white text-[#1a3a32] shadow-sm"
+                            : "text-slate-400 hover:text-slate-600"
+                        }`}
                       >
                         {opt.icon} {opt.id}
                       </button>
@@ -569,104 +783,151 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                 </div>
               </div>
 
-              {/* ── Individual assignee ── */}
+              {/* Individual picker */}
               {assignmentType === "Individual" && (
                 <div className="relative">
                   <div className="absolute right-4 top-9 z-10">
-                    {usersLoading && <Loader2 className="animate-spin text-[#1a3a32]" size={18} />}
+                    {usersLoading && (
+                      <Loader2
+                        className="animate-spin text-[#1a3a32]"
+                        size={18}
+                      />
+                    )}
                   </div>
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2 block">
                     Judicial Personnel
                   </label>
                   <select
                     className={`w-full border rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none ${
-                      prefill?.assignmentType === "Individual" && prefill?.assigneeId
+                      prefill?.assignmentType === "Individual" &&
+                      prefill?.assigneeId
                         ? "bg-emerald-50 border-emerald-200"
                         : "bg-white border-slate-200"
                     }`}
                     value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    onChange={(e) => { e.stopPropagation(); setSelectedUserId(e.target.value); }}
                     disabled={usersLoading}
                   >
-                    <option value="">{usersLoading ? "Decrypting Directory..." : "Select staff member..."}</option>
-                    {users.filter((u) => u.isActive).map((u) => (
-                      <option key={u._id} value={u._id}>
-                        {u.name} — {u.title || u.role}
-                      </option>
-                    ))}
+                    <option value="">
+                      {usersLoading
+                        ? "Decrypting Directory..."
+                        : "Select staff member..."}
+                    </option>
+                    {users
+                      .filter((u) => u.isActive)
+                      .map((u) => (
+                        <option
+                          key={(u._id ?? u.id) as string}
+                          value={(u._id ?? u.id) as string}
+                        >
+                          {u.name} — {u.title ?? u.role}
+                        </option>
+                      ))}
                   </select>
 
-                  {selectedUserId && (() => {
-                    const u = users.find((u) => u._id === selectedUserId);
-                    return u ? (
-                      <div className="mt-3 flex items-center gap-3 p-3 bg-[#1a3a32]/5 rounded-2xl border border-[#1a3a32]/10">
-                        <div className="w-8 h-8 rounded-full bg-[#1a3a32] text-white flex items-center justify-center text-[10px] font-bold">
-                          {u.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2)}
+                  {selectedUserId &&
+                    (() => {
+                      const u = users.find(
+                        (user) => (user._id ?? user.id) === selectedUserId,
+                      );
+                      return u ? (
+                        <div className="mt-3 flex items-center gap-3 p-3 bg-[#1a3a32]/5 rounded-2xl border border-[#1a3a32]/10">
+                          <div className="w-8 h-8 rounded-full bg-[#1a3a32] text-white flex items-center justify-center text-[10px] font-bold">
+                            {u.name
+                              .split(" ")
+                              .map((n: string) => n[0])
+                              .join("")
+                              .toUpperCase()
+                              .substring(0, 2)}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-[#1a3a32]">
+                              {u.name}
+                            </p>
+                            <p className="text-[10px] text-slate-400">
+                              {u.email}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setSelectedUserId(""); }}
+                            className="ml-auto"
+                          >
+                            <X
+                              size={14}
+                              className="text-slate-400 hover:text-red-500"
+                            />
+                          </button>
                         </div>
-                        <div>
-                          <p className="text-xs font-bold text-[#1a3a32]">{u.name}</p>
-                          <p className="text-[10px] text-slate-400">{u.email}</p>
-                        </div>
-                        <button onClick={() => setSelectedUserId("")} className="ml-auto">
-                          <X size={14} className="text-slate-400 hover:text-red-500" />
-                        </button>
-                      </div>
-                    ) : null;
-                  })()}
+                      ) : null;
+                    })()}
                 </div>
               )}
 
-              {/* ── Team assignee ── */}
+              {/* Team picker */}
               {assignmentType === "Team" && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                       Select Team
                     </label>
-                    {/* Toggle inline create form */}
                     {!showCreateTeam && (
                       <button
-                        type="button"
-                        onClick={() => setShowCreateTeam(true)}
-                        className="flex items-center gap-1.5 text-[10px] font-black text-[#1a3a32] uppercase tracking-widest hover:text-emerald-600 transition-colors"
-                      >
-                        <Plus size={12} /> New Team
-                      </button>
+  type="button" // Ensure this is explicitly "button"
+  onClick={(e) => { 
+    e.preventDefault(); 
+    e.stopPropagation(); 
+    setSelectedTeamId(""); 
+  }}
+>
+  <X size={14} />
+</button>
                     )}
                   </div>
 
                   {teamsLoading ? (
                     <div className="flex items-center gap-2 p-4 bg-slate-50 rounded-2xl">
-                      <Loader2 className="animate-spin text-[#1a3a32]" size={16} />
-                      <span className="text-[11px] text-slate-400 font-bold">Loading teams...</span>
+                      <Loader2
+                        className="animate-spin text-[#1a3a32]"
+                        size={16}
+                      />
+                      <span className="text-[11px] text-slate-400 font-bold">
+                        Loading teams...
+                      </span>
                     </div>
                   ) : activeTeams.length === 0 && !showCreateTeam ? (
                     <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl text-center space-y-2">
-                      <p className="text-[11px] text-amber-700 font-bold">No active teams found.</p>
+                      <p className="text-[11px] text-amber-700 font-bold">
+                        No active teams found.
+                      </p>
                       <button
                         type="button"
-                        onClick={() => setShowCreateTeam(true)}
+                        onClick={(e) => { e.stopPropagation(); setShowCreateTeam(true); }}
                         className="text-[10px] font-black text-[#1a3a32] underline underline-offset-2"
                       >
                         Create one right here →
                       </button>
                     </div>
                   ) : !showCreateTeam ? (
+                    // FIX: this is the key fix — stopPropagation on the team select onChange
                     <select
                       className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
                       value={selectedTeamId}
-                      onChange={(e) => setSelectedTeamId(e.target.value)}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        setSelectedTeamId(e.target.value);
+                      }}
                     >
                       <option value="">Select a team...</option>
                       {activeTeams.map((t) => (
                         <option key={t.id} value={t.id}>
-                          {t.name} ({t.members?.length ?? t.memberCount ?? 0} members)
+                          {t.name} ({t.members?.length ?? t.memberCount ?? 0}{" "}
+                          members)
                         </option>
                       ))}
                     </select>
                   ) : null}
 
-                  {/* Inline team creation form */}
                   {showCreateTeam && (
                     <InlineCreateTeam
                       users={users}
@@ -678,7 +939,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                     />
                   )}
 
-                  {/* Selected team preview */}
                   {selectedTeam && !showCreateTeam && (
                     <div className="p-4 bg-[#1a3a32]/5 rounded-2xl border border-[#1a3a32]/10 space-y-3">
                       <div className="flex items-center justify-between">
@@ -687,18 +947,30 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                             <Users size={14} />
                           </div>
                           <div>
-                            <p className="text-xs font-bold text-[#1a3a32]">{selectedTeam.name}</p>
-                            <p className="text-[10px] text-slate-400">{selectedTeam.members?.length} members will be notified</p>
+                            <p className="text-xs font-bold text-[#1a3a32]">
+                              {selectedTeam.name}
+                            </p>
+                            <p className="text-[10px] text-slate-400">
+                              {selectedTeam.members?.length} members will be
+                              notified
+                            </p>
                           </div>
                         </div>
-                        <button onClick={() => setSelectedTeamId("")}>
-                          <X size={14} className="text-slate-400 hover:text-red-500" />
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setSelectedTeamId(""); }}
+                        >
+                          <X
+                            size={14}
+                            className="text-slate-400 hover:text-red-500"
+                          />
                         </button>
                       </div>
                       <div className="flex items-center gap-2 pt-2 border-t border-[#1a3a32]/10">
                         <Crown size={11} className="text-amber-400" />
                         <span className="text-[10px] text-slate-500 font-bold">
-                          Lead: {selectedTeam.teamLead?.name ?? selectedTeam.leadName}
+                          Lead:{" "}
+                          {selectedTeam.teamLead?.name ?? selectedTeam.leadName}
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -708,7 +980,12 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                             title={m.name}
                             className="w-6 h-6 rounded-full bg-[#1a3a32]/60 text-white border border-white flex items-center justify-center text-[8px] font-bold"
                           >
-                            {m.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2)}
+                            {m.name
+                              .split(" ")
+                              .map((n: string) => n[0])
+                              .join("")
+                              .toUpperCase()
+                              .substring(0, 2)}
                           </div>
                         ))}
                         {selectedTeam.members.length > 6 && (
@@ -723,44 +1000,57 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               )}
             </div>
 
-            {/* 03: Authorization */}
+            {/* ── 03: Authorization ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">03</span>
+                <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
+                  03
+                </span>
                 Authorization
               </h3>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <ShieldAlert size={14} className="text-[#d9b929]" />
-                  {reportingCycle === "Annual" ? "Final Fiscal Deadline" : "Q1 Submission Deadline"}
+                  {reportingCycle === "Annual"
+                    ? "Final Fiscal Deadline"
+                    : "Q1 Submission Deadline"}
                 </label>
                 <input
                   type="date"
                   value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
+                  onChange={(e) => { e.stopPropagation(); setDeadline(e.target.value); }}
                   className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
                 />
               </div>
             </div>
           </div>
 
-          {/* Footer */}
+          {/* ── Footer ── */}
           <div className="p-8 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
             <button
-              onClick={onClose}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClose(); }}
               className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-widest transition-colors"
             >
               Discard
             </button>
             <button
-              disabled={!selectedActivityId || !isAssigneeSelected || !deadline || createLoading}
+              type="button" // FIX: explicit type="button" on the submit action
+              disabled={
+                !selectedActivityId ||
+                !isAssigneeSelected ||
+                !deadline ||
+                createLoading
+              }
               onClick={handleAssign}
               className="bg-[#1a3a32] text-[#d9b929] px-10 py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-3 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-30 shadow-xl"
             >
               {createLoading ? (
                 <Loader2 className="animate-spin" size={18} />
               ) : (
-                <><Activity size={18} /> Authorize {reportingCycle} Deployment</>
+                <>
+                  <Activity size={18} /> Authorize {reportingCycle} Deployment
+                </>
               )}
             </button>
           </div>

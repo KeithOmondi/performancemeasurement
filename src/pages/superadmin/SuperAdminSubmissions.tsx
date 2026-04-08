@@ -8,6 +8,17 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { fetchSubmissionsQueue, fetchIndicators } from '../../store/slices/indicatorSlice';
 import IndicatorsPageIdModal from './IndicatorsPageIdModal';
 
+/* --- TYPES --- */
+
+type StatusFilter = "PENDING" | "ALL" | "ARCHIVED";
+type CycleFilter = "ALL" | "QUARTERLY" | "ANNUAL";
+
+interface StatusConfig {
+  label: string;
+  style: string;
+  dot: string;
+}
+
 const SuperAdminSubmissions = () => {
   const dispatch = useAppDispatch();
   
@@ -18,8 +29,8 @@ const SuperAdminSubmissions = () => {
   // 2. Local State
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"PENDING" | "ALL" | "ARCHIVED">("PENDING");
-  const [cycleFilter, setCycleFilter] = useState<"ALL" | "QUARTERLY" | "ANNUAL">("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("PENDING");
+  const [cycleFilter, setCycleFilter] = useState<CycleFilter>("ALL");
 
   // 3. Initial Load
   useEffect(() => {
@@ -30,7 +41,6 @@ const SuperAdminSubmissions = () => {
   // 4. Enhanced Data Processing
   const processedQueue = useMemo(() => {
     return queue.map((qItem) => {
-      // UPDATED: Changed _id to id
       const parentIndicator = indicators.find((ind) => ind.id === qItem.id);
       
       return {
@@ -60,7 +70,7 @@ const SuperAdminSubmissions = () => {
       if (cycleFilter === "QUARTERLY" && item.reportingCycle !== "Quarterly") return false;
       if (cycleFilter === "ANNUAL" && item.reportingCycle !== "Annual") return false;
 
-      // Search Logic - UPDATED: Changed _id to id
+      // Search Logic
       return (
         item.indicatorTitle?.toLowerCase().includes(searchLower) ||
         item.resolvedName?.toLowerCase().includes(searchLower) ||
@@ -69,7 +79,6 @@ const SuperAdminSubmissions = () => {
     });
   }, [processedQueue, searchTerm, statusFilter, cycleFilter]);
 
-  // UPDATED: Changed _id to id
   const activeIndicator = indicators.find((ind) => ind.id === selectedId);
 
   return (
@@ -111,21 +120,17 @@ const SuperAdminSubmissions = () => {
         {/* DOUBLE FILTER ROW */}
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-2 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/60">
-            {[
-              { id: "PENDING", label: "Awaiting Certification" },
-              { id: "ALL", label: "All Items" },
-              { id: "ARCHIVED", label: "Finalized Records" }
-            ].map((tab) => (
+            {(["PENDING", "ALL", "ARCHIVED"] as const).map((id) => (
               <button
-                key={tab.id}
-                onClick={() => setStatusFilter(tab.id as any)}
+                key={id}
+                onClick={() => setStatusFilter(id)}
                 className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                  statusFilter === tab.id 
+                  statusFilter === id 
                   ? "bg-[#1d3331] text-white shadow-md" 
                   : "text-slate-400 hover:text-[#1d3331]"
                 }`}
               >
-                {tab.label}
+                {id === "PENDING" ? "Awaiting Certification" : id === "ALL" ? "All Items" : "Finalized Records"}
               </button>
             ))}
           </div>
@@ -274,7 +279,7 @@ const SuperAdminSubmissions = () => {
 const StatusBadge = ({ status }: { status: string }) => {
   const s = status?.toLowerCase();
   
-  const config: any = {
+  const config: Record<string, StatusConfig> = {
     'awaiting super admin': { 
       label: 'Admin Verified', 
       style: 'bg-emerald-50 text-emerald-700 border-emerald-200',

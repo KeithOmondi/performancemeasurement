@@ -1,6 +1,8 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
 interface IDashboardStats {
   general: {
     total: number;
@@ -24,25 +26,45 @@ interface DashboardState {
   error: string | null;
 }
 
+interface KnownError {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
+
 const initialState: DashboardState = {
   stats: null,
   loading: false,
   error: null,
 };
 
-export const fetchDashboardStats = createAsyncThunk(
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
+
+export const fetchDashboardStats = createAsyncThunk<
+  IDashboardStats,
+  void,
+  { rejectValue: string }
+>(
   "dashboard/fetchStats",
-  async (_: void, { rejectWithValue }) => {
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get("/indicators/dashboard-stats");
-      return response.data.data as IDashboardStats;
-    } catch (error: any) {
+      const response = await apiPrivate.get<{ data: IDashboardStats }>("/indicators/dashboard-stats");
+      return response.data.data;
+    } catch (error) {
+      const err = error as KnownError;
       return rejectWithValue(
-        error.response?.data?.message || "Failed to load dashboard stats"
+        err.response?.data?.message || err.message || "Failed to load dashboard stats"
       );
     }
   }
 );
+
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const dashboardSlice = createSlice({
   name: "dashboard",
@@ -67,7 +89,7 @@ const dashboardSlice = createSlice({
       )
       .addCase(fetchDashboardStats.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = action.payload ?? "An unexpected error occurred";
       });
   },
 });

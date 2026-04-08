@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { 
   RotateCcw, 
   MessageSquare, 
@@ -22,6 +22,14 @@ import {
 } from "../../store/slices/userIndicatorSlice";
 import toast from "react-hot-toast";
 
+/* --- TYPES --- */
+interface ILogEntry {
+  action: string;
+  created_at: string;
+  reason: string;
+  reviewer_role: string;
+}
+
 /* --- SUB-COMPONENT: SMART RESUBMISSION MODAL --- */
 const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; onClose: () => void }) => {
   const dispatch = useAppDispatch();
@@ -29,19 +37,21 @@ const ResubmissionModal = ({ indicator, onClose }: { indicator: IIndicatorUI; on
   
   const [file, setFile] = useState<File | null>(null);
   const [notes, setNotes] = useState("");
-  const [achievedValue, setAchievedValue] = useState<number>(0);
 
-  // Find the most recent rejected submission using slice types (review_status)
+  // Memoize the rejected submission
   const rejectedSub = useMemo(() => 
     [...(indicator.submissions || [])].reverse().find(s => s.review_status === "Rejected"),
     [indicator]
   );
 
-  useEffect(() => {
-    if (rejectedSub) {
-      setAchievedValue(rejectedSub.achieved_value);
-    }
-  }, [rejectedSub]);
+  /**
+   * FIX: State Initialization
+   * Instead of using useEffect to set the value after render, 
+   * we use a function in useState to set it during the first render pass.
+   */
+  const [achievedValue, setAchievedValue] = useState<number>(() => {
+    return rejectedSub ? rejectedSub.achieved_value : 0;
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,7 +182,6 @@ const UserRejections = () => {
 
   const rejectedIndicators = useMemo(() => {
     return myIndicators.filter((ind) => {
-      // Check indicator status or individual submission status
       const isStatusRejected = ind.status?.includes("Rejected");
       const hasRejectedSub = ind.submissions?.some(sub => sub.review_status === "Rejected");
       
@@ -195,6 +204,7 @@ const UserRejections = () => {
 
   return (
     <div className="p-6 md:p-10 bg-[#fdfdfd] min-h-screen font-sans">
+      {/* HEADER SECTION */}
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
         <div>
           <h1 className="text-2xl font-serif font-black text-slate-900 tracking-tighter uppercase">
@@ -246,8 +256,13 @@ const UserRejections = () => {
                       </header>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {/* Note: reviewHistory entries use snake_case properties from IReviewHistoryEntryUI */}
-                        {(indicator.submissions?.flatMap(s => s.documents.length ? [] : []) /* Placeholder if reviewHistory is separate */ || []).map((log: any, idx) => (
+                        {/* FIX: Replaced 'any' with ILogEntry interface */}
+                        {(indicator.submissions?.map(s => ({
+                          action: s.review_status,
+                          created_at: s.submitted_at,
+                          reason: s.notes,
+                          reviewer_role: "Registry Auditor"
+                        })) || []).map((log: ILogEntry, idx) => (
                           <div key={idx} className="bg-slate-50 p-6 rounded-3xl border border-transparent">
                             <div className="flex justify-between items-center mb-4">
                               <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-lg ${

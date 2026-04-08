@@ -1,29 +1,52 @@
 import { api } from "../../../api/axios";
 
-const requestOTP = async (pjNumber: string) => {
-  const response = await api.post("/auth/request-otp", { pjNumber });
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  pjNumber: string;
+  role: "user" | "admin" | "superadmin" | "examiner";
+}
+
+export interface AuthResponse {
+  user: User;
+  message?: string;
+}
+
+export interface StatusResponse {
+  message: string;
+}
+
+/* ─── SERVICE ──────────────────────────────────────────────────────── */
+
+const requestOTP = async (pjNumber: string): Promise<StatusResponse> => {
+  const response = await api.post<StatusResponse>("/auth/request-otp", { pjNumber });
   return response.data;
 };
 
-const login = async (loginData: { pjNumber: string; otp: string }) => {
-  const response = await api.post("/auth/login", loginData);
+const login = async (loginData: { pjNumber: string; otp: string }): Promise<AuthResponse> => {
+  const response = await api.post<AuthResponse>("/auth/login", loginData);
   return response.data;
 };
 
-const register = async (userData: any) => {
-  const response = await api.post("/auth/register", userData);
+const register = async (userData: Partial<User>): Promise<StatusResponse> => {
+  const response = await api.post<StatusResponse>("/auth/register", userData);
   return response.data;
 };
 
-const logout = async () => {
-  const response = await api.post("/auth/logout");
+const logout = async (): Promise<StatusResponse> => {
+  const response = await api.post<StatusResponse>("/auth/logout");
   return response.data;
 };
 
-// Calls /auth/refresh — backend validates the refresh cookie
-// and returns the user object + sets a new access cookie
-const checkAuth = async () => {
-  const response = await api.get("/auth/refresh");
+/**
+ * Validates the refresh cookie via backend.
+ * Returns the user object and sets a new access cookie.
+ */
+const checkAuth = async (): Promise<AuthResponse> => {
+  const response = await api.get<AuthResponse>("/auth/refresh");
   return response.data;
 };
 

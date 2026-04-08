@@ -2,11 +2,24 @@ import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/tool
 import * as strategicPlanService from "./strategicPlanService";
 import { type IStrategicPlan } from "./strategicPlanService";
 
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
 interface IStrategicPlanState {
   plans: IStrategicPlan[];
   loading: boolean;
   error: string | null;
 }
+
+interface KnownError {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
 
 const initialState: IStrategicPlanState = {
   plans: [],
@@ -14,64 +27,78 @@ const initialState: IStrategicPlanState = {
   error: null,
 };
 
-export const getAllStrategicPlans = createAsyncThunk(
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
+
+const getErr = (err: unknown): string => {
+  const error = err as KnownError;
+  return error.response?.data?.message || error.message || "An unexpected error occurred";
+};
+
+export const getAllStrategicPlans = createAsyncThunk<
+  IStrategicPlan[],
+  void,
+  { rejectValue: string }
+>(
   "strategicPlan/getAll",
-  async (_, thunkAPI) => {
+  async (_, { rejectWithValue }) => {
     try {
       const response = await strategicPlanService.fetchAllStrategicPlans();
       return response.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const createPlan = createAsyncThunk(
+export const createPlan = createAsyncThunk<
+  IStrategicPlan,
+  Partial<IStrategicPlan>,
+  { rejectValue: string }
+>(
   "strategicPlan/create",
-  async (planData: Partial<IStrategicPlan>, thunkAPI) => {
+  async (planData, { rejectWithValue }) => {
     try {
       const response = await strategicPlanService.createStrategicPlan(planData);
       return response.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const updatePlan = createAsyncThunk(
+export const updatePlan = createAsyncThunk<
+  IStrategicPlan,
+  { id: string; planData: Partial<IStrategicPlan> },
+  { rejectValue: string }
+>(
   "strategicPlan/update",
-  async (
-    { id, planData }: { id: string; planData: Partial<IStrategicPlan> },
-    thunkAPI
-  ) => {
+  async ({ id, planData }, { rejectWithValue }) => {
     try {
       const response = await strategicPlanService.updateStrategicPlan(id, planData);
       return response.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
 
-export const deletePlan = createAsyncThunk(
+export const deletePlan = createAsyncThunk<
+  string,
+  string,
+  { rejectValue: string }
+>(
   "strategicPlan/delete",
-  async (id: string, thunkAPI) => {
+  async (id, { rejectWithValue }) => {
     try {
       await strategicPlanService.deleteStrategicPlan(id);
       return id;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || error.message
-      );
+    } catch (error) {
+      return rejectWithValue(getErr(error));
     }
   }
 );
+
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const strategicPlanSlice = createSlice({
   name: "strategicPlan",
@@ -81,40 +108,34 @@ const strategicPlanSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      .addCase(
-        getAllStrategicPlans.fulfilled,
-        (state, action: PayloadAction<IStrategicPlan[]>) => {
-          state.loading = false;
-          state.plans = action.payload;
+      // Fetch All
+      .addCase(getAllStrategicPlans.fulfilled, (state, action) => {
+        state.loading = false;
+        state.plans = action.payload;
+      })
+      
+      // Create
+      .addCase(createPlan.fulfilled, (state, action) => {
+        state.loading = false;
+        state.plans.unshift(action.payload);
+      })
+      
+      // Update
+      .addCase(updatePlan.fulfilled, (state, action) => {
+        state.loading = false;
+        const index = state.plans.findIndex((p) => p.id === action.payload.id);
+        if (index !== -1) {
+          state.plans[index] = action.payload;
         }
-      )
-      .addCase(
-        createPlan.fulfilled,
-        (state, action: PayloadAction<IStrategicPlan>) => {
-          state.loading = false;
-          state.plans.unshift(action.payload);
-        }
-      )
-      .addCase(
-        updatePlan.fulfilled,
-        (state, action: PayloadAction<IStrategicPlan>) => {
-          state.loading = false;
-          // Updated to look for .id
-          const index = state.plans.findIndex((p) => p.id === action.payload.id);
-          if (index !== -1) {
-            state.plans[index] = action.payload;
-          }
-        }
-      )
-      .addCase(
-        deletePlan.fulfilled,
-        (state, action: PayloadAction<string>) => {
-          state.loading = false;
-          // Updated to filter by .id
-          state.plans = state.plans.filter((p) => p.id !== action.payload);
-        }
-      )
-      // Matchers for Loading and Error states
+      })
+      
+      // Delete
+      .addCase(deletePlan.fulfilled, (state, action) => {
+        state.loading = false;
+        state.plans = state.plans.filter((p) => p.id !== action.payload);
+      })
+
+      /* ─── MATCHERS ─── */
       .addMatcher(
         (action) => action.type.endsWith("/pending"),
         (state) => {
@@ -124,9 +145,9 @@ const strategicPlanSlice = createSlice({
       )
       .addMatcher(
         (action) => action.type.endsWith("/rejected"),
-        (state, action: PayloadAction<string>) => {
+        (state, action: PayloadAction<string | undefined>) => {
           state.loading = false;
-          state.error = action.payload || "An error occurred";
+          state.error = action.payload ?? "An unexpected error occurred";
         }
       );
   },

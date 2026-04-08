@@ -5,7 +5,7 @@ import {
 } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
-/* ---------------- TYPES ---------------- */
+/* ─── TYPES ────────────────────────────────────────────────────────── */
 
 export interface IDocument {
   id: string;
@@ -74,8 +74,6 @@ export interface IAdminIndicator {
   adminOverallComments?: string;
 }
 
-/* ---------------- STATE ---------------- */
-
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
   pendingAdminReview: IAdminIndicator[];
@@ -85,6 +83,8 @@ interface IAdminIndicatorState {
   isReviewing: boolean;
   error: string | null;
 }
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
 
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
@@ -96,12 +96,8 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
-/* ---------------- HELPERS ---------------- */
+/* ─── HELPERS ──────────────────────────────────────────────────────── */
 
-/**
- * Derives pendingAdminReview and resubmittedWork from allAssignments.
- * Called after any mutation to allAssignments to keep queues in sync.
- */
 const refreshQueues = (state: IAdminIndicatorState) => {
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) => ind.status === "Awaiting Admin Approval"
@@ -114,9 +110,6 @@ const refreshQueues = (state: IAdminIndicatorState) => {
   );
 };
 
-/**
- * Upserts an indicator into allAssignments (updates in place, or prepends if new).
- */
 const upsertIntoAssignments = (
   state: IAdminIndicatorState,
   updated: IAdminIndicator
@@ -129,78 +122,93 @@ const upsertIntoAssignments = (
   }
 };
 
-/* ---------------- THUNKS ---------------- */
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
 
-export const fetchAllAdminIndicators = createAsyncThunk(
-  "adminIndicators/fetchAll",
-  async (
-    params: { status?: string; search?: string } | undefined,
-    { rejectWithValue }
-  ) => {
-    try {
-      const { status, search } = params || {};
-      const query = new URLSearchParams();
-      if (status && status !== "all") query.set("status", status);
-      if (search) query.set("search", search);
+// Define a common error shape for the catch blocks
+interface KnownError {
+  response?: { data?: { message?: string } };
+  message?: string;
+}
 
-      const response = await apiPrivate.get(`/admin/all?${query.toString()}`);
-      return (response.data?.data ?? []) as IAdminIndicator[];
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.message ?? "Failed to load indicators"
-      );
-    }
+export const fetchAllAdminIndicators = createAsyncThunk<
+  IAdminIndicator[],
+  { status?: string; search?: string } | undefined,
+  { rejectValue: string }
+>("adminIndicators/fetchAll", async (params, { rejectWithValue }) => {
+  try {
+    const { status, search } = params || {};
+    const query = new URLSearchParams();
+    if (status && status !== "all") query.set("status", status);
+    if (search) query.set("search", search);
+
+    const response = await apiPrivate.get<{ data: IAdminIndicator[] }>(
+      `/admin/all?${query.toString()}`
+    );
+    return response.data?.data ?? [];
+  } catch (error) {
+    const err = error as KnownError;
+    return rejectWithValue(
+      err.response?.data?.message ?? err.message ?? "Failed to load indicators"
+    );
   }
-);
+});
 
-export const fetchResubmittedIndicators = createAsyncThunk(
-  "adminIndicators/fetchResubmitted",
-  async (_, { rejectWithValue }) => {
-    try {
-      const response = await apiPrivate.get("/admin/resubmitted");
-      return (response.data?.data ?? []) as IAdminIndicator[];
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.message ?? "Failed to load resubmissions"
-      );
-    }
+export const fetchResubmittedIndicators = createAsyncThunk<
+  IAdminIndicator[],
+  void,
+  { rejectValue: string }
+>("adminIndicators/fetchResubmitted", async (_, { rejectWithValue }) => {
+  try {
+    const response = await apiPrivate.get<{ data: IAdminIndicator[] }>(
+      "/admin/resubmitted"
+    );
+    return response.data?.data ?? [];
+  } catch (error) {
+    const err = error as KnownError;
+    return rejectWithValue(
+      err.response?.data?.message ?? err.message ?? "Failed to load resubmissions"
+    );
   }
-);
+});
 
-export const getIndicatorByIdAdmin = createAsyncThunk(
-  "adminIndicators/fetchById",
-  async (id: string, { rejectWithValue }) => {
-    try {
-      const response = await apiPrivate.get(`/admin/${id}`);
-      return response.data?.data as IAdminIndicator;
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.message ?? "Record not found"
-      );
-    }
+export const getIndicatorByIdAdmin = createAsyncThunk<
+  IAdminIndicator,
+  string,
+  { rejectValue: string }
+>("adminIndicators/fetchById", async (id, { rejectWithValue }) => {
+  try {
+    const response = await apiPrivate.get<{ data: IAdminIndicator }>(
+      `/admin/${id}`
+    );
+    return response.data?.data;
+  } catch (error) {
+    const err = error as KnownError;
+    return rejectWithValue(
+      err.response?.data?.message ?? err.message ?? "Record not found"
+    );
   }
-);
+});
 
-export const processAdminReview = createAsyncThunk(
-  "adminIndicators/processReview",
-  async (
-    { id, reviewData }: { id: string; reviewData: IAdminReviewPayload },
-    { rejectWithValue }
-  ) => {
-    try {
-      await apiPrivate.patch(`/admin/${id}/review`, reviewData);
-      // Re-fetch so the store always holds the authoritative server state
-      const response = await apiPrivate.get(`/admin/${id}`);
-      return response.data?.data as IAdminIndicator;
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.message ?? "Review submission failed"
-      );
-    }
+export const processAdminReview = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; reviewData: IAdminReviewPayload },
+  { rejectValue: string }
+>("adminIndicators/processReview", async ({ id, reviewData }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/review`, reviewData);
+    const response = await apiPrivate.get<{ data: IAdminIndicator }>(
+      `/admin/${id}`
+    );
+    return response.data?.data;
+  } catch (error) {
+    const err = error as KnownError;
+    return rejectWithValue(
+      err.response?.data?.message ?? err.message ?? "Review submission failed"
+    );
   }
-);
+});
 
-/* ---------------- SLICE ---------------- */
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const adminIndicatorSlice = createSlice({
   name: "adminIndicators",
@@ -218,8 +226,8 @@ const adminIndicatorSlice = createSlice({
     resetAdminState: () => initialState,
   },
   extraReducers: (builder) => {
-    // ── fetchAllAdminIndicators ──────────────────────────────────────────────
     builder
+      // fetchAllAdminIndicators
       .addCase(fetchAllAdminIndicators.pending, (state) => {
         state.isLoading = true;
         state.error = null;
@@ -231,28 +239,25 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(fetchAllAdminIndicators.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = (action.payload as string) ?? "An unexpected error occurred";
-      });
+        state.error = action.payload ?? "An unexpected error occurred";
+      })
 
-    // ── fetchResubmittedIndicators ───────────────────────────────────────────
-    builder
+      // fetchResubmittedIndicators
       .addCase(fetchResubmittedIndicators.pending, (state) => {
         state.isLoading = true;
         state.error = null;
       })
       .addCase(fetchResubmittedIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
-        // Merge returned items into allAssignments, then re-derive queues
         action.payload.forEach((updated) => upsertIntoAssignments(state, updated));
         refreshQueues(state);
       })
       .addCase(fetchResubmittedIndicators.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = (action.payload as string) ?? "An unexpected error occurred";
-      });
+        state.error = action.payload ?? "An unexpected error occurred";
+      })
 
-    // ── getIndicatorByIdAdmin ────────────────────────────────────────────────
-    builder
+      // getIndicatorByIdAdmin
       .addCase(getIndicatorByIdAdmin.pending, (state) => {
         state.isLoading = true;
         state.error = null;
@@ -265,11 +270,10 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(getIndicatorByIdAdmin.rejected, (state, action) => {
         state.isLoading = false;
-        state.error = (action.payload as string) ?? "An unexpected error occurred";
-      });
+        state.error = action.payload ?? "An unexpected error occurred";
+      })
 
-    // ── processAdminReview ───────────────────────────────────────────────────
-    builder
+      // processAdminReview
       .addCase(processAdminReview.pending, (state) => {
         state.isReviewing = true;
         state.error = null;
@@ -285,7 +289,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(processAdminReview.rejected, (state, action) => {
         state.isReviewing = false;
-        state.error = (action.payload as string) ?? "An unexpected error occurred";
+        state.error = action.payload ?? "An unexpected error occurred";
       });
   },
 });

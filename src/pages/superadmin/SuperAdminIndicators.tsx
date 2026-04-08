@@ -12,17 +12,33 @@ import {
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 
-import SuperAdminAssign, { type AssignPrefill } from "./SuperAdminAssign";
-import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
+// Import types from your updated service
+import { 
+  type IStrategicPlan, 
+  type IObjective, 
+  type IActivity 
+} from "../../store/slices/strategicPlan/strategicPlanService";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────── */
+//import SuperAdminAssign, { type AssignPrefill } from "./SuperAdminAssign";
+import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
+import type { AssignPrefill } from "../../types/types";
+import SuperAdminAssign from "./SuperAdminAssign";
+
+/* ─── ADDITIONAL TYPES ───────────────────────────────────────────────── */
+
+interface IUser {
+  id: string;
+  name: string;
+  email?: string;
+  role?: string;
+}
 
 interface IndicatorSectionProps {
   perspective: string;
-  objective: any;
-  plan: any;
+  objective: IObjective;
+  plan: IStrategicPlan;
   indicators: IIndicator[];
-  userMap: Record<string, any>;
+  userMap: Record<string, IUser>;
   onAssign: (prefill: AssignPrefill) => void;
   onSelectAssignment: (indicator: IIndicator) => void;
   activeFilter: string;
@@ -30,33 +46,23 @@ interface IndicatorSectionProps {
 
 /* ─── HELPERS ────────────────────────────────────────────────────────── */
 
-const matchId = (a: any, b: any): boolean => {
-  const extract = (v: any): string => {
-    if (typeof v === "string") return v;
-    return String(v?.id ?? v?._id ?? "");
-  };
-  const na = extract(a);
-  const nb = extract(b);
-  return na !== "" && nb !== "" && na === nb;
+const matchId = (a: string | undefined, b: string | undefined): boolean => {
+  if (!a || !b) return false;
+  return String(a) === String(b);
 };
 
-const getObjectives = (plan: any): any[] =>
+const getObjectives = (plan: IStrategicPlan): IObjective[] =>
   Array.isArray(plan?.objectives) ? plan.objectives : [];
-const getActivities = (obj: any): any[] =>
+
+const getActivities = (obj: IObjective): IActivity[] =>
   Array.isArray(obj?.activities) ? obj.activities : [];
 
-const resolveIds = (assignee: any): string[] => {
+const resolveIds = (assignee: string | string[] | IUser | IUser[] | undefined): string[] => {
   if (!assignee) return [];
-  if (Array.isArray(assignee)) {
-    return assignee.map((a: any) =>
-      typeof a === "object" ? String(a.id ?? a._id ?? "") : String(a)
-    );
-  }
-  return [
-    typeof assignee === "object"
-      ? String(assignee.id ?? assignee._id ?? "")
-      : String(assignee),
-  ];
+  const items = Array.isArray(assignee) ? assignee : [assignee];
+  return items
+    .map((item) => (typeof item === "object" ? item.id : String(item)))
+    .filter(Boolean);
 };
 
 /* ─── CONSTANTS ──────────────────────────────────────────────────────── */
@@ -84,9 +90,7 @@ const IndicatorSection = ({
   const total = visibleActivities.length;
 
   const assignedCount = visibleActivities.filter((act) =>
-    (indicators || []).some((ind) =>
-      matchId(ind.activityId, act.id ?? act._id)
-    )
+    (indicators || []).some((ind) => matchId(ind.activityId, act.id))
   ).length;
 
   return (
@@ -111,8 +115,8 @@ const IndicatorSection = ({
         <td colSpan={7} />
       </tr>
 
-      {visibleActivities.map((activity: any) => {
-        const activityId = activity.id ?? activity._id;
+      {visibleActivities.map((activity: IActivity) => {
+        const activityId = activity.id;
         const assignment = (indicators || []).find((ind) =>
           matchId(ind.activityId, activityId)
         );
@@ -229,8 +233,8 @@ const IndicatorSection = ({
                 <button
                   onClick={() =>
                     onAssign({
-                      strategicPlanId: plan.id ?? plan._id,
-                      objectiveId: objective.id ?? objective._id,
+                      strategicPlanId: plan.id,
+                      objectiveId: objective.id,
                       activityId: activityId,
                     })
                   }
@@ -300,33 +304,37 @@ const SuperAdminIndicators = () => {
   };
 
   const userMap = useMemo(() => {
-    const map: Record<string, any> = {};
+    const map: Record<string, IUser> = {};
     (users ?? []).forEach((u) => {
-      const key = u.id ?? u._id;
-      if (key) map[String(key)] = u;
+      const key = u.id;
+      if (key) map[String(key)] = u as IUser;
     });
     return map;
   }, [users]);
 
   const filteredData = useMemo(() => {
-    let processedPlans = [...(plans ?? [])].sort((a, b) => {
+    let basePlans = [...(plans ?? [])];
+
+    // Sorting
+    basePlans.sort((a, b) => {
       const orderA = PERSPECTIVE_ORDER[a?.perspective?.toUpperCase()] ?? 99;
       const orderB = PERSPECTIVE_ORDER[b?.perspective?.toUpperCase()] ?? 99;
       return orderA - orderB;
     });
 
+    // Perspective Filter
     if (activeFilter !== "ALL" && PERSPECTIVE_ORDER[activeFilter]) {
-      processedPlans = processedPlans.filter((p) =>
+      basePlans = basePlans.filter((p) =>
         p?.perspective?.toUpperCase().includes(activeFilter)
       );
     }
 
-    return processedPlans
-      .map((plan) => {
+    return basePlans
+      .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
-          .map((obj: any) => {
-            const filteredActivities = getActivities(obj).filter((act: any) => {
-              const actId = act.id ?? act._id;
+          .map((obj: IObjective) => {
+            const filteredActivities = getActivities(obj).filter((act: IActivity) => {
+              const actId = act.id;
               const isAssigned = (indicators ?? []).some((ind) =>
                 matchId(ind.activityId, actId)
               );
@@ -347,6 +355,7 @@ const SuperAdminIndicators = () => {
     const allActs = (plans ?? []).flatMap((p) =>
       getObjectives(p).flatMap((o) => getActivities(o))
     );
+    
     return {
       total: allActs.length,
       getPerspective: (label: string) =>
@@ -462,17 +471,17 @@ const SuperAdminIndicators = () => {
             </thead>
             <tbody>
               {filteredData.length > 0 ? (
-                filteredData.map((plan) =>
-                  plan.objectives.map((objective: any) => (
+                filteredData.map((plan: IStrategicPlan) =>
+                  plan.objectives.map((objective: IObjective) => (
                     <IndicatorSection
-                      key={objective.id ?? objective._id}
+                      key={objective.id}
                       perspective={plan.perspective}
                       objective={objective}
                       plan={plan}
                       indicators={(indicators ?? []).filter((ind) =>
                         matchId(
                           ind.objectiveId,
-                          objective.id ?? objective._id
+                          objective.id
                         )
                       )}
                       userMap={userMap}
@@ -506,15 +515,6 @@ const SuperAdminIndicators = () => {
         />
       )}
 
-      {/* ─── DRAWER: gated solely on selectedIndicator ─────────────────────
-          Previously, `detailLoading` was included in the visibility condition,
-          which caused the drawer to open (and show an infinite spinner) even
-          when no indicator had been selected yet, or when the fetch silently
-          failed and never reset detailLoading to false.
-          The inner IndicatorsPageIdModal already handles its own detailLoading
-          spinner, so the outer shell only needs to know whether there is a
-          selected indicator to display.
-      ──────────────────────────────────────────────────────────────────── */}
       <div
         className={`fixed inset-0 z-[300] transition-all duration-300 ${
           selectedIndicator ? "visible opacity-100" : "invisible opacity-0"

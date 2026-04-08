@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
+import { 
+  fetchMyAssignments,
+  type IDocumentUI, 
+} from "../../store/slices/userIndicatorSlice";
 import { 
   History, 
   FileCheck, 
@@ -10,6 +13,22 @@ import {
   Clock, 
 } from "lucide-react";
 
+/* ─── TYPES ──────────────────────────────────────────────────────────── */
+
+interface ITimelineEvent {
+  type: "SUBMISSION" | "REVIEW_ACTION";
+  date: Date;
+  title: string;
+  objective?: string;
+  status?: string;
+  value?: number;
+  docs?: IDocumentUI[]; // Strictly typed using your defined interface
+  notes?: string;
+  action?: string;
+  reason?: string;
+  reviewer?: string;
+}
+
 const UserHistory: React.FC = () => {
   const dispatch = useAppDispatch();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
@@ -18,41 +37,43 @@ const UserHistory: React.FC = () => {
     dispatch(fetchMyAssignments());
   }, [dispatch]);
 
-  // --- Flattening the nested history for a unified timeline ---
   const unifiedHistory = useMemo(() => {
-    const events: any[] = [];
+    const events: ITimelineEvent[] = [];
 
     myIndicators.forEach((indicator) => {
-      // 1. Map Submissions (Using SQL snake_case fields)
       (indicator.submissions || []).forEach((sub) => {
+        // Safe date parsing to avoid "Invalid Date" errors
+        const submissionDate = new Date(sub.submitted_at);
+        const validDate = isNaN(submissionDate.getTime()) ? new Date() : submissionDate;
+
+        // 1. Map Submissions 
         events.push({
           type: "SUBMISSION",
-          date: new Date(sub.submitted_at),
+          date: validDate,
           title: indicator.activity?.description || "Indicator Update",
           objective: indicator.objective?.title,
           status: sub.review_status,
           value: sub.achieved_value,
-          docs: sub.documents,
+          docs: sub.documents, // IDocument[]
           notes: sub.notes
         });
 
-        // 2. Note: In your current SQL slice, review history is often derived 
-        // from the submission's review_status and notes. 
-        // If a submission is Rejected, we treat it as a Review Action event.
+        // 2. Map Review Actions (Only using defined fields: review_status & notes)
         if (sub.review_status === "Rejected" || sub.review_status === "Accepted") {
             events.push({
                 type: "REVIEW_ACTION",
-                date: new Date(sub.submitted_at), // Use timestamp from sub if revHistory isn't separate
-                title: indicator.activity?.description,
+                date: validDate, 
+                title: indicator.activity?.description || "Indicator Review",
+                objective: indicator.objective?.title,
                 action: sub.review_status,
-                reason: sub.notes, // Assuming notes contain registry feedback on rejection
+                // Only using notes as the reason since admin_comment was undefined
+                reason: sub.notes || "Registry verification processed.", 
                 reviewer: "Registry Audit"
             });
         }
       });
     });
 
-    // Sort by date descending (Newest first)
     return events.sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [myIndicators]);
 
@@ -77,8 +98,8 @@ const UserHistory: React.FC = () => {
             <History size={28} />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-[#1a3a32] uppercase tracking-tighter font-serif">Registry Timeline</h1>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Comprehensive activity log for your assigned indicators</p>
+            <h1 className="text-2xl font-black text-[#1a3a32] uppercase tracking-tighter font-serif text-emerald-900">Registry Timeline</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Comprehensive activity log</p>
           </div>
         </div>
 
@@ -86,13 +107,13 @@ const UserHistory: React.FC = () => {
         <div className="relative space-y-8 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
           
           {unifiedHistory.map((event, idx) => (
-            <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group">
+            <div key={`${event.date.getTime()}-${idx}`} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group">
               
               {/* Dot Icon */}
-              <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-white shadow-md z-10 shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 transition-transform group-hover:scale-110">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-white shadow-md z-10 shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
                 {event.type === "SUBMISSION" ? (
                   <Send size={14} className="text-emerald-500" />
-                ) : event.action?.toLowerCase().includes("reject") ? (
+                ) : event.action === "Rejected" ? (
                   <FileX size={14} className="text-rose-500" />
                 ) : (
                   <FileCheck size={14} className="text-[#c2a336]" />
@@ -100,7 +121,7 @@ const UserHistory: React.FC = () => {
               </div>
 
               {/* Content Card */}
-              <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-6 bg-white border border-slate-100 rounded-[2rem] shadow-sm hover:shadow-lg transition-all group-hover:border-[#1a3a32]/30">
+              <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-6 bg-white border border-slate-100 rounded-[2rem] shadow-sm hover:shadow-lg transition-all">
                 <div className="flex items-center justify-between mb-3">
                   <time className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
                     {event.date.toLocaleDateString()} @ {event.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -119,15 +140,16 @@ const UserHistory: React.FC = () => {
                   {event.objective}
                 </p>
 
-                {/* Specific Event Details */}
                 {event.type === "SUBMISSION" ? (
                   <div className="space-y-3">
-                    <p className="text-[11px] font-bold text-slate-500 italic leading-relaxed">"{event.notes || "Standard periodic update submitted."}"</p>
+                    <p className="text-[11px] font-bold text-slate-500 italic leading-relaxed">
+                      "{event.notes || "Standard periodic update submitted."}"
+                    </p>
                     <div className="flex items-center gap-2">
                        <span className="text-[10px] font-black text-[#1a3a32] px-2 py-1 bg-slate-50 rounded-lg border border-slate-100">
                         VAL: {event.value}
                        </span>
-                       {event.docs?.length > 0 && (
+                       {event.docs && event.docs.length > 0 && (
                          <span className="text-[9px] font-black text-emerald-600 uppercase">
                            {event.docs.length} Evidence Attached
                          </span>
@@ -139,7 +161,7 @@ const UserHistory: React.FC = () => {
                     <div className="flex items-center gap-2 text-slate-700">
                       <MessageSquare size={14} className="shrink-0 text-slate-400" />
                       <p className="text-[11px] font-bold leading-relaxed">
-                        {event.action}: {event.reason || "Verification complete."}
+                        <span className="font-black uppercase">{event.action}</span>: {event.reason}
                       </p>
                     </div>
                     <p className="text-[9px] font-black text-slate-400 uppercase text-right">— {event.reviewer}</p>

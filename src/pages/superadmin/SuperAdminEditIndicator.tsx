@@ -9,23 +9,34 @@ import { fetchTeams } from "../../store/slices/teamSlice";
 import { updateIndicator, deleteIndicator, type IIndicator } from "../../store/slices/indicatorSlice";
 import toast from "react-hot-toast";
 
+/* ─── TYPES ────────────────────────────────────────────────────────── */
+
 interface SuperAdminEditProps {
   indicator: IIndicator;
   onClose: () => void;
 }
 
+// Error handling interface for unwrap() rejections
+interface KnownError {
+  message?: string;
+}
+
+/* ─── MAIN COMPONENT ───────────────────────────────────────────────── */
+
 const SuperAdminEditIndicator = ({ indicator, onClose }: SuperAdminEditProps) => {
   const dispatch = useAppDispatch();
+  
+  // Explicitly typing selectors helps remove implicit 'any'
   const { users } = useAppSelector((s) => s.users);
   const { teams } = useAppSelector((s) => s.teams);
   const { actionLoading } = useAppSelector((s) => s.indicators);
 
-  // Form State initialized from the existing indicator
+  // Form State
   const [assignmentType, setAssignmentType] = useState<"User" | "Team">(indicator.assignmentType);
-  const [reportingCycle ] = useState(indicator.reportingCycle);
+  const [reportingCycle] = useState(indicator.reportingCycle);
   const [weight, setWeight] = useState<number>(indicator.weight);
   const [unit, setUnit] = useState<string>(indicator.unit);
-  const [assignee, setAssignee] = useState<string>(indicator.assignee);
+  const [assignee, setAssignee] = useState<string>(indicator.assignee as string || "");
   const [deadline, setDeadline] = useState(indicator.deadline?.split("T")[0] || "");
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -51,8 +62,9 @@ const SuperAdminEditIndicator = ({ indicator, onClose }: SuperAdminEditProps) =>
       await dispatch(updateIndicator({ id: indicator.id, data })).unwrap();
       toast.success("KPI updated successfully");
       onClose();
-    } catch (error: any) {
-      toast.error(error || "Failed to update KPI");
+    } catch (err) {
+      const error = err as KnownError;
+      toast.error(error?.message || "Failed to update KPI");
     }
   };
 
@@ -63,8 +75,9 @@ const SuperAdminEditIndicator = ({ indicator, onClose }: SuperAdminEditProps) =>
       await dispatch(deleteIndicator(indicator.id)).unwrap();
       toast.success("Indicator deleted");
       onClose();
-    } catch (error: any) {
-      toast.error(error || "Failed to delete");
+    } catch (err) {
+      const error = err as KnownError;
+      toast.error(error?.message || "Failed to delete");
     } finally {
       setIsDeleting(false);
     }
@@ -162,6 +175,7 @@ const SuperAdminEditIndicator = ({ indicator, onClose }: SuperAdminEditProps) =>
           <div className="pt-6 flex gap-3">
             <button
               onClick={handleDelete}
+              type="button"
               disabled={isDeleting || actionLoading}
               className="px-6 py-4 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 transition-colors flex items-center justify-center"
             >
@@ -170,6 +184,7 @@ const SuperAdminEditIndicator = ({ indicator, onClose }: SuperAdminEditProps) =>
             
             <button
               onClick={handleUpdate}
+              type="button"
               disabled={actionLoading || isDeleting}
               className="flex-1 bg-[#1a3a32] text-white rounded-2xl font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 hover:bg-[#244d42] transition-all disabled:opacity-50"
             >

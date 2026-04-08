@@ -1,9 +1,7 @@
 import { apiPrivate } from "../../../api/axios";
 import type { User } from "./userSlice";
 
-/* ------------------------------------------------------------------ */
-/*  Raw API shape (what PostgreSQL returns before normalization)        */
-/* ------------------------------------------------------------------ */
+/* ─── API SHAPES ───────────────────────────────────────────────────── */
 
 export interface RawUser {
   id: string;
@@ -12,61 +10,56 @@ export interface RawUser {
   role: "user" | "admin" | "superadmin" | "examiner";
   pjNumber: string;
   title: string;
-  is_active?: boolean;   // some endpoints return snake_case
-  isActive?: boolean;    // some endpoints return camelCase
+  is_active?: boolean; 
+  isActive?: boolean;   
   createdAt?: string;
   created_at?: string;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Normalizer                                                          */
-/* ------------------------------------------------------------------ */
+/* ─── NORMALIZER ───────────────────────────────────────────────────── */
 
-/** Normalize a raw PG user into the consistent frontend `User` shape */
 const normalize = (u: RawUser): User => ({
   ...u,
   id: u.id,
-  _id: u.id,                                        // mirror so both work
-  isActive: u.isActive ?? u.is_active ?? false,     // handle both casings
-  createdAt: u.createdAt ?? u.created_at ?? "",     // handle both casings
+  _id: u.id,
+  isActive: u.isActive ?? u.is_active ?? false,
+  createdAt: u.createdAt ?? u.created_at ?? "",
 });
 
-/* ------------------------------------------------------------------ */
-/*  Service methods                                                     */
-/* ------------------------------------------------------------------ */
+/* ─── SERVICE METHODS ──────────────────────────────────────────────── */
 
 const getUsers = async (): Promise<User[]> => {
-  const response = await apiPrivate.get("/users");
-  return (response.data.users as RawUser[]).map(normalize);
+  const response = await apiPrivate.get<{ users: RawUser[] }>("/users");
+  return response.data.users.map(normalize);
 };
 
-const createUser = async (userData: any): Promise<User> => {
-  const response = await apiPrivate.post("/users", userData);
-  return normalize(response.data.user as RawUser);
+const createUser = async (userData: Partial<User>): Promise<User> => {
+  const response = await apiPrivate.post<{ user: RawUser }>("/users", userData);
+  return normalize(response.data.user);
 };
 
-const updateUser = async (id: string, userData: any): Promise<User> => {
-  const response = await apiPrivate.put(`/users/${id}`, userData);
-  return normalize(response.data.user as RawUser);
+const updateUser = async (id: string, userData: Partial<User>): Promise<User> => {
+  const response = await apiPrivate.put<{ user: RawUser }>(`/users/${id}`, userData);
+  return normalize(response.data.user);
 };
 
 const updateUserRole = async (userData: { id: string; role: string }): Promise<User> => {
-  const response = await apiPrivate.patch(`/users/${userData.id}/role`, {
+  const response = await apiPrivate.patch<{ user: RawUser }>(`/users/${userData.id}/role`, {
     role: userData.role,
   });
-  return normalize(response.data.user as RawUser);
+  return normalize(response.data.user);
 };
 
 const toggleUserActive = async (userData: { id: string; isActive: boolean }): Promise<User> => {
-  const response = await apiPrivate.patch(`/users/${userData.id}/toggle`, {
+  const response = await apiPrivate.patch<{ user: RawUser }>(`/users/${userData.id}/toggle`, {
     isActive: userData.isActive,
   });
-  return normalize(response.data.user as RawUser);
+  return normalize(response.data.user);
 };
 
 const deleteUser = async (id: string): Promise<string> => {
-  const response = await apiPrivate.delete(`/users/${id}`);
-  return response.data.id as string;
+  const response = await apiPrivate.delete<{ id: string }>(`/users/${id}`);
+  return response.data.id;
 };
 
 export const userService = {

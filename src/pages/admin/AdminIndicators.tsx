@@ -20,30 +20,50 @@ import {
 } from "../../store/slices/adminIndicatorSlice";
 import AdminIndicatorModal from "./AdminIndicatorModal";
 
+/* ─── Interfaces ─────────────────────────────────────────────────────────── */
+
+interface IActivity {
+  id?: string;
+  _id?: string;
+  description: string;
+}
+
+interface IObjective {
+  id?: string;
+  _id?: string;
+  title: string;
+  activities: IActivity[];
+}
+
+interface IStrategicPlan {
+  perspective: string;
+  objectives: IObjective[];
+}
+
 /* ─── Filter config ──────────────────────────────────────────────────────────── */
 const FILTERS = [
-  { label: "ALL",            key: "ALL" },
-  { label: "CORE BUSINESS",  key: "CORE" },
-  { label: "CUSTOMER",       key: "CUSTOMER" },
-  { label: "FINANCIAL",      key: "FINANCIAL" },
-  { label: "INNOVATION",     key: "INNOVATION" },
+  { label: "ALL", key: "ALL" },
+  { label: "CORE BUSINESS", key: "CORE" },
+  { label: "CUSTOMER", key: "CUSTOMER" },
+  { label: "FINANCIAL", key: "FINANCIAL" },
+  { label: "INNOVATION", key: "INNOVATION" },
   { label: "INTERNAL PROCESS", key: "INTERNAL" },
 ];
 
 const AdminIndicators = () => {
   const dispatch = useAppDispatch();
 
-  const { plans = [], loading: plansLoading } = useAppSelector(
-    (state) => state.strategicPlan
+  const { plans = [], loading: plansLoading = false } = useAppSelector(
+    (state) => state.strategicPlan || {}
   );
   const {
     allAssignments = [],
     pendingAdminReview = [],
-    isLoading: adminIndicatorsLoading,
+    isLoading: adminIndicatorsLoading = false,
     selectedIndicator,
-  } = useAppSelector((state) => state.adminIndicators);
+  } = useAppSelector((state) => state.adminIndicators || {});
 
-  const [viewMode, setViewMode]     = useState<"ALL" | "REGISTRY">("ALL");
+  const [viewMode, setViewMode] = useState<"ALL" | "REGISTRY">("ALL");
   const [activeFilter, setActiveFilter] = useState("ALL");
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -68,24 +88,18 @@ const AdminIndicators = () => {
 
   const handleOpenDossier = useCallback(
     (indicatorId: string) => {
-      dispatch(setSelectedIndicator(null));
       dispatch(getIndicatorByIdAdmin(indicatorId));
     },
     [dispatch]
   );
 
-  /**
-   * KEY FIX: map by activityId (i.activityId) not the indicator's own id.
-   * This lets us look up "does this strategic activity have an assigned indicator?"
-   * by matching against act.id from the plan tree.
-   */
   const indicatorMap = useMemo(() => {
     const pool: IAdminIndicator[] =
       viewMode === "REGISTRY" ? pendingAdminReview : allAssignments;
 
     return new Map(
       pool
-        .filter((ind) => ind.activity) // only include indicators that have a linked activity
+        .filter((ind) => ind.activity)
         .map((ind) => [String(ind.activity), ind])
     );
   }, [allAssignments, pendingAdminReview, viewMode]);
@@ -104,40 +118,36 @@ const AdminIndicators = () => {
   const filteredPlans = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
 
-    return plans
-      .filter((plan: any) => {
+    return (plans as IStrategicPlan[])
+      .filter((plan) => {
         if (activeFilter === "ALL") return true;
         const perspKey = plan.perspective?.toUpperCase().split(" ")[0] ?? "";
-        return perspKey.includes(activeFilter.split(" ")[0]);
+        return perspKey === activeFilter.toUpperCase().split(" ")[0];
       })
-      .map((plan: any) => {
+      .map((plan) => {
         const processedObjectives = (plan.objectives ?? [])
-          .map((obj: any) => {
-            const filteredActivities = (obj.activities ?? []).filter(
-              (act: any) => {
-                const actId = String(act.id ?? act._id);
-                const assignment = indicatorMap.get(actId);
+          .map((obj) => {
+            const filteredActivities = (obj.activities ?? []).filter((act) => {
+              const actId = String(act.id ?? act._id);
+              const assignment = indicatorMap.get(actId);
 
-                // In REGISTRY mode, only show activities that have an assignment
-                if (viewMode === "REGISTRY" && !assignment) return false;
+              if (viewMode === "REGISTRY" && !assignment) return false;
 
-                // Search across objective title, activity description, assignee, unit
-                if (!searchLower) return true;
-                return (
-                  obj.title?.toLowerCase().includes(searchLower) ||
-                  act.description?.toLowerCase().includes(searchLower) ||
-                  assignment?.assigneeName?.toLowerCase().includes(searchLower) ||
-                  assignment?.unit?.toLowerCase().includes(searchLower)
-                );
-              }
-            );
+              if (!searchLower) return true;
+              return (
+                obj.title?.toLowerCase().includes(searchLower) ||
+                act.description?.toLowerCase().includes(searchLower) ||
+                assignment?.assigneeName?.toLowerCase().includes(searchLower) ||
+                assignment?.unit?.toLowerCase().includes(searchLower)
+              );
+            });
             return { ...obj, activities: filteredActivities };
           })
-          .filter((obj: any) => obj.activities.length > 0);
+          .filter((obj) => obj.activities.length > 0);
 
         return { ...plan, objectives: processedObjectives };
       })
-      .filter((plan: any) => plan.objectives.length > 0);
+      .filter((plan) => plan.objectives.length > 0);
   }, [plans, indicatorMap, activeFilter, searchTerm, viewMode]);
 
   if ((plansLoading || adminIndicatorsLoading) && plans.length === 0) {
@@ -253,7 +263,9 @@ const AdminIndicators = () => {
           <table className="w-full text-left border-collapse min-w-[1400px]">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                <th className="px-10 py-8 w-[35%]">Indicator / Activity Cluster</th>
+                <th className="px-10 py-8 w-[35%]">
+                  Indicator / Activity Cluster
+                </th>
                 <th className="px-6 py-8 text-center">Weight</th>
                 <th className="px-6 py-8">UoM</th>
                 <th className="px-6 py-8">Assignee</th>
@@ -264,8 +276,8 @@ const AdminIndicators = () => {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredPlans.length > 0 ? (
-                filteredPlans.map((plan: any) =>
-                  (plan.objectives ?? []).map((objective: any) => (
+                filteredPlans.map((plan) =>
+                  (plan.objectives ?? []).map((objective) => (
                     <ObjectiveSection
                       key={String(objective.id ?? objective._id)}
                       perspective={plan.perspective}
@@ -301,6 +313,7 @@ const AdminIndicators = () => {
           />
           <div className="relative h-full w-full md:w-[85vw] lg:w-[70vw] xl:w-[850px] bg-[#fcfdfb] shadow-2xl animate-in slide-in-from-right duration-500 ease-out border-l border-slate-200 overflow-y-auto">
             <AdminIndicatorModal
+              key={selectedIndicator.id}
               indicator={selectedIndicator}
               onClose={handleCloseDrawer}
             />
@@ -311,11 +324,11 @@ const AdminIndicators = () => {
   );
 };
 
-/* ─── ObjectiveSection ───────────────────────────────────────────────────────── */
+/* ─── ObjectiveSection Sub-Component ─────────────────────────────────────────── */
 
 interface ObjectiveSectionProps {
   perspective: string;
-  objective: any;
+  objective: IObjective;
   indicatorMap: Map<string, IAdminIndicator>;
   onReview: (indicatorId: string) => void;
 }
@@ -330,7 +343,6 @@ const ObjectiveSection = ({
 
   return (
     <>
-      {/* Objective header row */}
       <tr className="bg-slate-50/30">
         <td className="px-10 py-8 align-top" colSpan={7}>
           <div className="flex items-start gap-4">
@@ -354,9 +366,7 @@ const ObjectiveSection = ({
         </td>
       </tr>
 
-      {/* Activity rows */}
-      {activities.map((act: any) => {
-        // ✅ Look up by activityId — matches how indicatorMap is keyed
+      {activities.map((act) => {
         const actId = String(act.id ?? act._id);
         const assignment = indicatorMap.get(actId);
 
@@ -365,17 +375,12 @@ const ObjectiveSection = ({
             key={actId}
             className="bg-white hover:bg-slate-50/80 transition-all group"
           >
-            {/* Activity description */}
             <td className="px-10 py-6 pl-24 text-[12px] font-bold text-slate-500 group-hover:text-[#1a3a32] leading-relaxed transition-colors border-l-4 border-transparent hover:border-emerald-500">
               {act.description}
             </td>
-
-            {/* Weight */}
             <td className="px-6 py-6 text-center text-[11px] font-black text-slate-400">
               {assignment?.weight != null ? `${assignment.weight}%` : "—"}
             </td>
-
-            {/* Unit of Measure */}
             <td className="px-6 py-6">
               <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-tighter">
                 <MapPin size={12} className="text-emerald-600 shrink-0" />
@@ -384,8 +389,6 @@ const ObjectiveSection = ({
                 </span>
               </div>
             </td>
-
-            {/* Assignee */}
             <td className="px-6 py-6">
               {assignment ? (
                 <div className="flex items-center gap-3">
@@ -402,8 +405,6 @@ const ObjectiveSection = ({
                 </span>
               )}
             </td>
-
-            {/* Progress */}
             <td className="px-6 py-6 text-center">
               <div className="flex flex-col items-center gap-1.5">
                 <span className="text-[11px] font-black text-[#1a3a32]">
@@ -417,8 +418,6 @@ const ObjectiveSection = ({
                 </div>
               </div>
             </td>
-
-            {/* Status */}
             <td className="px-6 py-6">
               <span
                 className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase border shadow-sm inline-flex items-center gap-2 ${
@@ -437,8 +436,6 @@ const ObjectiveSection = ({
                 {assignment?.status ?? "Inert"}
               </span>
             </td>
-
-            {/* Action */}
             <td className="px-10 py-6 text-right">
               {assignment && (
                 <button

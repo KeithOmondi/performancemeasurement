@@ -5,7 +5,7 @@ import {
 } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
-/* ---------------- TYPES ---------------- */
+/* ─── TYPES ────────────────────────────────────────────────────────── */
 
 export interface IDocumentUI {
   id: string;
@@ -46,8 +46,8 @@ export interface IIndicatorUI {
   reporting_cycle: "Quarterly" | "Annual";
   assignee_id: string;
   assignee_model: "User" | "Team";
-  assigneeName: string; // From SQL LEFT JOIN
-  assignedByName: string; // From SQL LEFT JOIN
+  assigneeName: string; 
+  assignedByName: string; 
   status: string;
   target: number;
   unit: string;
@@ -62,8 +62,6 @@ export interface IIndicatorUI {
   progress?: number;
 }
 
-/* ---------------- STATE ---------------- */
-
 interface UserIndicatorState {
   myIndicators: IIndicatorUI[];
   currentIndicator: IIndicatorUI | null;
@@ -71,6 +69,17 @@ interface UserIndicatorState {
   uploading: boolean;
   error: string | null;
 }
+
+interface KnownError {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+/* ─── INITIAL STATE ────────────────────────────────────────────────── */
 
 const initialState: UserIndicatorState = {
   myIndicators: [],
@@ -80,7 +89,7 @@ const initialState: UserIndicatorState = {
   error: null,
 };
 
-/* ---------------- HELPERS ---------------- */
+/* ─── HELPERS ──────────────────────────────────────────────────────── */
 
 const upsertIndicator = (
   state: UserIndicatorState,
@@ -100,80 +109,99 @@ const upsertIndicator = (
   }
 };
 
-/* ---------------- THUNKS ---------------- */
+/* ─── THUNKS ───────────────────────────────────────────────────────── */
 
 type SubmitArg = { id: string; formData: FormData };
 type AddDocumentsArg = { id: string; quarter: number; formData: FormData };
 
-export const fetchMyAssignments = createAsyncThunk(
+export const fetchMyAssignments = createAsyncThunk<
+  IIndicatorUI[],
+  void,
+  { rejectValue: string }
+>(
   "userIndicators/fetchAll",
-  async (_: void, thunkAPI) => {
+  async (_, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get("/user-indicators/my-assignments");
-      return response.data.data as IIndicatorUI[];
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to load assignments",
+      const response = await apiPrivate.get<{ data: IIndicatorUI[] }>("/user-indicators/my-assignments");
+      return response.data.data;
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(
+        err.response?.data?.message || err.message || "Failed to load assignments",
       );
     }
   },
 );
 
-export const fetchIndicatorDetails = createAsyncThunk(
+export const fetchIndicatorDetails = createAsyncThunk<
+  IIndicatorUI,
+  string,
+  { rejectValue: string }
+>(
   "userIndicators/fetchDetails",
-  async (id: string, thunkAPI) => {
+  async (id, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get(`/user-indicators/${id}`);
-      return response.data.data as IIndicatorUI;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to load indicator details",
+      const response = await apiPrivate.get<{ data: IIndicatorUI }>(`/user-indicators/${id}`);
+      return response.data.data;
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(
+        err.response?.data?.message || err.message || "Failed to load indicator details",
       );
     }
   },
 );
 
-export const submitIndicatorProgress = createAsyncThunk(
+export const submitIndicatorProgress = createAsyncThunk<
+  void,
+  SubmitArg,
+  { rejectValue: string }
+>(
   "userIndicators/submit",
-  async (arg: SubmitArg, thunkAPI) => {
+  async (arg, { dispatch, rejectWithValue }) => {
     try {
-      const response = await apiPrivate.post(
+      await apiPrivate.post(
         `/user-indicators/${arg.id}/submit`,
         arg.formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       // Re-fetch to sync calculated progress and statuses from SQL
-      thunkAPI.dispatch(fetchIndicatorDetails(arg.id));
-      return response.data;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Submission failed",
+      dispatch(fetchIndicatorDetails(arg.id));
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(
+        err.response?.data?.message || err.message || "Submission failed",
       );
     }
   },
 );
 
-export const addIndicatorDocuments = createAsyncThunk(
+export const addIndicatorDocuments = createAsyncThunk<
+  IDocumentUI[],
+  AddDocumentsArg,
+  { rejectValue: string }
+>(
   "userIndicators/addDocuments",
-  async (arg: AddDocumentsArg, thunkAPI) => {
+  async (arg, { dispatch, rejectWithValue }) => {
     try {
       arg.formData.append("quarter", String(arg.quarter));
-      const response = await apiPrivate.post(
+      const response = await apiPrivate.post<{ documents: IDocumentUI[] }>(
         `/user-indicators/${arg.id}/documents`,
         arg.formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      thunkAPI.dispatch(fetchIndicatorDetails(arg.id));
+      dispatch(fetchIndicatorDetails(arg.id));
       return response.data.documents;
-    } catch (error: any) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to upload documents",
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(
+        err.response?.data?.message || err.message || "Failed to upload documents",
       );
     }
   },
 );
 
-/* ---------------- SLICE ---------------- */
+/* ─── SLICE ────────────────────────────────────────────────────────── */
 
 const userIndicatorSlice = createSlice({
   name: "userIndicators",
@@ -194,6 +222,7 @@ const userIndicatorSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      // fetchMyAssignments
       .addCase(fetchMyAssignments.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -204,24 +233,40 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(fetchMyAssignments.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = action.payload ?? "An unexpected error occurred";
       })
+
+      // fetchIndicatorDetails
       .addCase(fetchIndicatorDetails.fulfilled, (state, action) => {
         state.loading = false;
         state.currentIndicator = action.payload;
         upsertIndicator(state, action.payload);
       })
+
+      // submitIndicatorProgress
       .addCase(submitIndicatorProgress.pending, (state) => {
         state.uploading = true;
+        state.error = null;
       })
       .addCase(submitIndicatorProgress.fulfilled, (state) => {
         state.uploading = false;
       })
+      .addCase(submitIndicatorProgress.rejected, (state, action) => {
+        state.uploading = false;
+        state.error = action.payload ?? "Submission failed";
+      })
+
+      // addIndicatorDocuments
       .addCase(addIndicatorDocuments.pending, (state) => {
         state.uploading = true;
+        state.error = null;
       })
       .addCase(addIndicatorDocuments.fulfilled, (state) => {
         state.uploading = false;
+      })
+      .addCase(addIndicatorDocuments.rejected, (state, action) => {
+        state.uploading = false;
+        state.error = action.payload ?? "Upload failed";
       });
   },
 });

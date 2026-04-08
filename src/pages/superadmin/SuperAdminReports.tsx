@@ -7,6 +7,61 @@ import { fetchIndicators } from '../../store/slices/indicatorSlice';
 import { getAllStrategicPlans } from '../../store/slices/strategicPlan/strategicPlanSlice';
 import { fetchAllUsers } from '../../store/slices/user/userSlice';
 
+/* ─── TYPES & INTERFACES ──────────────────────────────────────────────── */
+
+interface RejectionHistory {
+  indicator: string;
+  reason: string;
+  date: string;
+}
+
+interface SubIndicator {
+  title: string;
+  progress: number;
+  status: string;
+}
+
+interface StaffEntry {
+  id: string;
+  name: string;
+  pf: string;
+  assigned: number;
+  approved: number;
+  overdue: number;
+  rejections: number;
+  rejectionHistory: RejectionHistory[];
+  subIndicators: SubIndicator[];
+  totalProgress: number;
+  totalWeight: number;
+}
+
+interface PerspectiveRow {
+  name: string;
+  weight: number;
+  target: string;
+  achieved: string;
+  score: string;
+  status: 'ON TRACK' | 'IN PROGRESS' | 'AT RISK';
+}
+
+interface TabButtonProps {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: string;
+}
+
+interface MetricCardProps {
+  title: string;
+  value: string | number;
+  subtext?: string;
+  progress?: number;
+  accentColor: string;
+  isCritical?: boolean;
+}
+
+/* ─── MAIN COMPONENT ──────────────────────────────────────────────────── */
+
 const SuperAdminReports = () => {
   const dispatch = useAppDispatch();
   const [activeTab, setActiveTab] = useState<'summary' | 'review' | 'individual'>('summary');
@@ -45,7 +100,7 @@ const SuperAdminReports = () => {
       (i) => i.deadline && new Date(i.deadline) < new Date() && i.status !== 'Completed'
     ).length;
 
-    // 2. REVIEW LOG — uses flat slice fields
+    // 2. REVIEW LOG
     const filteredByReview = indicators.filter((i) => {
       const matchesSearch =
         i.activityDescription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -60,7 +115,7 @@ const SuperAdminReports = () => {
     });
 
     // 3. PERSPECTIVE PERFORMANCE MATRIX
-    const perspectiveData = (plans || []).map((plan) => {
+    const perspectiveData: PerspectiveRow[] = (plans || []).map((plan) => {
       const related = indicators.filter(
         (i) => i.perspective?.trim().toLowerCase() === plan.perspective?.trim().toLowerCase()
       );
@@ -86,29 +141,15 @@ const SuperAdminReports = () => {
       };
     });
 
-    // 4. STAFF PERFORMANCE — keyed by assigneeId (flat field from slice)
-    type StaffEntry = {
-      id: string;
-      name: string;
-      pf: string;
-      assigned: number;
-      approved: number;
-      overdue: number;
-      rejections: number;
-      rejectionHistory: { indicator: string; reason: string; date: string }[];
-      subIndicators: { title: string; progress: number; status: string }[];
-      totalProgress: number;
-      totalWeight: number;
-    };
-
+    // 4. STAFF PERFORMANCE
     const staffMap = indicators.reduce<Record<string, StaffEntry>>((acc, indicator) => {
       const staffId = indicator.assignee || 'unassigned';
 
       if (!acc[staffId]) {
         acc[staffId] = {
           id: staffId,
-          name: indicator.assigneeDisplayName || 'Unassigned',  // ← flat field
-          pf: indicator.assigneePjNumber || 'N/A',              // ← flat field
+          name: indicator.assigneeDisplayName || 'Unassigned',
+          pf: indicator.assigneePjNumber || 'N/A',
           assigned: 0,
           approved: 0,
           overdue: 0,
@@ -137,16 +178,16 @@ const SuperAdminReports = () => {
 
       indicatorRejections.forEach((rej) => {
         acc[staffId].rejectionHistory.push({
-          indicator: indicator.activityDescription || '',  // ← flat field
-          reason: rej.reason,
-          date: rej.at,
+          indicator: indicator.activityDescription || '',
+          reason: rej.reason || '',
+          date: rej.at || '',
         });
       });
 
       acc[staffId].subIndicators.push({
-        title: indicator.activityDescription || '',  // ← flat field
-        progress: indicator.progress,
-        status: indicator.status,
+        title: indicator.activityDescription || '',
+        progress: indicator.progress || 0,
+        status: indicator.status || '',
       });
 
       acc[staffId].totalProgress += Number(indicator.progress || 0) * Number(indicator.weight || 0);
@@ -321,7 +362,7 @@ const SuperAdminReports = () => {
                           </p>
                         </td>
                         <td className="px-6 py-5 text-xs font-semibold text-slate-600">
-                          {item.assigneeDisplayName}  {/* ← flat field, no nested .name */}
+                          {item.assigneeDisplayName}
                         </td>
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-2 justify-center">
@@ -493,7 +534,7 @@ const SuperAdminReports = () => {
 
 /* ─── SUBCOMPONENTS ───────────────────────────────────────────────────── */
 
-const TabButton = ({ active, onClick, label, icon }: any) => (
+const TabButton = ({ active, onClick, label, icon }: TabButtonProps) => (
   <button
     onClick={onClick}
     className={`flex items-center gap-2 pb-4 text-[11px] font-bold uppercase tracking-widest relative transition-all whitespace-nowrap ${
@@ -505,7 +546,7 @@ const TabButton = ({ active, onClick, label, icon }: any) => (
   </button>
 );
 
-const MetricCard = ({ title, value, subtext, progress, accentColor, isCritical }: any) => (
+const MetricCard = ({ title, value, subtext, progress, accentColor, isCritical }: MetricCardProps) => (
   <div className={`bg-white rounded-2xl p-6 shadow-sm border-t-4 transition-transform hover:scale-[1.02] ${accentColor}`}>
     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">{title}</h3>
     <span className="text-4xl font-serif font-bold text-[#1d3331]">{value}</span>
@@ -522,7 +563,7 @@ const MetricCard = ({ title, value, subtext, progress, accentColor, isCritical }
   </div>
 );
 
-const StatusBadge = ({ status }: { status: string }) => {
+const StatusBadge = ({ status }: { status: 'ON TRACK' | 'IN PROGRESS' | 'AT RISK' }) => {
   const styles: Record<string, string> = {
     'IN PROGRESS': 'bg-yellow-50 text-yellow-700 border-yellow-200',
     'ON TRACK': 'bg-emerald-50 text-emerald-700 border-emerald-200',
