@@ -40,7 +40,6 @@ const UserTaskIdPage = () => {
     if (!currentIndicator)
       return { isOpen: false, message: "Syncing Registry..." };
 
-    // Updated to SQL snake_case keys
     const targetQ = currentIndicator.active_quarter;
     const now = new Date();
     const deadline = new Date(currentIndicator.deadline);
@@ -51,15 +50,18 @@ const UserTaskIdPage = () => {
         message: "Dossier Certified",
         icon: <Lock size={12} />,
       };
-      
-    if (
-      ["Awaiting Admin Approval", "Awaiting Super Admin"].includes(
-        currentIndicator.status,
-      )
-    )
+
+    if (currentIndicator.status === "Awaiting Admin Approval")
       return {
         isOpen: false,
         message: "Under Review",
+        icon: <Clock size={12} />,
+      };
+
+    if (currentIndicator.status === "Awaiting Super Admin")
+      return {
+        isOpen: true,
+        message: "Awaiting Final Certification",
         icon: <Clock size={12} />,
       };
 
@@ -67,7 +69,6 @@ const UserTaskIdPage = () => {
       (s: ISubmissionUI) => s.quarter === targetQ,
     );
 
-    // Using snake_case for review_status
     if (
       activeSub &&
       (activeSub.review_status === "Accepted" ||
@@ -79,14 +80,23 @@ const UserTaskIdPage = () => {
         icon: <ShieldAlert size={12} />,
       };
 
-    if (now > deadline)
-      return { isOpen: false, message: "Deadline Passed" };
-
+    // ── check rejection BEFORE deadline so overdue rejected
+    //    indicators can still resubmit a revision ──────────────────
     if (
       currentIndicator.status.includes("Rejected") ||
       activeSub?.review_status === "Rejected"
     )
       return { isOpen: true, message: "Revision Required" };
+
+    // ── Pending is always open — deadline does not gate first submission ──
+    if (currentIndicator.status === "Pending")
+      return {
+        isOpen: true,
+        message: activeSub ? "Add More Evidence" : "Registry Active",
+      };
+
+    if (now > deadline)
+      return { isOpen: false, message: "Deadline Passed" };
 
     return {
       isOpen: true,
@@ -124,12 +134,16 @@ const UserTaskIdPage = () => {
     );
   }
 
-  // Updated logic for SQL schema
   const isTeamAssignment = currentIndicator.assignee_model === "Team";
   const activeSub = currentIndicator.submissions?.find(
     (s: ISubmissionUI) => s.quarter === currentIndicator.active_quarter,
   );
-  const submitLabel = activeSub ? "Update Filing" : "Submit Evidence";
+
+  const submitLabel = (() => {
+    if (currentIndicator.status === "Awaiting Super Admin") return "Add Supporting Evidence";
+    return activeSub ? "Update Filing" : "Submit Evidence";
+  })();
+
   const assigneeName = currentIndicator.assigneeName ?? "Unassigned";
 
   return (
@@ -178,12 +192,19 @@ const UserTaskIdPage = () => {
               onClick={() => setIsModalOpen(true)}
               disabled={!registryStatus.isOpen || uploading}
               className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 ${
-                registryStatus.isOpen
+                registryStatus.isOpen && !uploading
                   ? "bg-[#1a3a32] text-white hover:shadow-2xl shadow-lg shadow-[#1a3a32]/20"
                   : "bg-gray-200 text-gray-400 cursor-not-allowed"
               }`}
             >
-              {submitLabel}
+              {uploading ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                submitLabel
+              )}
             </button>
           </div>
         </nav>
@@ -239,6 +260,21 @@ const UserTaskIdPage = () => {
               </section>
             )}
 
+            {/* Awaiting final certification notice */}
+            {currentIndicator.status === "Awaiting Super Admin" && (
+              <section className="bg-amber-50 border border-amber-100 rounded-[2rem] p-6 space-y-2">
+                <div className="flex items-center gap-2 text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                  <Clock size={14} />
+                  Pending Final Certification
+                </div>
+                <p className="text-[11px] text-amber-600 font-medium leading-relaxed">
+                  This submission is under final review. You may still attach
+                  additional supporting evidence while the certifying authority
+                  completes their assessment.
+                </p>
+              </section>
+            )}
+
             {/* Documents */}
             <section className="space-y-6">
               <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
@@ -260,7 +296,7 @@ const UserTaskIdPage = () => {
                 </div>
               ) : (
                 <div className="grid sm:grid-cols-2 gap-4">
-                  {currentIndicator.submissions?.map((sub: ISubmissionUI) => 
+                  {currentIndicator.submissions?.map((sub: ISubmissionUI) =>
                     sub.documents?.map((doc, i) => (
                       <div
                         key={`${doc.id}-${i}`}

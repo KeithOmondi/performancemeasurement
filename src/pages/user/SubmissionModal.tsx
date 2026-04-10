@@ -26,10 +26,10 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
 
-  // Updated to match SQL column naming
   const isAnnual = task?.reporting_cycle === "Annual";
   const isTeam = task?.assignee_model === "Team";
 
+  // Default to the current active quarter from the backend
   const [selectedQuarter, setSelectedQuarter] = useState<number>(
     isAnnual ? 1 : task?.active_quarter || 1,
   );
@@ -43,6 +43,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [onClose]);
 
+  // Find the submission for the quarter the user has currently selected in the modal
   const currentPeriodSubmission = useMemo(
     () =>
       task?.submissions?.find(
@@ -51,11 +52,9 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     [task, selectedQuarter],
   );
 
-  // Updated to match SQL review_status naming
   const isRejected = currentPeriodSubmission?.review_status === "Rejected";
-  const isPending = currentPeriodSubmission?.review_status === "Pending";
   const isAccepted = currentPeriodSubmission?.review_status === "Accepted";
-
+  
   if (!task) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,9 +77,10 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     files.forEach((file) => formData.append("evidence", file));
     formData.append("notes", notes.trim());
     formData.append("quarter", String(selectedQuarter));
+    // We pass the full target as achievedValue for binary indicators, 
+    // or you can add an input field for partial achievement here.
     formData.append("achievedValue", String(task.target));
 
-    // Changed task._id to task.id for SQL compatibility
     const result = await dispatch(
       submitIndicatorProgress({ id: task.id, formData }),
     );
@@ -90,12 +90,12 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       toast.success(
         isRejected
           ? "Correction submitted to Registry"
-          : "Evidence received. Submission timer stopped.",
+          : "Evidence received. Internal audit triggered.",
       );
       setTimeout(() => {
         onClose();
         setSuccess(false);
-      }, 2500);
+      }, 2000);
     }
   };
 
@@ -144,34 +144,23 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
               </div>
               <div>
                 <h4 className="text-lg font-black text-[#1a3a32] uppercase">
-                  Submission Successful
+                  Filing Received
                 </h4>
                 <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mt-1">
-                  Registry Audit Pipeline Updated
+                  The dashboard will refresh automatically
                 </p>
               </div>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-6">
 
               {isRejected && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl space-y-1">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2">
-                    <AlertCircle size={12} /> Registry Rejection Notes
+                    <AlertCircle size={12} /> Registry Findings
                   </p>
                   <p className="text-xs text-rose-600 font-medium italic">
-                    "{currentPeriodSubmission?.notes || "Please address audit findings."}"
-                  </p>
-                </div>
-              )}
-
-              {isTeam && !isRejected && (
-                <div className="bg-violet-50 border border-violet-100 p-4 rounded-2xl flex items-start gap-3">
-                  <Users size={14} className="text-violet-500 mt-0.5 shrink-0" />
-                  <p className="text-[10px] text-violet-700 font-medium leading-relaxed">
-                    You are submitting evidence on behalf of team{" "}
-                    <strong>{task.assigneeName}</strong>. Your name will be
-                    recorded as the filing officer in the review history.
+                    "{currentPeriodSubmission?.notes || "Review rejected documents and resubmit correct evidence."}"
                   </p>
                 </div>
               )}
@@ -179,16 +168,13 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
               {!isAnnual ? (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                    Reporting Quarter
+                    Select Reporting Quarter
                   </label>
                   <div className="grid grid-cols-4 gap-1.5">
                     {[1, 2, 3, 4].map((q) => {
-                      const sub = task.submissions?.find(
-                        (s) => s.quarter === q,
-                      );
-                      const isLocked =
-                        sub?.review_status === "Pending" ||
-                        sub?.review_status === "Accepted";
+                      const sub = task.submissions?.find((s) => s.quarter === q);
+                      const isLocked = sub?.review_status === "Accepted";
+                      
                       return (
                         <button
                           key={q}
@@ -203,8 +189,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                                 : "bg-white border-slate-200 text-slate-600 hover:border-[#1a3a32]"
                           }`}
                         >
-                          Q{q}{" "}
-                          {sub?.review_status === "Accepted" && "✓"}
+                          Q{q} {isLocked && "✓"}
                         </button>
                       );
                     })}
@@ -215,7 +200,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                   <div className="flex items-center gap-3">
                     <ShieldCheck className="text-indigo-600" size={18} />
                     <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
-                      Annual Reporting Cycle
+                      Annual Reporting Period
                     </span>
                   </div>
                 </div>
@@ -223,34 +208,37 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
 
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Evidence Documentation
+                  Evidence Upload (PDF, Images, or Video)
                 </label>
                 <div className="relative group">
                   <input
                     type="file"
                     multiple
+                    disabled={isAccepted}
                     onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
                   />
                   <div
                     className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
-                      files.length > 0
+                      isAccepted 
+                        ? "bg-slate-50 border-slate-200" 
+                        : files.length > 0
                         ? "border-[#1a3a32] bg-emerald-50/30"
                         : "border-slate-200 hover:border-[#1a3a32]/50 bg-white"
                     }`}
                   >
                     <Upload
                       className={`mx-auto mb-2 transition-colors ${
-                        files.length > 0
-                          ? "text-[#1a3a32]"
-                          : "text-slate-300 group-hover:text-[#1a3a32]"
+                        isAccepted ? "text-slate-200" : files.length > 0 ? "text-[#1a3a32]" : "text-slate-300 group-hover:text-[#1a3a32]"
                       }`}
                       size={24}
                     />
                     <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
-                      {files.length > 0
-                        ? `${files.length} File${files.length > 1 ? "s" : ""} Selected`
-                        : "Upload Evidence"}
+                      {isAccepted 
+                        ? "Filing Period Locked" 
+                        : files.length > 0
+                        ? `${files.length} File${files.length > 1 ? "s" : ""} Prepared`
+                        : "Click or Drag Evidence"}
                     </p>
                   </div>
                 </div>
@@ -258,24 +246,12 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                 {files.length > 0 && (
                   <div className="grid grid-cols-1 gap-2 mt-3">
                     {files.map((f, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between bg-white p-2.5 px-4 rounded-lg border border-slate-100 shadow-sm"
-                      >
+                      <div key={i} className="flex items-center justify-between bg-white p-2.5 px-4 rounded-lg border border-slate-100 shadow-sm animate-in slide-in-from-bottom-2">
                         <div className="flex items-center gap-2 overflow-hidden">
-                          <FileText
-                            size={14}
-                            className="text-slate-400 shrink-0"
-                          />
-                          <span className="text-[10px] font-bold text-slate-600 truncate">
-                            {f.name}
-                          </span>
+                          <FileText size={14} className="text-slate-400 shrink-0" />
+                          <span className="text-[10px] font-bold text-slate-600 truncate">{f.name}</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(i)}
-                          className="text-slate-300 hover:text-rose-500 transition-colors"
-                        >
+                        <button type="button" onClick={() => removeFile(i)} className="text-slate-300 hover:text-rose-500 transition-colors">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -286,16 +262,17 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
 
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Submission Narrative
+                  Submission Notes / Narrative
                 </label>
                 <textarea
                   value={notes}
+                  disabled={isAccepted}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Provide context for this period's achievements..."
-                  className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[120px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32]"
+                  placeholder={isAccepted ? "Filing is certified. No changes allowed." : "Explain how this evidence supports the target..."}
+                  className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[120px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32] disabled:bg-slate-50 disabled:text-slate-400"
                 />
               </div>
-            </form>
+            </div>
           )}
         </div>
 
@@ -303,15 +280,23 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
         <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 flex items-center justify-between shrink-0">
           <button
             onClick={handleSubmit}
-            disabled={uploading || isPending || isAccepted || success}
-            className="w-full sm:w-auto bg-[#1a3a32] text-white px-8 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-black/5"
+            // PERMANENT FIX: Button only disables if uploading, success, or the specific quarter is 'Accepted'
+            disabled={uploading || success || isAccepted}
+            className="w-full sm:w-auto bg-[#1a3a32] text-white px-8 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-black/5"
           >
             {uploading ? (
               <Loader2 className="animate-spin" size={14} />
+            ) : isAccepted ? (
+              <CheckCircle2 size={14} />
             ) : (
               <ShieldCheck size={14} />
             )}
-            {isRejected ? "Submit Correction" : "Submit for Audit"}
+            
+            {isAccepted 
+              ? "Quarterly Record Certified" 
+              : isRejected 
+              ? "Submit Correction" 
+              : "Upload & Notify Registry"}
           </button>
         </div>
       </section>

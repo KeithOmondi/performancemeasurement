@@ -2,7 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { useNavigate } from "react-router-dom";
 import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
-import { fetchTeams } from "../../store/slices/teamSlice"; // Import fetchTeams
+import { fetchTeams } from "../../store/slices/teamSlice";
 import {
   ArrowUpRight,
   AlertCircle,
@@ -23,7 +23,6 @@ const UserTasks = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
-  // Pull both assignments and teams from the store
   const { myIndicators, loading: assignmentsLoading } = useAppSelector(
     (state) => state.userIndicators,
   );
@@ -31,10 +30,9 @@ const UserTasks = () => {
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
-    dispatch(fetchTeams()); // Ensure teams are loaded to map IDs to Names
+    dispatch(fetchTeams());
   }, [dispatch]);
 
-  // Filter out fully completed tasks
   const filteredTasks = useMemo(
     () => myIndicators.filter((item) => item.status !== "Completed"),
     [myIndicators],
@@ -50,9 +48,6 @@ const UserTasks = () => {
     [filteredTasks],
   );
 
-  /**
-   * Helper to find the team name based on assignee_id
-   */
   const getTeamName = (teamId: string) => {
     const team = teams.find((t) => t.id === teamId);
     return team ? team.name : "Unknown Team";
@@ -121,8 +116,7 @@ const UserTasks = () => {
   return (
     <div className="min-h-screen bg-[#f8f9fa] p-6 md:p-10 lg:p-14 text-[#1a3a32] font-sans">
       <div className="max-w-7xl mx-auto">
-
-        {/* ── Header ─────────────────────────────────────────────────── */}
+        {/* Header */}
         <header className="mb-12 flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-gray-200 pb-12">
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-[#c2a336] text-[10px] font-black uppercase tracking-[0.3em]">
@@ -170,7 +164,7 @@ const UserTasks = () => {
           </div>
         </header>
 
-        {/* ── Table ──────────────────────────────────────────────────── */}
+        {/* Table */}
         <main className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             {filteredTasks.length > 0 ? (
@@ -245,7 +239,6 @@ const UserTasks = () => {
                                 <Users size={10} />
                                 Team
                               </div>
-                              {/* DYNAMIC TEAM NAME FETCHED FROM STORE */}
                               <p className="text-[10px] font-bold text-violet-900 truncate max-w-[150px] pl-1">
                                 {getTeamName(item.assignee_id)}
                               </p>
@@ -297,20 +290,15 @@ const UserTasks = () => {
 
                         <td className="px-10 py-7 text-right">
                           <button
-                            disabled={isUnderReview}
                             onClick={(e) => {
                               e.stopPropagation();
                               navigate(`/user/assignments/${item.id}`);
                             }}
-                            className={`p-3 rounded-xl border transition-all inline-flex items-center gap-3 group/btn ${
-                              isUnderReview
-                                ? "bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed"
-                                : "bg-white text-[#1a3a32] border-gray-200 hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32] hover:shadow-lg"
-                            }`}
+                            className="bg-white text-[#1a3a32] border border-gray-200 p-3 rounded-xl transition-all inline-flex items-center gap-3 group/btn hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32] hover:shadow-lg"
                           >
                             <span className="text-[10px] font-black uppercase tracking-widest">
                               {isUnderReview
-                                ? "In Audit"
+                                ? "Audit Mode"
                                 : isFlagged
                                   ? "Resolve"
                                   : "View"}

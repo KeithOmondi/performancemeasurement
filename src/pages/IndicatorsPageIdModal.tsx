@@ -19,6 +19,8 @@ import {
   CalendarDays,
   BarChart3,
   Repeat,
+  TrendingUp,
+  Award,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import { superAdminReview } from "../store/slices/indicatorSlice";
@@ -29,7 +31,7 @@ import {
 } from "../store/slices/indicatorSlice";
 import { type User as UserType } from "../store/slices/user/userSlice";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────── */
+/* ─── TYPES ────────────────────────────────────────────────────────────── */
 
 interface Props {
   indicator: IIndicator;
@@ -37,7 +39,7 @@ interface Props {
   onClose: () => void;
 }
 
-/* ─── HELPERS ────────────────────────────────────────────────────────── */
+/* ─── HELPERS ──────────────────────────────────────────────────────────── */
 
 const fmt = (d?: string) =>
   d
@@ -49,43 +51,77 @@ const fmt = (d?: string) =>
     : "—";
 
 const fileIcon = (type: ISubmission["documents"][0]["fileType"]) => {
-  if (type === "image") return <ImageIcon size={16} />;
-  if (type === "video") return <Video size={16} />;
-  return <FileText size={16} />;
+  if (type === "image") return <ImageIcon size={15} />;
+  if (type === "video") return <Video size={15} />;
+  return <FileText size={15} />;
 };
 
-const statusPill = (status: IIndicator["status"]) => {
-  const map: Record<string, string> = {
-    Completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    "Rejected by Admin": "bg-rose-50 text-rose-700 border-rose-200",
-    "Rejected by Super Admin": "bg-rose-50 text-rose-700 border-rose-200",
-    Pending: "bg-slate-50 text-slate-600 border-slate-200",
-    "Awaiting Admin Approval": "bg-amber-50 text-amber-700 border-amber-200",
-    "Awaiting Super Admin": "bg-blue-50 text-blue-700 border-blue-200",
+const statusConfig = (status: IIndicator["status"]) => {
+  const map: Record<string, { pill: string; dot: string }> = {
+    Completed: {
+      pill: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      dot: "bg-emerald-500",
+    },
+    "Rejected by Admin": {
+      pill: "bg-rose-50 text-rose-700 border-rose-200",
+      dot: "bg-rose-500",
+    },
+    "Rejected by Super Admin": {
+      pill: "bg-rose-50 text-rose-700 border-rose-200",
+      dot: "bg-rose-500",
+    },
+    Pending: {
+      pill: "bg-slate-50 text-slate-600 border-slate-200",
+      dot: "bg-slate-400",
+    },
+    "Awaiting Admin Approval": {
+      pill: "bg-amber-50 text-amber-700 border-amber-200",
+      dot: "bg-amber-500",
+    },
+    "Awaiting Super Admin": {
+      pill: "bg-blue-50 text-blue-700 border-blue-200",
+      dot: "bg-blue-500",
+    },
   };
-  return map[status] ?? "bg-slate-50 text-slate-600 border-slate-200";
+  return (
+    map[status] ?? {
+      pill: "bg-slate-50 text-slate-600 border-slate-200",
+      dot: "bg-slate-400",
+    }
+  );
 };
 
-const reviewStatusPill = (s: ISubmission["reviewStatus"]) => {
-  const map: Record<string, string> = {
-    Accepted: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    Verified: "bg-blue-50 text-blue-700 border-blue-200",
-    Rejected: "bg-rose-50 text-rose-700 border-rose-200",
-    Pending: "bg-slate-50 text-slate-500 border-slate-200",
+const reviewStatusConfig = (s: ISubmission["reviewStatus"]) => {
+  const map: Record<string, { cls: string; label: string }> = {
+    Accepted: {
+      cls: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      label: "Accepted",
+    },
+    Verified: {
+      cls: "bg-blue-50 text-blue-700 border-blue-200",
+      label: "Verified",
+    },
+    Rejected: {
+      cls: "bg-rose-50 text-rose-700 border-rose-200",
+      label: "Rejected",
+    },
+    Pending: {
+      cls: "bg-slate-50 text-slate-500 border-slate-200",
+      label: "Pending",
+    },
   };
-  return map[s] ?? "bg-slate-50 text-slate-500 border-slate-200";
+  return (
+    map[s] ?? { cls: "bg-slate-50 text-slate-500 border-slate-200", label: s }
+  );
 };
 
 const historyActionColor = (action: IReviewHistory["action"]) => {
-  if (action === "Approved") return "text-emerald-600 bg-emerald-50";
+  if (action === "Approved") return "text-emerald-600 bg-emerald-50 border-emerald-100";
   if (action === "Rejected" || action === "Correction Requested")
-    return "text-rose-600 bg-rose-50";
-  if (action === "Verified") return "text-blue-600 bg-blue-50";
-  return "text-slate-500 bg-slate-50";
+    return "text-rose-600 bg-rose-50 border-rose-100";
+  if (action === "Verified") return "text-blue-600 bg-blue-50 border-blue-100";
+  return "text-slate-500 bg-slate-50 border-slate-100";
 };
-
-const quarterBadge = (q: number, isAnnual: boolean) =>
-  isAnnual ? "ANNUAL" : `Q${q}`;
 
 const quarterLabel = (q: number) => {
   const map: Record<number, string> = {
@@ -97,7 +133,7 @@ const quarterLabel = (q: number) => {
   return map[q] ?? `Q${q}`;
 };
 
-/* ─── QUARTERLY TRACKER ──────────────────────────────────────────────── */
+/* ─── QUARTERLY TRACKER ─────────────────────────────────────────────────── */
 
 const QuarterlyTracker = ({
   submissions,
@@ -107,7 +143,8 @@ const QuarterlyTracker = ({
   activeQuarter: number;
 }) => (
   <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
-    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">
+    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-1.5">
+      <TrendingUp size={10} className="text-slate-300" />
       Quarterly Submission Progress
     </p>
     <div className="grid grid-cols-4 gap-2">
@@ -123,7 +160,7 @@ const QuarterlyTracker = ({
             ? "bg-rose-50 border-rose-200"
             : "bg-blue-50 border-blue-200"
           : isActive
-          ? "bg-amber-50 border-amber-200"
+          ? "bg-amber-50 border-amber-300"
           : "bg-slate-50 border-slate-100";
 
         const textClass = sub
@@ -142,7 +179,7 @@ const QuarterlyTracker = ({
             className={`relative flex flex-col items-center p-3 rounded-xl border-2 transition-all ${containerClass}`}
           >
             {isActive && !sub && (
-              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 bg-amber-500 text-white text-[7px] font-black rounded uppercase tracking-wider whitespace-nowrap">
+              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 bg-amber-500 text-white text-[7px] font-black rounded uppercase tracking-wider whitespace-nowrap shadow-sm">
                 Active
               </span>
             )}
@@ -150,7 +187,13 @@ const QuarterlyTracker = ({
               Q{q}
             </span>
             <span className="text-[8px] text-slate-400 font-medium mt-0.5 text-center">
-              {sub ? sub.reviewStatus : isFuture ? "Pending" : isActive ? "Open" : "Missed"}
+              {sub
+                ? sub.reviewStatus
+                : isFuture
+                ? "Pending"
+                : isActive
+                ? "Open"
+                : "Missed"}
             </span>
             {sub && (
               <span className={`text-[10px] font-bold mt-1 ${textClass}`}>
@@ -164,49 +207,72 @@ const QuarterlyTracker = ({
   </div>
 );
 
-/* ─── ANNUAL SUMMARY ─────────────────────────────────────────────────── */
+/* ─── ANNUAL SUMMARY ────────────────────────────────────────────────────── */
 
 const AnnualSummary = ({ indicator }: { indicator: IIndicator }) => {
   const achieved = indicator.currentTotalAchieved ?? 0;
   const target = indicator.target ?? 0;
-  const pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : 0;
+  const pct =
+    target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : 0;
 
   return (
     <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
       <div className="flex items-center gap-2 mb-4">
-        <CalendarDays size={14} className="text-violet-500" />
+        <CalendarDays size={13} className="text-violet-500" />
         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
           Annual Reporting Window
         </p>
       </div>
-      <div className="flex items-end justify-between mb-3">
+      <div className="flex items-end justify-between mb-4">
         <div>
-          <p className="text-[9px] font-black text-slate-400 uppercase">Achieved</p>
-          <p className="text-2xl font-serif font-bold text-emerald-600">
+          <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5">
+            Achieved
+          </p>
+          <p className="text-3xl font-serif font-bold text-emerald-600 leading-none">
             {achieved}
-            <span className="text-sm text-slate-400 font-medium ml-1">{indicator.unit}</span>
+            <span className="text-sm text-slate-400 font-medium ml-1">
+              {indicator.unit}
+            </span>
           </p>
         </div>
         <div className="text-right">
-          <p className="text-[9px] font-black text-slate-400 uppercase">Target</p>
-          <p className="text-2xl font-serif font-bold text-[#1d3331]">
+          <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5">
+            Target
+          </p>
+          <p className="text-3xl font-serif font-bold text-[#1d3331] leading-none">
             {target}
-            <span className="text-sm text-slate-400 font-medium ml-1">{indicator.unit}</span>
+            <span className="text-sm text-slate-400 font-medium ml-1">
+              {indicator.unit}
+            </span>
           </p>
         </div>
       </div>
-      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
         <div
-          className="h-full bg-emerald-500 rounded-full transition-all duration-700"
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full transition-all duration-700"
+          style={{
+            width: `${pct}%`,
+            background:
+              pct >= 100
+                ? "#10b981"
+                : pct >= 60
+                ? "#3b82f6"
+                : "#f59e0b",
+          }}
         />
       </div>
-      <p className="text-[9px] font-black text-slate-400 mt-2 text-right">{pct}% of annual target</p>
+      <div className="flex items-center justify-between mt-2">
+        <span className="text-[9px] text-slate-300 font-medium">0</span>
+        <span className="text-[9px] font-black text-slate-500">
+          {pct}% of annual target
+        </span>
+        <span className="text-[9px] text-slate-300 font-medium">{target}</span>
+      </div>
     </div>
   );
 };
 
-/* ─── SUBMISSION CARD ─────────────────────────────────────────────────── */
+/* ─── SUBMISSION CARD ───────────────────────────────────────────────────── */
 
 const SubmissionCard = ({
   sub,
@@ -216,6 +282,7 @@ const SubmissionCard = ({
   isAnnual: boolean;
 }) => {
   const [expanded, setExpanded] = useState(true);
+  const { cls, label } = reviewStatusConfig(sub.reviewStatus);
 
   return (
     <div className="border border-slate-100 rounded-2xl overflow-hidden bg-white shadow-sm">
@@ -223,16 +290,18 @@ const SubmissionCard = ({
         onClick={() => setExpanded((p) => !p)}
         className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50/60 transition-colors"
       >
-        <div className="flex items-center gap-3">
-          <span className="px-2.5 py-1 bg-[#1d3331] text-white text-[9px] font-black rounded-lg uppercase tracking-widest">
-            {quarterBadge(sub.quarter, isAnnual)}
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="px-2.5 py-1 bg-[#1d3331] text-white text-[9px] font-black rounded-lg uppercase tracking-widest shrink-0">
+            {isAnnual ? "ANNUAL" : `Q${sub.quarter}`}
           </span>
-          <div className="text-left">
-            <p className="text-[11px] font-bold text-[#1d3331] uppercase tracking-tight">
-              {isAnnual ? "Annual Report" : quarterLabel(sub.quarter)} · Submitted {fmt(sub.submittedAt)}
+          <div className="text-left min-w-0">
+            <p className="text-[11px] font-bold text-[#1d3331] uppercase tracking-tight truncate">
+              {isAnnual ? "Annual Report" : quarterLabel(sub.quarter)} ·{" "}
+              Submitted {fmt(sub.submittedAt)}
             </p>
             <p className="text-[10px] text-slate-400 font-medium">
-              {sub.documents.length} document{sub.documents.length !== 1 ? "s" : ""}
+              {sub.documents.length} document
+              {sub.documents.length !== 1 ? "s" : ""}
               {sub.resubmissionCount > 0 && (
                 <span className="ml-2 text-amber-500">
                   · {sub.resubmissionCount}× resubmitted
@@ -241,13 +310,11 @@ const SubmissionCard = ({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <span
-            className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${reviewStatusPill(
-              sub.reviewStatus
-            )}`}
+            className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${cls}`}
           >
-            {sub.reviewStatus}
+            {label}
           </span>
           {expanded ? (
             <ChevronUp size={14} className="text-slate-400" />
@@ -263,7 +330,7 @@ const SubmissionCard = ({
             <span className="text-[9px] font-black text-slate-400 uppercase">
               {isAnnual ? "Annual Achieved:" : "Achieved This Quarter:"}
             </span>
-            <span className="text-[12px] font-bold text-[#1d3331]">
+            <span className="text-[13px] font-bold text-[#1d3331]">
               {sub.achievedValue}
             </span>
           </div>
@@ -271,7 +338,9 @@ const SubmissionCard = ({
           {sub.documents.length === 0 ? (
             <div className="flex items-center gap-2 py-3 text-slate-300">
               <AlertCircle size={14} />
-              <span className="text-[10px] font-bold uppercase">No documents attached</span>
+              <span className="text-[10px] font-bold uppercase">
+                No documents attached
+              </span>
             </div>
           ) : (
             sub.documents.map((doc) => (
@@ -279,12 +348,12 @@ const SubmissionCard = ({
                 key={doc.evidencePublicId}
                 className="group flex items-center justify-between p-3.5 bg-[#fcfcf7] border border-slate-100 rounded-xl hover:border-[#1d3331]/20 hover:bg-white transition-all"
               >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-white border border-slate-100 rounded-lg text-slate-400 group-hover:text-[#1d3331] group-hover:border-[#1d3331]/20 transition-colors shadow-sm">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 bg-white border border-slate-100 rounded-lg text-slate-400 group-hover:text-[#1d3331] group-hover:border-[#1d3331]/20 transition-colors shadow-sm shrink-0">
                     {fileIcon(doc.fileType)}
                   </div>
-                  <div>
-                    <p className="text-[12px] font-bold text-slate-700 truncate max-w-[220px]">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-bold text-slate-700 truncate max-w-[200px]">
                       {doc.fileName || `Evidence_${doc.fileType}`}
                     </p>
                     <p className="text-[9px] text-slate-400 uppercase font-black tracking-wider">
@@ -301,9 +370,9 @@ const SubmissionCard = ({
                   href={doc.evidenceUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="p-2 text-slate-300 hover:text-[#1d3331] transition-colors rounded-lg hover:bg-slate-100"
+                  className="p-2 text-slate-300 hover:text-[#1d3331] transition-colors rounded-lg hover:bg-slate-100 shrink-0"
                 >
-                  <ExternalLink size={15} />
+                  <ExternalLink size={14} />
                 </a>
               </div>
             ))
@@ -336,19 +405,25 @@ const SubmissionCard = ({
   );
 };
 
-/* ─── HISTORY ITEM ────────────────────────────────────────────────────── */
+/* ─── HISTORY ITEM ──────────────────────────────────────────────────────── */
 
 const HistoryItem = ({ entry }: { entry: IReviewHistory }) => (
   <div className="flex gap-4 items-start">
     <div
-      className={`mt-0.5 p-1.5 rounded-lg shrink-0 ${historyActionColor(entry.action)}`}
+      className={`mt-0.5 p-1.5 rounded-lg shrink-0 border ${historyActionColor(
+        entry.action
+      )}`}
     >
-      <ShieldCheck size={13} />
+      <ShieldCheck size={12} />
     </div>
     <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-bold text-[#1d3331]">{entry.action}</span>
-        <span className="text-[9px] text-slate-400 font-medium shrink-0">{fmt(entry.at)}</span>
+        <span className="text-[11px] font-bold text-[#1d3331]">
+          {entry.action}
+        </span>
+        <span className="text-[9px] text-slate-400 font-medium shrink-0">
+          {fmt(entry.at)}
+        </span>
       </div>
       <p className="text-[10px] text-slate-500 font-medium mt-0.5">
         by{" "}
@@ -358,13 +433,15 @@ const HistoryItem = ({ entry }: { entry: IReviewHistory }) => (
         · {entry.reviewerRole}
       </p>
       {entry.reason && (
-        <p className="text-[10px] text-slate-400 mt-1 italic">"{entry.reason}"</p>
+        <p className="text-[10px] text-slate-400 mt-1.5 italic bg-slate-50 rounded-lg px-2.5 py-1.5 border border-slate-100">
+          "{entry.reason}"
+        </p>
       )}
     </div>
   </div>
 );
 
-/* ─── MAIN MODAL ─────────────────────────────────────────────────────── */
+/* ─── MAIN MODAL ─────────────────────────────────────────────────────────── */
 
 const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const dispatch = useAppDispatch();
@@ -372,21 +449,23 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   const isAnnual = indicator.reportingCycle === "Annual";
 
+  /* ── KEY FIX: buttons visible for all statuses except Completed ── */
+  const isCompleted = indicator.status === "Completed";
+  const canReview = !isCompleted;
+
   const [activeTab, setActiveTab] = useState<
     "overview" | "evidence" | "history" | "team"
   >("overview");
 
-  const [reviewAction, setReviewAction] = useState<"approve" | "reject" | null>(null);
+  const [reviewAction, setReviewAction] = useState<"approve" | "reject" | null>(
+    null
+  );
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
 
   const submissions: ISubmission[] = indicator.submissions ?? [];
   const history: IReviewHistory[] = indicator.reviewHistory ?? [];
 
-  const canReview = indicator.status === "Awaiting Super Admin";
-  const isCompleted = indicator.status === "Completed";
-
-  // For quarterly: sum only accepted quarter values for a meaningful total
   const acceptedTotal = isAnnual
     ? indicator.currentTotalAchieved
     : submissions
@@ -396,27 +475,25 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   /* ── handlers ── */
 
   const handleReview = async () => {
-  if (reviewAction === "reject" && !comment.trim()) {
-    setCommentError("A reason is required when rejecting.");
-    return;
-  }
-  setCommentError("");
+    if (reviewAction === "reject" && !comment.trim()) {
+      setCommentError("A reason is required when rejecting.");
+      return;
+    }
+    setCommentError("");
 
-  await dispatch(
-    superAdminReview({
-      id: indicator.id,
-      reviewData: {
-        // Change 'action' to 'decision' to match ISuperAdminReviewPayload
-        decision: reviewAction === "approve" ? "Approved" : "Rejected",
-        reason: comment.trim() || "Approved by Super Admin",
-        // Note: reviewerRole was removed because it's not in your interface
-      },
-    })
-  );
+    await dispatch(
+      superAdminReview({
+        id: indicator.id,
+        reviewData: {
+          decision: reviewAction === "approve" ? "Approved" : "Rejected",
+          reason: comment.trim() || "Approved by Super Admin",
+        },
+      })
+    );
 
-  setReviewAction(null);
-  setComment("");
-};
+    setReviewAction(null);
+    setComment("");
+  };
 
   const cancelReview = () => {
     setReviewAction(null);
@@ -427,10 +504,20 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   /* ── tabs ── */
   const tabs = [
     { key: "overview", label: "Overview" },
-    { key: "evidence", label: "Evidence", badge: submissions.length || undefined },
-    { key: "history", label: "History", badge: history.length || undefined },
+    {
+      key: "evidence",
+      label: "Evidence",
+      badge: submissions.length || undefined,
+    },
+    {
+      key: "history",
+      label: "History",
+      badge: history.length || undefined,
+    },
     { key: "team", label: "Team" },
   ] as const;
+
+  const { pill, dot } = statusConfig(indicator.status);
 
   return (
     <div className="flex flex-col h-full bg-[#fcfcf7] font-sans">
@@ -441,18 +528,19 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           <div className="flex items-start gap-4 min-w-0">
             <div
               className={`mt-0.5 p-2.5 rounded-xl shrink-0 ${
-                isCompleted ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                isCompleted
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-amber-50 text-amber-600"
               }`}
             >
-              {isCompleted ? <CheckCircle2 size={20} /> : <Clock size={20} />}
+              {isCompleted ? <Award size={20} /> : <Clock size={20} />}
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
                   {indicator.id.slice(-8).toUpperCase()}
                 </span>
                 <span className="text-slate-200">·</span>
-                {/* Visually distinct cycle badge */}
                 <span
                   className={`inline-flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded border uppercase tracking-widest ${
                     isAnnual
@@ -460,13 +548,21 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                       : "bg-sky-50 text-sky-600 border-sky-200"
                   }`}
                 >
-                  {isAnnual ? <CalendarDays size={9} /> : <Repeat size={9} />}
+                  {isAnnual ? (
+                    <CalendarDays size={9} />
+                  ) : (
+                    <Repeat size={9} />
+                  )}
                   {indicator.reportingCycle}
                 </span>
-                <span className="text-slate-200">·</span>
-                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                  {indicator.perspective ?? "—"}
-                </span>
+                {indicator.perspective && (
+                  <>
+                    <span className="text-slate-200">·</span>
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                      {indicator.perspective}
+                    </span>
+                  </>
+                )}
               </div>
               <h2 className="text-[15px] font-bold text-[#1d3331] leading-snug line-clamp-2">
                 {indicator.activityDescription || "Indicator Details"}
@@ -486,16 +582,17 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           </button>
         </div>
 
-        {/* Status + metrics */}
+        {/* Status strip */}
         <div className="flex items-center gap-3 mt-4 flex-wrap">
           <span
-            className={`inline-flex items-center px-3 py-1 rounded-full text-[9px] font-black border uppercase tracking-wider ${statusPill(
-              indicator.status
-            )}`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black border uppercase tracking-wider ${pill}`}
           >
+            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
             {indicator.status}
           </span>
-          <span className="text-[10px] font-bold text-slate-400">Wt. {indicator.weight}%</span>
+          <span className="text-[10px] font-bold text-slate-400">
+            Wt. {indicator.weight}%
+          </span>
           <span className="text-slate-200">·</span>
           {!isAnnual && (
             <>
@@ -505,12 +602,14 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               <span className="text-slate-200">·</span>
             </>
           )}
-          <span className="text-[10px] font-bold text-slate-400">Due {fmt(indicator.deadline)}</span>
+          <span className="text-[10px] font-bold text-slate-400">
+            Due {fmt(indicator.deadline)}
+          </span>
         </div>
       </div>
 
       {/* ── TABS ── */}
-      <div className="flex px-6 bg-white border-b border-slate-100 gap-6 overflow-x-auto no-scrollbar">
+      <div className="flex px-6 bg-white border-b border-slate-100 gap-6 overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -525,7 +624,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             {"badge" in t && t.badge !== undefined && (
               <span
                 className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${
-                  activeTab === t.key ? "bg-[#1d3331] text-white" : "bg-slate-100 text-slate-400"
+                  activeTab === t.key
+                    ? "bg-[#1d3331] text-white"
+                    : "bg-slate-100 text-slate-400"
                 }`}
               >
                 {t.badge}
@@ -542,21 +643,19 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
         {activeTab === "overview" && (
           <div className="space-y-4">
             {isAnnual ? (
-              /* Annual: full-year progress card */
               <AnnualSummary indicator={indicator} />
             ) : (
-              /* Quarterly: progress + quarter tracker */
               <>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-5 bg-white border border-slate-100 rounded-2xl shadow-sm">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
                       Overall Progress
                     </p>
-                    <p className="text-3xl font-serif font-bold text-[#1d3331]">
+                    <p className="text-3xl font-serif font-bold text-[#1d3331] leading-none">
                       {indicator.progress}
                       <span className="text-lg text-slate-400">%</span>
                     </p>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3">
+                    <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden">
                       <div
                         className="bg-emerald-500 h-full rounded-full transition-all duration-700"
                         style={{ width: `${indicator.progress}%` }}
@@ -565,17 +664,25 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                   </div>
                   <div className="p-5 bg-white border border-slate-100 rounded-2xl shadow-sm space-y-3">
                     <div>
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Target</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                        Target
+                      </p>
                       <p className="text-lg font-bold text-[#1d3331]">
                         {indicator.target}{" "}
-                        <span className="text-slate-400 text-sm font-medium">{indicator.unit}</span>
+                        <span className="text-slate-400 text-sm font-medium">
+                          {indicator.unit}
+                        </span>
                       </p>
                     </div>
                     <div className="border-t border-slate-50 pt-3">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Accepted Total</p>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                        Accepted Total
+                      </p>
                       <p className="text-lg font-bold text-emerald-600">
                         {acceptedTotal}{" "}
-                        <span className="text-slate-400 text-sm font-medium">{indicator.unit}</span>
+                        <span className="text-slate-400 text-sm font-medium">
+                          {indicator.unit}
+                        </span>
                       </p>
                     </div>
                   </div>
@@ -611,15 +718,19 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </div>
             )}
 
-            {/* Contextual cycle note */}
+            {/* Cycle info note */}
             <div
               className={`flex items-start gap-3 p-4 rounded-2xl border ${
-                isAnnual ? "bg-violet-50 border-violet-100" : "bg-sky-50 border-sky-100"
+                isAnnual
+                  ? "bg-violet-50 border-violet-100"
+                  : "bg-sky-50 border-sky-100"
               }`}
             >
               <BarChart3
-                size={16}
-                className={`mt-0.5 shrink-0 ${isAnnual ? "text-violet-500" : "text-sky-500"}`}
+                size={15}
+                className={`mt-0.5 shrink-0 ${
+                  isAnnual ? "text-violet-500" : "text-sky-500"
+                }`}
               />
               <div>
                 <p
@@ -646,21 +757,19 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
         {/* ── EVIDENCE ── */}
         {activeTab === "evidence" && (
           <div className="space-y-4">
-            {/* Quarterly mini-tracker at top of evidence tab */}
             {!isAnnual && submissions.length > 0 && (
               <div className="grid grid-cols-4 gap-2">
                 {([1, 2, 3, 4] as const).map((q) => {
                   const sub = submissions.find((s) => s.quarter === q);
+                  const { cls } = sub
+                    ? reviewStatusConfig(sub.reviewStatus)
+                    : { cls: "" };
                   return (
                     <div
                       key={q}
                       className={`text-center py-2 px-1 rounded-xl text-[9px] font-black uppercase border ${
                         sub
-                          ? sub.reviewStatus === "Accepted"
-                            ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                            : sub.reviewStatus === "Rejected"
-                            ? "bg-rose-50 border-rose-200 text-rose-700"
-                            : "bg-blue-50 border-blue-200 text-blue-700"
+                          ? cls
                           : q === indicator.activeQuarter
                           ? "bg-amber-50 border-amber-200 text-amber-600"
                           : "bg-slate-50 border-slate-100 text-slate-300"
@@ -717,7 +826,10 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-5 shadow-sm">
                 {history
                   .slice()
-                  .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+                  .sort(
+                    (a, b) =>
+                      new Date(b.at).getTime() - new Date(a.at).getTime()
+                  )
                   .map((entry, i) => (
                     <div key={entry.id ?? i}>
                       <HistoryItem entry={entry} />
@@ -748,7 +860,8 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                   </p>
                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight mt-0.5">
                     {indicator.assignmentType} Assignment
-                    {indicator.assigneePjNumber && ` · ${indicator.assigneePjNumber}`}
+                    {indicator.assigneePjNumber &&
+                      ` · ${indicator.assigneePjNumber}`}
                   </p>
                 </div>
               </div>
@@ -760,7 +873,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                   Assigned By
                 </p>
                 <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold shrink-0">
+                  <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-sm shrink-0">
                     {indicator.assignedByName[0]}
                   </div>
                   <p className="text-[13px] font-bold text-slate-700">
@@ -775,6 +888,18 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
       {/* ── FOOTER / REVIEW PANEL ── */}
       <div className="border-t border-slate-100 bg-white">
+
+        {/* Completed banner */}
+        {isCompleted && (
+          <div className="mx-6 mt-5 flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+            <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+            <p className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
+              This activity has been marked complete
+            </p>
+          </div>
+        )}
+
+        {/* Review actions — visible for ALL statuses except Completed */}
         {canReview && (
           <div className="px-6 pt-5 pb-2">
             {!reviewAction ? (
@@ -782,23 +907,27 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                 <button
                   onClick={() => setReviewAction("approve")}
                   disabled={actionLoading}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98] shadow-md shadow-emerald-900/10"
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98] shadow-md shadow-emerald-900/10"
                 >
-                  <ThumbsUp size={14} strokeWidth={2.5} /> Mark Complete
+                  <ThumbsUp size={14} strokeWidth={2.5} />
+                  Mark Complete
                 </button>
                 <button
                   onClick={() => setReviewAction("reject")}
                   disabled={actionLoading}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-white border border-rose-200 hover:bg-rose-50 text-rose-600 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98]"
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-white border border-rose-200 hover:bg-rose-50 disabled:opacity-60 text-rose-600 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98]"
                 >
-                  <ThumbsDown size={14} strokeWidth={2.5} /> Reject
+                  <ThumbsDown size={14} strokeWidth={2.5} />
+                  Reject
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
                 <div>
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
-                    {reviewAction === "approve" ? "Final Comment (optional)" : "Reason for Rejection *"}
+                    {reviewAction === "approve"
+                      ? "Final Comment (optional)"
+                      : "Reason for Rejection *"}
                   </label>
                   <textarea
                     value={comment}
@@ -817,14 +946,16 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     }`}
                   />
                   {commentError && (
-                    <p className="text-[10px] text-rose-500 font-bold mt-1">{commentError}</p>
+                    <p className="text-[10px] text-rose-500 font-bold mt-1">
+                      {commentError}
+                    </p>
                   )}
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={handleReview}
                     disabled={actionLoading}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98] shadow-md ${
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all active:scale-[0.98] shadow-md disabled:opacity-60 ${
                       reviewAction === "approve"
                         ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-900/10"
                         : "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-900/10"
@@ -833,30 +964,25 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     {actionLoading ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : reviewAction === "approve" ? (
-                      <><CheckCircle2 size={14} /> Confirm Complete</>
+                      <>
+                        <CheckCircle2 size={14} /> Confirm Complete
+                      </>
                     ) : (
-                      <><ThumbsDown size={14} /> Confirm Reject</>
+                      <>
+                        <ThumbsDown size={14} /> Confirm Reject
+                      </>
                     )}
                   </button>
                   <button
                     onClick={cancelReview}
                     disabled={actionLoading}
-                    className="px-4 py-3 rounded-xl border border-slate-200 text-slate-500 text-[11px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all"
+                    className="px-4 py-3 rounded-xl border border-slate-200 text-slate-500 text-[11px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all disabled:opacity-60"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {isCompleted && (
-          <div className="mx-6 mt-5 mb-2 flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
-            <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-            <p className="text-[11px] font-black text-emerald-700 uppercase tracking-wider">
-              This activity has been marked complete
-            </p>
           </div>
         )}
 

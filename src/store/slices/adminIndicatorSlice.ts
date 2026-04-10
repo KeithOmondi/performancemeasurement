@@ -53,6 +53,11 @@ export interface IAdminReviewPayload {
   submissionUpdates?: ISubmissionReviewUpdate[];
 }
 
+export interface IReopenPayload {
+  newDeadline: string; // ISO date string
+  reason?: string;
+}
+
 export interface IAdminIndicator {
   id: string;
   perspective: string;
@@ -68,6 +73,7 @@ export interface IAdminIndicator {
   pjNumber?: string;
   reportingCycle: "Quarterly" | "Annual";
   activeQuarter: number;
+  deadline: string;
   submissions: ISubmission[];
   reviewHistory?: IReviewHistoryEntry[];
   updatedAt: string;
@@ -81,6 +87,7 @@ interface IAdminIndicatorState {
   selectedIndicator: IAdminIndicator | null;
   isLoading: boolean;
   isReviewing: boolean;
+  isReopening: boolean; // separate flag so the UI can show a distinct loading state
   error: string | null;
 }
 
@@ -93,6 +100,7 @@ const initialState: IAdminIndicatorState = {
   selectedIndicator: null,
   isLoading: false,
   isReviewing: false,
+  isReopening: false,
   error: null,
 };
 
@@ -124,7 +132,6 @@ const upsertIntoAssignments = (
 
 /* ─── THUNKS ───────────────────────────────────────────────────────── */
 
-// Define a common error shape for the catch blocks
 interface KnownError {
   response?: { data?: { message?: string } };
   message?: string;
@@ -204,6 +211,25 @@ export const processAdminReview = createAsyncThunk<
     const err = error as KnownError;
     return rejectWithValue(
       err.response?.data?.message ?? err.message ?? "Review submission failed"
+    );
+  }
+});
+
+export const reopenIndicator = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IReopenPayload },
+  { rejectValue: string }
+>("adminIndicators/reopen", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    const response = await apiPrivate.patch<{ data: IAdminIndicator }>(
+      `/indicators/${id}/reopen`,
+      payload
+    );
+    return response.data.data;
+  } catch (error) {
+    const err = error as KnownError;
+    return rejectWithValue(
+      err.response?.data?.message ?? err.message ?? "Failed to reopen indicator"
     );
   }
 });
@@ -289,6 +315,26 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(processAdminReview.rejected, (state, action) => {
         state.isReviewing = false;
+        state.error = action.payload ?? "An unexpected error occurred";
+      })
+
+      // reopenIndicator
+      .addCase(reopenIndicator.pending, (state) => {
+        state.isReopening = true;
+        state.error = null;
+      })
+      .addCase(reopenIndicator.fulfilled, (state, action) => {
+        state.isReopening = false;
+        const updated = action.payload;
+        upsertIntoAssignments(state, updated);
+        // Keep the modal in sync — the status and deadline will have changed
+        if (state.selectedIndicator?.id === updated.id) {
+          state.selectedIndicator = updated;
+        }
+        refreshQueues(state);
+      })
+      .addCase(reopenIndicator.rejected, (state, action) => {
+        state.isReopening = false;
         state.error = action.payload ?? "An unexpected error occurred";
       });
   },

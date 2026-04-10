@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   X, CheckCircle2, FileText, ShieldCheck,
-  RotateCcw, Loader2, Lock, User, Users, 
-  ExternalLink, UserMinus, Settings2
+  RotateCcw, Loader2, Lock, User, Users,
+  ExternalLink, UserMinus, Settings2, RefreshCw, CalendarClock,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -12,6 +12,9 @@ import {
   type IIndicator,
   type ISubmission,
 } from "../../store/slices/indicatorSlice";
+import {
+  reopenIndicator,
+} from "../../store/slices/adminIndicatorSlice";
 import type { User as StaffUser } from "../../store/slices/user/userSlice";
 import FilePreviewModal from "../PreviewModal";
 import SuperAdminEditIndicator from "./SuperAdminEditIndicator";
@@ -61,16 +64,25 @@ const pickActiveSubmission = (submissions: ISubmission[], quarter: number): ISub
   return forQuarter[forQuarter.length - 1];
 };
 
+/* Statuses where it makes sense for a super-admin to reopen a period */
+const REOPENABLE_STATUSES = new Set([
+  "Completed",
+  "Rejected",
+  "Overdue",
+  "Closed",
+]);
+
 /* ─── COMPONENT ──────────────────────────────────────────────────────── */
 
 const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const dispatch = useAppDispatch();
   const isClosingRef = useRef(false);
-  
+
   // State from Redux
   const isProcessing = useAppSelector((s) => s.indicators.actionLoading);
   const detailLoading = useAppSelector((s) => s.indicators.detailLoading);
   const fullIndicator = useAppSelector((s) => s.indicators.selectedIndicator);
+  const isReopening = useAppSelector((s) => s.adminIndicators.isReopening);
   const { plans } = useAppSelector((s) => s.strategicPlan) as { plans: IStrategicPlan[] };
 
   // Stabilized Data Source
@@ -96,9 +108,14 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [progressOverride, setProgressOverride] = useState<number>(calculatedProgress);
 
+  // Reopen-specific state
+  const [showReopenPanel, setShowReopenPanel] = useState(false);
+  const [reopenDeadline, setReopenDeadline] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
+
   /**
    * FIX: Cascading Render Error Solution
-   * We store the last processed ID in state. If the current indicator ID 
+   * We store the last processed ID in state. If the current indicator ID
    * doesn't match, we update the state synchronously during render.
    */
   const [prevId, setPrevId] = useState(ind?.id);
@@ -109,6 +126,9 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     setNextDeadline("");
     setShowRejectReason(false);
     setProgressOverride(calculatedProgress);
+    setShowReopenPanel(false);
+    setReopenDeadline("");
+    setReopenReason("");
   }
 
   /* ── Lifecycle ── */
@@ -150,7 +170,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     if (!ind?.id) return;
     if (decision === "Rejected" && !showRejectReason) return setShowRejectReason(true);
     if (decision === "Rejected" && !decisionReason.trim()) return toast.error("Please provide a reason for rejection.");
-    
+
     const targetQ = ind?.activeQuarter ?? 1;
     const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
 
@@ -176,13 +196,39 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     }
   }, [dispatch, decisionReason, ind, nextDeadline, handleInternalClose, progressOverride, showRejectReason]);
 
+  const handleReopen = useCallback(async () => {
+    if (!ind?.id) return;
+    if (!reopenDeadline) return toast.error("Please set a new deadline before reopening.");
+
+    try {
+      await dispatch(
+        reopenIndicator({
+          id: ind.id,
+          payload: {
+            newDeadline: new Date(reopenDeadline).toISOString(),
+            reason: reopenReason.trim() || undefined,
+          },
+        })
+      ).unwrap();
+      toast.success("Indicator reopened successfully.");
+      setShowReopenPanel(false);
+      setReopenDeadline("");
+      setReopenReason("");
+      // Refresh the detail view so the updated status/deadline appear
+      dispatch(fetchIndicatorById(ind.id));
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to reopen indicator.";
+      toast.error(errorMessage);
+    }
+  }, [dispatch, ind, reopenDeadline, reopenReason]);
+
   /* ── Derived Data for UI ── */
   const targetQ = ind?.activeQuarter ?? 1;
   const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
   const cycleLabel = ind?.reportingCycle === "Annual" ? "Annual" : `Q${targetQ}`;
-  
-  const activeSubmission = useMemo(() => 
-    pickActiveSubmission(ind?.submissions ?? [], targetQ), 
+
+  const activeSubmission = useMemo(() =>
+    pickActiveSubmission(ind?.submissions ?? [], targetQ),
   [ind?.submissions, targetQ]);
 
   const planContext = useMemo(() => {
@@ -190,7 +236,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     const plan = plans.find((p) => String(p.id) === String(ind.strategicPlanId));
     const objective = plan?.objectives?.find((o) => String(o.id || o._id) === String(ind.objectiveId));
     const activity = objective?.activities?.find((a) => String(a.id || a._id) === String(ind.activityId));
-    
+
     return {
       perspective: plan?.perspective ?? ind.perspective ?? "N/A",
       objectiveTitle: objective?.title ?? ind.objectiveTitle ?? "Strategic Objective",
@@ -200,6 +246,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   const isCertified = activeSubmission?.reviewStatus === "Accepted" || ind?.status === "Completed";
   const canAct = ind?.status === "Awaiting Super Admin" && !isCertified;
+  const canReopen = ind?.status != null && REOPENABLE_STATUSES.has(ind.status);
   const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
   if (!ind) {
@@ -264,26 +311,26 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.15em]">KPI Management</h3>
                 <div className="flex items-center gap-4">
-                    <button 
-                        onClick={() => setIsEditModalOpen(true)}
-                        className="flex items-center gap-2 text-[#1d3331] hover:text-[#c2a336] text-[10px] font-black uppercase transition-colors"
-                    >
-                        <Settings2 size={14} />
-                        Configure KPI
-                    </button>
+                  <button
+                    onClick={() => setIsEditModalOpen(true)}
+                    className="flex items-center gap-2 text-[#1d3331] hover:text-[#c2a336] text-[10px] font-black uppercase transition-colors"
+                  >
+                    <Settings2 size={14} />
+                    Configure KPI
+                  </button>
 
-                    {!isCertified && ind.assignee && (
-                        <button 
-                        onClick={handleUnassign}
-                        className="flex items-center gap-2 text-rose-500 hover:text-rose-700 text-[10px] font-black uppercase transition-colors"
-                        >
-                        <UserMinus size={14} />
-                        Unassign
-                        </button>
-                    )}
+                  {!isCertified && ind.assignee && (
+                    <button
+                      onClick={handleUnassign}
+                      className="flex items-center gap-2 text-rose-500 hover:text-rose-700 text-[10px] font-black uppercase transition-colors"
+                    >
+                      <UserMinus size={14} />
+                      Unassign
+                    </button>
+                  )}
                 </div>
               </div>
-              
+
               {ind.assignee ? (
                 <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
                   <div className="w-11 h-11 rounded-full bg-[#1d3331] text-[#c2a336] flex items-center justify-center text-[11px] font-black border-2 border-white shadow-sm shrink-0">
@@ -331,6 +378,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </section>
             )}
 
+            {/* ── Certification Verdict ── */}
             <div className={`p-8 rounded-[2.5rem] shadow-2xl space-y-8 border-b-[10px] transition-all duration-500 ${
               isCertified ? "bg-emerald-900 border-emerald-500" : "bg-[#1d3331] border-[#c2a336]"
             } text-white`}>
@@ -379,23 +427,115 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                 </div>
               )}
             </div>
+
+            {/* ── Reopen Panel ── */}
+            {canReopen && (
+              <div className="rounded-[2rem] border border-amber-200 bg-amber-50 overflow-hidden">
+                {/* Header row — always visible */}
+                <button
+                  onClick={() => setShowReopenPanel((v) => !v)}
+                  className="w-full flex items-center justify-between px-8 py-5 text-left group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="p-2 rounded-xl bg-amber-100 border border-amber-200 text-amber-600">
+                      <RefreshCw size={18} />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-black text-amber-800 uppercase tracking-[0.2em]">Reopen Indicator</p>
+                      <p className="text-[10px] font-bold text-amber-600 mt-0.5">
+                        Current status: <span className="uppercase">{ind.status}</span>
+                        {ind.deadline && (
+                          <> &mdash; last deadline {new Date(ind.deadline).toLocaleDateString()}</>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`text-amber-400 transition-transform duration-200 ${showReopenPanel ? "rotate-180" : ""}`}>
+                    ▾
+                  </span>
+                </button>
+
+                {/* Expandable form */}
+                {showReopenPanel && (
+                  <div className="px-8 pb-8 space-y-6 animate-in fade-in duration-300 border-t border-amber-200 pt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* New deadline (required) */}
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 text-[9px] font-black uppercase text-amber-700 tracking-widest">
+                          <CalendarClock size={12} />
+                          New Deadline <span className="text-rose-400">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          min={todayStr}
+                          value={reopenDeadline}
+                          onChange={(e) => setReopenDeadline(e.target.value)}
+                          className="w-full p-4 bg-white border border-amber-200 rounded-2xl font-black text-[#1d3331] focus:border-amber-500 outline-none text-sm"
+                        />
+                      </div>
+
+                      {/* Reason (optional) */}
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black uppercase text-amber-700 tracking-widest">
+                          Reason <span className="text-amber-400">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={reopenReason}
+                          onChange={(e) => setReopenReason(e.target.value)}
+                          placeholder="e.g. Data correction required"
+                          className="w-full p-4 bg-white border border-amber-200 rounded-2xl font-black text-[#1d3331] placeholder:font-normal placeholder:text-slate-400 focus:border-amber-500 outline-none text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        onClick={handleReopen}
+                        disabled={isReopening || !reopenDeadline}
+                        className="flex-[2] py-4 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3"
+                      >
+                        {isReopening ? (
+                          <><Loader2 size={16} className="animate-spin" /> Reopening…</>
+                        ) : (
+                          <><RefreshCw size={16} /> Confirm Reopen</>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowReopenPanel(false);
+                          setReopenDeadline("");
+                          setReopenReason("");
+                        }}
+                        disabled={isReopening}
+                        className="flex-1 py-4 border border-amber-300 text-amber-700 hover:bg-amber-100 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </main>
 
       {previewFile && <FilePreviewModal url={previewFile.url} fileName={previewFile.name} onClose={() => setPreviewFile(null)} />}
-      
+
       {isEditModalOpen && (
-        <SuperAdminEditIndicator 
-          indicator={ind} 
-          onClose={() => setIsEditModalOpen(false)} 
+        <SuperAdminEditIndicator
+          indicator={ind}
+          onClose={() => setIsEditModalOpen(false)}
         />
       )}
-      
-      {isProcessing && (
+
+      {(isProcessing || isReopening) && (
         <div className="absolute inset-0 z-[100] bg-[#1d3331]/95 backdrop-blur-xl flex flex-col items-center justify-center gap-8">
           <Loader2 className="animate-spin text-[#c2a336]" size={70} />
-          <span className="text-[12px] font-black text-white uppercase tracking-[0.8em]">Updating Registry...</span>
+          <span className="text-[12px] font-black text-white uppercase tracking-[0.8em]">
+            {isReopening ? "Reopening Period…" : "Updating Registry..."}
+          </span>
         </div>
       )}
     </div>
