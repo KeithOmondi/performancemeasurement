@@ -184,12 +184,18 @@ export const addIndicatorDocuments = createAsyncThunk<
   "userIndicators/addDocuments",
   async (arg, { dispatch, rejectWithValue }) => {
     try {
-      arg.formData.append("quarter", String(arg.quarter));
+      // Append quarter if not already in formData
+      if (!arg.formData.has("quarter")) {
+        arg.formData.append("quarter", String(arg.quarter));
+      }
+      
       const response = await apiPrivate.post<{ documents: IDocumentUI[] }>(
-        `/user-indicators/${arg.id}/documents`,
+        `/user-indicators/${arg.id}/add-documents`, // Updated to match router
         arg.formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
+      
+      // Refresh details to show new documents in UI
       dispatch(fetchIndicatorDetails(arg.id));
       return response.data.documents;
     } catch (error) {

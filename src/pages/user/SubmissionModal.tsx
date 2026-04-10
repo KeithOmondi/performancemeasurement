@@ -1,8 +1,15 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
-  X, Upload, CheckCircle2, Loader2,
-  AlertCircle, Trash2, ShieldCheck, FileText, Users,
+  X,
+  Upload,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  Trash2,
+  ShieldCheck,
+  FileText,
+  Users,
 } from "lucide-react";
 import { submitIndicatorProgress } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
@@ -19,9 +26,7 @@ interface SubmissionModalProps {
 
 const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const dispatch = useDispatch<AppDispatch>();
-  const { uploading } = useSelector(
-    (state: RootState) => state.userIndicators,
-  );
+  const { uploading } = useSelector((state: RootState) => state.userIndicators);
 
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
@@ -29,7 +34,6 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
   const isAnnual = task?.reporting_cycle === "Annual";
   const isTeam = task?.assignee_model === "Team";
 
-  // Default to the current active quarter from the backend
   const [selectedQuarter, setSelectedQuarter] = useState<number>(
     isAnnual ? 1 : task?.active_quarter || 1,
   );
@@ -43,7 +47,6 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
     return () => window.removeEventListener("keydown", handleEsc);
   }, [onClose]);
 
-  // Find the submission for the quarter the user has currently selected in the modal
   const currentPeriodSubmission = useMemo(
     () =>
       task?.submissions?.find(
@@ -54,12 +57,21 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
 
   const isRejected = currentPeriodSubmission?.review_status === "Rejected";
   const isAccepted = currentPeriodSubmission?.review_status === "Accepted";
-  
+
   if (!task) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      setFiles((prev) => [...prev, ...Array.from(e.target.files!)]);
+      const newFiles = Array.from(e.target.files);
+      // Logic to prevent exceeding 50 files
+      setFiles((prev) => {
+        const combined = [...prev, ...newFiles];
+        if (combined.length > 50) {
+          toast.error("Maximum 50 files allowed per submission.");
+          return combined.slice(0, 50);
+        }
+        return combined;
+      });
     }
   };
 
@@ -74,11 +86,12 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       return toast.error("At least one evidence file is required.");
 
     const formData = new FormData();
-    files.forEach((file) => formData.append("evidence", file));
+
+    // ✅ CRITICAL: Changed "evidence" to "documents" to match optimized backend
+    files.forEach((file) => formData.append("documents", file));
+
     formData.append("notes", notes.trim());
     formData.append("quarter", String(selectedQuarter));
-    // We pass the full target as achievedValue for binary indicators, 
-    // or you can add an input field for partial achievement here.
     formData.append("achievedValue", String(task.target));
 
     const result = await dispatch(
@@ -89,8 +102,8 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       setSuccess(true);
       toast.success(
         isRejected
-          ? "Correction submitted to Registry"
-          : "Evidence received. Internal audit triggered.",
+          ? "Correction submitted successfully"
+          : "Batch evidence uploaded. Internal audit triggered.",
       );
       setTimeout(() => {
         onClose();
@@ -107,8 +120,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
       />
 
       <section className="relative w-full max-w-lg md:max-w-xl bg-[#fcfdfb] h-full shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-500 ease-out">
-
-        {/* ── Header ──────────────────────────────────────────────── */}
+        {/* Header */}
         <div className="px-6 py-5 md:px-8 md:py-6 border-b border-slate-100 bg-white flex justify-between items-start shrink-0">
           <div className="overflow-hidden text-[#1a3a32] space-y-1">
             <h3 className="text-lg md:text-xl font-serif font-black uppercase tracking-tighter truncate">
@@ -120,7 +132,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
             {isTeam && (
               <div className="inline-flex items-center gap-1.5 bg-violet-50 border border-violet-100 text-violet-700 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider mt-1">
                 <Users size={10} />
-                Submitting on behalf of {task.assigneeName}
+                On behalf of {task.assigneeName}
               </div>
             )}
           </div>
@@ -135,7 +147,7 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
           </button>
         </div>
 
-        {/* ── Body ────────────────────────────────────────────────── */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 md:p-8 no-scrollbar bg-[#f8f9fa]">
           {success ? (
             <div className="h-full flex flex-col items-center justify-center text-center space-y-4 animate-in fade-in zoom-in duration-500">
@@ -147,34 +159,37 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                   Filing Received
                 </h4>
                 <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mt-1">
-                  The dashboard will refresh automatically
+                  Verifying batch documents...
                 </p>
               </div>
             </div>
           ) : (
             <div className="space-y-6">
-
               {isRejected && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl space-y-1">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2">
                     <AlertCircle size={12} /> Registry Findings
                   </p>
                   <p className="text-xs text-rose-600 font-medium italic">
-                    "{currentPeriodSubmission?.notes || "Review rejected documents and resubmit correct evidence."}"
+                    "
+                    {currentPeriodSubmission?.notes ||
+                      "Review rejected documents and resubmit correct evidence."}
+                    "
                   </p>
                 </div>
               )}
 
-              {!isAnnual ? (
+              {!isAnnual && (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
                     Select Reporting Quarter
                   </label>
                   <div className="grid grid-cols-4 gap-1.5">
                     {[1, 2, 3, 4].map((q) => {
-                      const sub = task.submissions?.find((s) => s.quarter === q);
+                      const sub = task.submissions?.find(
+                        (s) => s.quarter === q,
+                      );
                       const isLocked = sub?.review_status === "Accepted";
-                      
                       return (
                         <button
                           key={q}
@@ -195,20 +210,11 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                     })}
                   </div>
                 </div>
-              ) : (
-                <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <ShieldCheck className="text-indigo-600" size={18} />
-                    <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
-                      Annual Reporting Period
-                    </span>
-                  </div>
-                </div>
               )}
 
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Evidence Upload (PDF, Images, or Video)
+                  Evidence Upload (Limit: 50 Files)
                 </label>
                 <div className="relative group">
                   <input
@@ -220,38 +226,58 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
                   />
                   <div
                     className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
-                      isAccepted 
-                        ? "bg-slate-50 border-slate-200" 
+                      isAccepted
+                        ? "bg-slate-50 border-slate-200"
                         : files.length > 0
-                        ? "border-[#1a3a32] bg-emerald-50/30"
-                        : "border-slate-200 hover:border-[#1a3a32]/50 bg-white"
+                          ? "border-[#1a3a32] bg-emerald-50/30"
+                          : "border-slate-200 hover:border-[#1a3a32]/50 bg-white"
                     }`}
                   >
                     <Upload
                       className={`mx-auto mb-2 transition-colors ${
-                        isAccepted ? "text-slate-200" : files.length > 0 ? "text-[#1a3a32]" : "text-slate-300 group-hover:text-[#1a3a32]"
+                        isAccepted
+                          ? "text-slate-200"
+                          : files.length > 0
+                            ? "text-[#1a3a32]"
+                            : "text-slate-300 group-hover:text-[#1a3a32]"
                       }`}
                       size={24}
                     />
                     <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
-                      {isAccepted 
-                        ? "Filing Period Locked" 
+                      {isAccepted
+                        ? "Filing Locked"
                         : files.length > 0
-                        ? `${files.length} File${files.length > 1 ? "s" : ""} Prepared`
-                        : "Click or Drag Evidence"}
+                          ? `${files.length} Files Selected`
+                          : "Click or Drag Documents"}
                     </p>
                   </div>
                 </div>
 
+                {/* Scannable File List */}
                 {files.length > 0 && (
-                  <div className="grid grid-cols-1 gap-2 mt-3">
+                  <div className="max-h-[200px] overflow-y-auto pr-2 space-y-2 mt-3 custom-scrollbar">
                     {files.map((f, i) => (
-                      <div key={i} className="flex items-center justify-between bg-white p-2.5 px-4 rounded-lg border border-slate-100 shadow-sm animate-in slide-in-from-bottom-2">
+                      <div
+                        key={i}
+                        className="flex items-center justify-between bg-white p-2 px-4 rounded-lg border border-slate-100 shadow-sm transition-all hover:border-slate-300"
+                      >
                         <div className="flex items-center gap-2 overflow-hidden">
-                          <FileText size={14} className="text-slate-400 shrink-0" />
-                          <span className="text-[10px] font-bold text-slate-600 truncate">{f.name}</span>
+                          <FileText
+                            size={14}
+                            className="text-slate-400 shrink-0"
+                          />
+                          <span className="text-[10px] font-bold text-slate-600 truncate">
+                            {f.name}
+                          </span>
+                          <span className="text-[8px] text-slate-400">
+                            {(f.size / (1024 * 1024)).toFixed(2)}MB
+                          </span>
                         </div>
-                        <button type="button" onClick={() => removeFile(i)} className="text-slate-300 hover:text-rose-500 transition-colors">
+                        <button
+                          type="button"
+                          onClick={() => removeFile(i)}
+                          className="text-slate-300 hover:text-rose-500"
+                        >
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -262,42 +288,49 @@ const SubmissionModal = ({ task, onClose }: SubmissionModalProps) => {
 
               <div className="space-y-2.5">
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Submission Notes / Narrative
+                  Narrative / Notes
                 </label>
                 <textarea
                   value={notes}
                   disabled={isAccepted}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder={isAccepted ? "Filing is certified. No changes allowed." : "Explain how this evidence supports the target..."}
-                  className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[120px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32] disabled:bg-slate-50 disabled:text-slate-400"
+                  placeholder="Summarize the proof provided in this batch..."
+                  className="w-full bg-white border border-slate-200 rounded-xl p-4 text-[11px] font-medium min-h-[100px] focus:border-[#1a3a32]/30 outline-none transition-all text-[#1a3a32] disabled:bg-slate-50"
                 />
               </div>
             </div>
           )}
         </div>
 
-        {/* ── Footer ──────────────────────────────────────────────── */}
-        <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 flex items-center justify-between shrink-0">
+        {/* Footer */}
+        <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 flex flex-col gap-3 shrink-0">
           <button
             onClick={handleSubmit}
-            // PERMANENT FIX: Button only disables if uploading, success, or the specific quarter is 'Accepted'
             disabled={uploading || success || isAccepted}
-            className="w-full sm:w-auto bg-[#1a3a32] text-white px-8 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-black/5"
+            className="w-full bg-[#1a3a32] text-white py-3 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 shadow-lg shadow-black/5"
           >
             {uploading ? (
-              <Loader2 className="animate-spin" size={14} />
+              <>
+                <Loader2 className="animate-spin" size={14} />
+                <span>Processing Batch Upload...</span>
+              </>
             ) : isAccepted ? (
-              <CheckCircle2 size={14} />
+              "Quarterly Record Certified"
             ) : (
-              <ShieldCheck size={14} />
+              <>
+                <ShieldCheck size={14} />
+                <span>
+                  Finalize & Submit {files.length > 0 && `(${files.length})`}
+                </span>
+              </>
             )}
-            
-            {isAccepted 
-              ? "Quarterly Record Certified" 
-              : isRejected 
-              ? "Submit Correction" 
-              : "Upload & Notify Registry"}
           </button>
+
+          {uploading && (
+            <p className="text-center text-[8px] font-bold text-slate-400 uppercase animate-pulse">
+              Stay on this page. Large files are being optimized for Cloudinary.
+            </p>
+          )}
         </div>
       </section>
     </div>
