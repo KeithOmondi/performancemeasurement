@@ -8,6 +8,7 @@ import {
   Activity,
   Inbox,
   ArrowUpRight,
+  Users,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
@@ -100,7 +101,7 @@ const AdminIndicators = () => {
     return new Map(
       pool
         .filter((ind) => ind.activity)
-        .map((ind) => [String(ind.activity), ind])
+        .map((ind) => [String(ind.activity.description), ind]) // Matching by description or activity ID if available
     );
   }, [allAssignments, pendingAdminReview, viewMode]);
 
@@ -128,8 +129,8 @@ const AdminIndicators = () => {
         const processedObjectives = (plan.objectives ?? [])
           .map((obj) => {
             const filteredActivities = (obj.activities ?? []).filter((act) => {
-              const actId = String(act.id ?? act._id);
-              const assignment = indicatorMap.get(actId);
+              // Note: Backend IAdminIndicator uses activity.description in the indicatorMap logic above
+              const assignment = indicatorMap.get(act.description);
 
               if (viewMode === "REGISTRY" && !assignment) return false;
 
@@ -268,7 +269,7 @@ const AdminIndicators = () => {
                 </th>
                 <th className="px-6 py-8 text-center">Weight</th>
                 <th className="px-6 py-8">UoM</th>
-                <th className="px-6 py-8">Assignee</th>
+                <th className="px-6 py-8">Assignee (User/Team)</th>
                 <th className="px-6 py-8 text-center">Progress</th>
                 <th className="px-6 py-8">Lifecycle Status</th>
                 <th className="px-10 py-8 text-right">Action</th>
@@ -368,7 +369,7 @@ const ObjectiveSection = ({
 
       {activities.map((act) => {
         const actId = String(act.id ?? act._id);
-        const assignment = indicatorMap.get(actId);
+        const assignment = indicatorMap.get(act.description); // Look up by description
 
         return (
           <tr
@@ -392,12 +393,24 @@ const ObjectiveSection = ({
             <td className="px-6 py-6">
               {assignment ? (
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-600/10 border border-emerald-600/20 flex items-center justify-center text-emerald-700 shrink-0">
-                    <UserCheck size={14} />
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                    assignment.pjNumber 
+                    ? "bg-emerald-600/10 border-emerald-600/20 text-emerald-700" // User style
+                    : "bg-blue-600/10 border-blue-600/20 text-blue-700" // Team style
+                  }`}>
+                    {assignment.pjNumber ? <UserCheck size={14} /> : <Users size={14} />}
                   </div>
-                  <span className="text-[10px] font-black text-slate-800 uppercase tracking-tighter">
-                    {assignment.assigneeName}
-                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-slate-800 uppercase tracking-tighter">
+                      {assignment.assigneeName}
+                    </span>
+                    {!assignment.pjNumber && (
+                      <span className="text-[8px] font-bold text-blue-500 uppercase">Team Account</span>
+                    )}
+                    {assignment.pjNumber && (
+                      <span className="text-[8px] font-bold text-slate-400 uppercase">PJ: {assignment.pjNumber}</span>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <span className="text-[9px] text-slate-200 font-black uppercase italic tracking-widest">

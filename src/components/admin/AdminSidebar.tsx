@@ -8,8 +8,9 @@ import {
   LogOut,
   X,
   BarChart3,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
-import { RiEjectFill } from "react-icons/ri";
 
 type MenuLabel = {
   type: "label";
@@ -21,7 +22,6 @@ type MenuLink = {
   name: string;
   path: string;
   icon: React.ReactNode;
-  badge?: number;
 };
 
 type MenuItem = MenuLabel | MenuLink;
@@ -38,25 +38,21 @@ const menuItems: MenuItem[] = [
     name: "PMMU Indicators",
     path: "/admin/indicators/all",
     icon: <BarChart3 size={18} />,
-    badge: 12,
   },
   {
     name: "Pending Reviews",
     path: "/admin/reviews",
     icon: <FileCheck size={18} />,
-    badge: 3,
   },
   {
     name: "Approved Submissions",
     path: "/admin/approvals",
-    icon: <RiEjectFill size={18} />,
-    badge: 3,
+    icon: <CheckCircle size={18} />,
   },
   {
     name: "Rejected Submissions",
     path: "/admin/rejects",
-    icon: <RiEjectFill size={18} />,
-    badge: 3,
+    icon: <AlertCircle size={18} />,
   },
 
   { type: "label", title: "MANAGEMENT" },
@@ -69,6 +65,7 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
   const { pathname } = useLocation();
 
   const handleLogout = () => {
+    // Implement your logout logic here
     console.log("Logout clicked");
   };
 
@@ -83,17 +80,17 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-[101] w-64 bg-[#1a2c2c] text-slate-300
+        className={`fixed inset-y-0 left-0 z-[101] w-64 bg-[#1a3a32] text-slate-300
         transform transition-transform duration-300 ease-in-out
         lg:translate-x-0 lg:sticky lg:top-0 lg:flex lg:flex-col lg:h-screen
-        border-r border-slate-700
+        border-r border-white/10
         ${isOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* Branding */}
-        <div className="sticky top-0 bg-[#1a2c2c] pt-8 pb-6 px-6 flex flex-col items-center border-b border-slate-700/40 shrink-0">
+        <div className="sticky top-0 bg-[#1a3a32] pt-8 pb-6 px-6 flex flex-col items-center border-b border-white/5 shrink-0">
           <button
             onClick={() => setIsOpen(false)}
-            className="lg:hidden absolute right-4 top-4 p-1 hover:bg-white/10 rounded"
+            className="lg:hidden absolute right-4 top-4 p-1 hover:bg-white/10 rounded text-white"
           >
             <X size={20} />
           </button>
@@ -102,23 +99,23 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             <img
               src="/ORHC LOGO.png"
               alt="ORHC"
-              className="h-15 w-50 object-contain"
+              className="h-12 w-auto object-contain"
             />
           </div>
 
-          <h1 className="text-[10px] font-black text-white text-center leading-tight uppercase tracking-wider">
-            Office of the Registrar High Court
+          <h1 className="text-[10px] font-black text-white text-center leading-tight uppercase tracking-widest">
+            Office of the Registrar <br /> High Court
           </h1>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
           {menuItems.map((item, index) => {
             if ("type" in item && item.type === "label") {
               return (
                 <p
                   key={index}
-                  className="text-[10px] font-semibold text-slate-500 mt-6 mb-2 ml-2 tracking-widest"
+                  className="text-[10px] font-bold text-slate-500 mt-6 mb-2 ml-2 tracking-[0.2em] uppercase"
                 >
                   {item.title}
                 </p>
@@ -132,35 +129,23 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 key={item.path}
                 to={item.path}
                 onClick={() => setIsOpen(false)}
-                className={`flex items-center justify-between p-3 rounded-lg transition-all group ${
+                className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-200 group ${
                   isActive
-                    ? "bg-[#eab308] text-black font-bold shadow-lg"
+                    ? "bg-[#c2a336] text-[#1a3a32] font-bold shadow-lg"
                     : "hover:bg-white/5 text-slate-400 hover:text-white"
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <span className={`${isActive ? "text-[#1a3a32]" : "text-inherit"}`}>
                   {item.icon}
-                  <span className="text-xs">{item.name}</span>
-                </div>
-
-                {item.badge !== undefined && (
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
-                      isActive
-                        ? "bg-black/10 text-black"
-                        : "bg-emerald-500/10 text-emerald-500"
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
+                </span>
+                <span className="text-xs">{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
         {/* Footer */}
-        <div className="sticky bottom-0 bg-[#1a2c2c] p-4 border-t border-slate-700/50 shrink-0">
+        <div className="sticky bottom-0 bg-[#1a3a32] p-4 border-t border-white/5 shrink-0">
           <button
             onClick={handleLogout}
             className="flex items-center gap-3 w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl text-xs font-bold transition-all"
