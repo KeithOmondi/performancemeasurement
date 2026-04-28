@@ -14,6 +14,9 @@ export interface IDocument {
   evidencePublicId?: string;
   fileType: string;
   fileName: string;
+  // UPDATED: Documents now carry their own review state
+  status?: "Accepted" | "Rejected" | "Pending";
+  rejectionReason?: string;
   uploadedAt: string;
 }
 
@@ -32,13 +35,11 @@ export interface ISubmission {
   isReviewed: boolean;
 }
 
-export interface IReviewHistoryEntry {
-  id: string;
-  action: string;
-  reviewerRole: "admin" | "superadmin" | "user";
-  reviewerName?: string;
-  reason: string;
-  at: string;
+// UPDATED: Interface for document-specific review actions
+export interface IDocumentReviewUpdate {
+  documentId: string;
+  status: "Accepted" | "Rejected";
+  reason?: string;
 }
 
 export interface ISubmissionReviewUpdate {
@@ -51,10 +52,23 @@ export interface IAdminReviewPayload {
   decision: "Verified" | "Rejected";
   adminOverallComments: string;
   submissionUpdates?: ISubmissionReviewUpdate[];
+  // ADDED: List of specific document review results
+  documentUpdates?: IDocumentReviewUpdate[];
+}
+
+/* ... (Remaining Interfaces: IReviewHistoryEntry, IReopenPayload, IAdminIndicator, IAdminIndicatorState remain the same) ... */
+
+export interface IReviewHistoryEntry {
+  id: string;
+  action: string;
+  reviewerRole: "admin" | "superadmin" | "user";
+  reviewerName?: string;
+  reason: string;
+  at: string;
 }
 
 export interface IReopenPayload {
-  newDeadline: string; // ISO date string
+  newDeadline: string;
   reason?: string;
 }
 
@@ -87,7 +101,7 @@ interface IAdminIndicatorState {
   selectedIndicator: IAdminIndicator | null;
   isLoading: boolean;
   isReviewing: boolean;
-  isReopening: boolean; // separate flag so the UI can show a distinct loading state
+  isReopening: boolean;
   error: string | null;
 }
 
@@ -202,7 +216,10 @@ export const processAdminReview = createAsyncThunk<
   { rejectValue: string }
 >("adminIndicators/processReview", async ({ id, reviewData }, { rejectWithValue }) => {
   try {
+    // Hits the PATCH /admin/:id/review endpoint we set up
     await apiPrivate.patch(`/admin/${id}/review`, reviewData);
+    
+    // Refresh the local data to reflect document statuses and history
     const response = await apiPrivate.get<{ data: IAdminIndicator }>(
       `/admin/${id}`
     );
@@ -253,7 +270,6 @@ const adminIndicatorSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // fetchAllAdminIndicators
       .addCase(fetchAllAdminIndicators.pending, (state) => {
         state.isLoading = true;
         state.error = null;
@@ -267,8 +283,6 @@ const adminIndicatorSlice = createSlice({
         state.isLoading = false;
         state.error = action.payload ?? "An unexpected error occurred";
       })
-
-      // fetchResubmittedIndicators
       .addCase(fetchResubmittedIndicators.pending, (state) => {
         state.isLoading = true;
         state.error = null;
@@ -282,8 +296,6 @@ const adminIndicatorSlice = createSlice({
         state.isLoading = false;
         state.error = action.payload ?? "An unexpected error occurred";
       })
-
-      // getIndicatorByIdAdmin
       .addCase(getIndicatorByIdAdmin.pending, (state) => {
         state.isLoading = true;
         state.error = null;
@@ -298,8 +310,6 @@ const adminIndicatorSlice = createSlice({
         state.isLoading = false;
         state.error = action.payload ?? "An unexpected error occurred";
       })
-
-      // processAdminReview
       .addCase(processAdminReview.pending, (state) => {
         state.isReviewing = true;
         state.error = null;
@@ -317,8 +327,6 @@ const adminIndicatorSlice = createSlice({
         state.isReviewing = false;
         state.error = action.payload ?? "An unexpected error occurred";
       })
-
-      // reopenIndicator
       .addCase(reopenIndicator.pending, (state) => {
         state.isReopening = true;
         state.error = null;
@@ -327,7 +335,6 @@ const adminIndicatorSlice = createSlice({
         state.isReopening = false;
         const updated = action.payload;
         upsertIntoAssignments(state, updated);
-        // Keep the modal in sync — the status and deadline will have changed
         if (state.selectedIndicator?.id === updated.id) {
           state.selectedIndicator = updated;
         }

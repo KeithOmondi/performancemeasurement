@@ -33,6 +33,13 @@ export interface ISubmissionUI {
   overallRejectionReason?: string;
 }
 
+export interface IReviewLog {
+  action: string;
+  reviewerName: string;
+  at: string;
+  reason: string;
+}
+
 export interface IIndicatorUI {
   id: string;
   strategic_plan_id: string;
@@ -55,11 +62,13 @@ export interface IIndicatorUI {
   activity: { description: string };
   submissions: ISubmissionUI[];
   updated_at: string;
+  review_history?: IReviewLog[];
   progress?: number;
 }
 
 interface UserIndicatorState {
   myIndicators: IIndicatorUI[];
+  rejectedIndicators: IIndicatorUI[]; // Added for the Rejection Archive
   currentIndicator: IIndicatorUI | null;
   loading: boolean;
   uploading: boolean;
@@ -79,6 +88,7 @@ interface KnownError {
 
 const initialState: UserIndicatorState = {
   myIndicators: [],
+  rejectedIndicators: [],
   currentIndicator: null,
   loading: false,
   uploading: false,
@@ -87,11 +97,6 @@ const initialState: UserIndicatorState = {
 
 /* ─── HELPERS ──────────────────────────────────────────────────────── */
 
-/**
- * Inserts or fully replaces an indicator in the list and syncs
- * currentIndicator. The incoming payload overwrites the stored record
- * entirely so that replaced document arrays are never stale.
- */
 const upsertIndicator = (state: UserIndicatorState, indicator: IIndicatorUI) => {
   if (!indicator?.id) return;
 
@@ -102,6 +107,12 @@ const upsertIndicator = (state: UserIndicatorState, indicator: IIndicatorUI) => 
     state.myIndicators.unshift(indicator);
   }
 
+  // Also sync in the rejected list if it exists there
+  const rejIndex = state.rejectedIndicators.findIndex((i) => i.id === indicator.id);
+  if (rejIndex !== -1) {
+    state.rejectedIndicators[rejIndex] = indicator;
+  }
+
   if (state.currentIndicator?.id === indicator.id) {
     state.currentIndicator = indicator;
   }
@@ -109,12 +120,8 @@ const upsertIndicator = (state: UserIndicatorState, indicator: IIndicatorUI) => 
 
 /* ─── THUNKS ───────────────────────────────────────────────────────── */
 
-type SubmitArg        = { id: string; formData: FormData };
-type AddDocumentsArg  = { id: string; quarter: number; formData: FormData };
-
-// FIX: updateRejectedSubmission now accepts FormData so the backend's
-// file-replacement logic can receive new evidence files, matching the
-// updated controller which purges old documents and inserts the new set.
+type SubmitArg = { id: string; formData: FormData };
+type AddDocumentsArg = { id: string; quarter: number; formData: FormData };
 type UpdateSubmissionArg = { id: string; formData: FormData };
 
 export const fetchMyAssignments = createAsyncThunk<
@@ -132,6 +139,26 @@ export const fetchMyAssignments = createAsyncThunk<
     } catch (error) {
       const err = error as KnownError;
       return rejectWithValue(err.response?.data?.message || "Failed to load assignments");
+    }
+  }
+);
+
+// New Thunk for Rejection Archive
+export const fetchRejectedSubmissions = createAsyncThunk<
+  IIndicatorUI[],
+  void,
+  { rejectValue: string }
+>(
+  "userIndicators/fetchRejects",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await apiPrivate.get<{ data: IIndicatorUI[] }>(
+        "/user-indicators/rejects"
+      );
+      return response.data.data;
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(err.response?.data?.message || "Failed to load rejected filings");
     }
   }
 );
@@ -170,6 +197,25 @@ export const submitIndicatorProgress = createAsyncThunk<
     } catch (error) {
       const err = error as KnownError;
       return rejectWithValue(err.response?.data?.message || "Submission failed");
+    }
+  }
+);
+
+export const resubmitIndicatorProgress = createAsyncThunk<
+  void,
+  SubmitArg,
+  { rejectValue: string }
+>(
+  "userIndicators/resubmit",
+  async (arg, { dispatch, rejectWithValue }) => {
+    try {
+      await apiPrivate.post(`/user-indicators/${arg.id}/resubmit`, arg.formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      dispatch(fetchIndicatorDetails(arg.id));
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(err.response?.data?.message || "Resubmission failed");
     }
   }
 );
@@ -214,9 +260,6 @@ export const deleteRejectedDocument = createAsyncThunk<
   }
 );
 
-// FIX: Accepts FormData instead of plain fields so replacement documents
-// can be attached. Callers should build FormData with notes, achievedValue,
-// quarter, and any new files before dispatching.
 export const updateRejectedSubmission = createAsyncThunk<
   void,
   UpdateSubmissionArg,
@@ -242,6 +285,7 @@ export const updateRejectedSubmission = createAsyncThunk<
 
 const WRITE_PENDING = [
   submitIndicatorProgress.pending.type,
+  resubmitIndicatorProgress.pending.type,
   addIndicatorDocuments.pending.type,
   deleteRejectedDocument.pending.type,
   updateRejectedSubmission.pending.type,
@@ -249,6 +293,7 @@ const WRITE_PENDING = [
 
 const WRITE_FULFILLED = [
   submitIndicatorProgress.fulfilled.type,
+  resubmitIndicatorProgress.fulfilled.type,
   addIndicatorDocuments.fulfilled.type,
   deleteRejectedDocument.fulfilled.type,
   updateRejectedSubmission.fulfilled.type,
@@ -256,6 +301,7 @@ const WRITE_FULFILLED = [
 
 const WRITE_REJECTED = [
   submitIndicatorProgress.rejected.type,
+  resubmitIndicatorProgress.rejected.type,
   addIndicatorDocuments.rejected.type,
   deleteRejectedDocument.rejected.type,
   updateRejectedSubmission.rejected.type,
@@ -270,8 +316,10 @@ const userIndicatorSlice = createSlice({
     },
     resetUserIndicatorState: () => initialState,
     setLocalSelectedIndicator: (state, action: PayloadAction<string | null>) => {
+      // Searches both lists to find the target
+      const source = [...state.myIndicators, ...state.rejectedIndicators];
       state.currentIndicator = action.payload
-        ? (state.myIndicators.find((i) => i.id === action.payload) ?? null)
+        ? (source.find((i) => i.id === action.payload) ?? null)
         : null;
     },
   },
@@ -291,9 +339,21 @@ const userIndicatorSlice = createSlice({
         state.error = action.payload || "Error loading assignments";
       })
 
+      /* ── fetchRejectedSubmissions ── */
+      .addCase(fetchRejectedSubmissions.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchRejectedSubmissions.fulfilled, (state, action) => {
+        state.loading = false;
+        state.rejectedIndicators = action.payload;
+      })
+      .addCase(fetchRejectedSubmissions.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Error loading rejections";
+      })
+
       /* ── fetchIndicatorDetails ── */
-      // FIX: added pending + rejected cases so loading/error states are
-      // correctly driven when fetching a single indicator's details.
       .addCase(fetchIndicatorDetails.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -308,7 +368,6 @@ const userIndicatorSlice = createSlice({
         state.error = action.payload || "Error loading indicator details";
       })
 
-      /* ── Write operations: pending ── */
       .addMatcher(
         (action): action is AnyAction => WRITE_PENDING.includes(action.type),
         (state) => {
@@ -316,14 +375,12 @@ const userIndicatorSlice = createSlice({
           state.error = null;
         }
       )
-      /* ── Write operations: fulfilled ── */
       .addMatcher(
         (action): action is AnyAction => WRITE_FULFILLED.includes(action.type),
         (state) => {
           state.uploading = false;
         }
       )
-      /* ── Write operations: rejected ── */
       .addMatcher(
         (action): action is AnyAction => WRITE_REJECTED.includes(action.type),
         (state, action) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {  
   Search, 
   Loader2, 
@@ -9,7 +9,9 @@ import {
   ArrowLeft,
   History as HistoryIcon,
   AlertOctagon,
-  ShieldAlert
+  ShieldAlert,
+  CalendarDays,
+  Layers
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
@@ -25,19 +27,25 @@ const AdminRejections = () => {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Fetch specifically with a rejected status or fetch all and filter client-side
     dispatch(fetchAllAdminIndicators({ status: "all" }));
   }, [dispatch]);
 
-  // Filter for indicators explicitly marked as Rejected at any admin level
-  const rejectedItems = allAssignments.filter((ind) => 
-    ind.status === "Rejected by Admin" || ind.status === "Rejected by Super Admin"
-  ).filter(ind => 
-    // UPDATED: Using activity.description and objective.title for search
-    ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter for items explicitly rejected, using reportingCycle for type-safety
+  const rejectedItems = useMemo(() => {
+    return allAssignments
+      .filter((ind) => 
+        ind.status === "Rejected by Admin" || ind.status === "Rejected by Super Admin"
+      )
+      .filter((ind) => {
+        const searchLower = searchTerm.toLowerCase();
+        return (
+          ind.activity?.description?.toLowerCase().includes(searchLower) ||
+          ind.objective?.title?.toLowerCase().includes(searchLower) ||
+          ind.assigneeName?.toLowerCase().includes(searchLower) ||
+          ind.reportingCycle?.toLowerCase().includes(searchLower)
+        );
+      });
+  }, [allAssignments, searchTerm]);
 
   const handleSelectIndicator = (indicator: IAdminIndicator) => {
     dispatch(setSelectedIndicator(indicator));
@@ -72,8 +80,8 @@ const AdminRejections = () => {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input 
             type="text"
-            placeholder="Search archive by officer or activity..."
-            className="pl-11 pr-6 py-2.5 bg-white border border-gray-100 rounded-xl text-[11px] font-bold outline-none focus:ring-4 focus:ring-red-600/5 transition-all w-full md:w-80 shadow-sm"
+            placeholder="Search by officer, activity, or cycle (Annual/Quarterly)..."
+            className="pl-11 pr-6 py-2.5 bg-white border border-gray-100 rounded-xl text-[11px] font-bold outline-none focus:ring-4 focus:ring-red-600/5 transition-all w-full md:w-96 shadow-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -90,7 +98,9 @@ const AdminRejections = () => {
           {rejectedItems.map((indicator) => {
             const isViewingHistory = selectedHistoryId === indicator.id;
             
-            // UPDATED: review_status (snake_case)
+            // Matches reportingCycle from your IDocument interface
+            const isAnnual = indicator.reportingCycle === "Annual";
+            
             const latestRejection = [...(indicator.submissions || [])]
               .reverse()
               .find(s => s.reviewStatus === "Rejected");
@@ -99,7 +109,7 @@ const AdminRejections = () => {
               <div 
                 key={indicator.id} 
                 className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden ${
-                  isViewingHistory ? 'border-red-600 shadow-xl' : 'border-gray-100 shadow-sm'
+                  isViewingHistory ? 'border-red-600 shadow-xl' : 'border-gray-100 shadow-sm hover:border-gray-200'
                 }`}
               >
                 <div className="p-0">
@@ -113,9 +123,14 @@ const AdminRejections = () => {
                         >
                           <ArrowLeft size={14} /> Return to Archive
                         </button>
-                        <div className="text-right">
-                          <span className="text-[10px] font-bold text-slate-900 uppercase tracking-tighter block">Audit Case ID</span>
-                          <span className="text-[9px] font-medium text-gray-400">#{indicator.id.slice(-8).toUpperCase()}</span>
+                        <div className="flex items-center gap-4">
+                           <span className={`text-[9px] px-2 py-1 rounded font-black uppercase ${isAnnual ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                            {indicator.reportingCycle}
+                          </span>
+                          <div className="text-right border-l pl-4 border-gray-100">
+                            <span className="text-[10px] font-bold text-slate-900 uppercase tracking-tighter block">Audit Case ID</span>
+                            <span className="text-[9px] font-medium text-gray-400">#{indicator.id.slice(-8).toUpperCase()}</span>
+                          </div>
                         </div>
                       </div>
                       
@@ -136,7 +151,6 @@ const AdminRejections = () => {
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className="text-[9px] font-bold text-gray-500 flex items-center gap-1">
                                       <User size={10}/> 
-                                      {/* UPDATED: reviewerName from IReviewHistoryEntry */}
                                       {log.reviewerName || 'System/Admin'}
                                     </span>
                                   </div>
@@ -162,15 +176,21 @@ const AdminRejections = () => {
                           <span className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
                             {indicator.status}
                           </span>
+                          {/* Cycle Badge using reportingCycle */}
+                          <span className={`text-[8px] px-2 py-0.5 rounded font-black uppercase tracking-tighter flex items-center gap-1 ${
+                            isAnnual ? "bg-amber-50 text-amber-700 border border-amber-100" : "bg-blue-50 text-blue-700 border border-blue-100"
+                          }`}>
+                            {isAnnual ? <CalendarDays size={10} /> : <Layers size={10} />}
+                            {indicator.reportingCycle}
+                          </span>
                         </div>
                         <h3 className="text-sm font-bold text-slate-800 leading-snug mb-4">
-                          {/* UPDATED: Nested activity.description */}
                           {indicator.activity?.description}
                         </h3>
                         <div className="space-y-2">
                           <p className="text-[9px] font-bold text-gray-400 uppercase">Primary Assignee</p>
                           <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[8px] font-bold">
+                            <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[8px] font-bold uppercase">
                               {indicator.assigneeName?.charAt(0)}
                             </div>
                             <span className="text-[11px] font-bold text-slate-700">{indicator.assigneeName}</span>
@@ -187,7 +207,6 @@ const AdminRejections = () => {
                         </div>
                         <div className="bg-white border border-red-50 p-4 rounded-xl shadow-inner">
                           <p className="text-[12px] text-red-900 font-medium italic leading-relaxed">
-                            {/* UPDATED: admin_overall_comments and admin_comment (snake_case) */}
                             "{indicator.adminOverallComments || latestRejection?.adminComment || "Documentation provided does not align with the statutory reporting guidelines."}"
                           </p>
                         </div>
@@ -197,8 +216,15 @@ const AdminRejections = () => {
                              <p className="text-xs font-bold text-slate-700">{indicator.target} {indicator.unit}</p>
                             </div>
                             <div>
-                             <p className="text-[8px] font-bold text-gray-400 uppercase">Deficiency Quarter</p>
-                             <p className="text-xs font-bold text-red-600">Q{latestRejection?.quarter || indicator.activeQuarter}</p>
+                             <p className="text-[8px] font-bold text-gray-400 uppercase">
+                               {isAnnual ? "Reporting Year" : "Deficiency Quarter"}
+                             </p>
+                             <p className={`text-xs font-bold ${isAnnual ? "text-slate-700" : "text-red-600"}`}>
+                               {isAnnual 
+                                 ? (latestRejection?.year || new Date().getFullYear()) 
+                                 : `Q${latestRejection?.quarter || indicator.activeQuarter}`
+                               }
+                             </p>
                             </div>
                             <div>
                              <p className="text-[8px] font-bold text-gray-400 uppercase">Review Cycle</p>

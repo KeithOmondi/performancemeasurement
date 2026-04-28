@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, ArrowRight, Loader2, AlertCircle, Calendar } from "lucide-react";
+import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
@@ -8,18 +8,18 @@ import {
   fetchIndicatorById,
   clearSelectedIndicator,
   clearIndicatorError,
+  unassignIndicator,
   type IIndicator,
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
+import toast from "react-hot-toast";
 
-// Import types from your updated service
-import { 
-  type IStrategicPlan, 
-  type IObjective, 
-  type IActivity 
+import {
+  type IStrategicPlan,
+  type IObjective,
+  type IActivity,
 } from "../../store/slices/strategicPlan/strategicPlanService";
 
-//import SuperAdminAssign, { type AssignPrefill } from "./SuperAdminAssign";
 import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
 import type { AssignPrefill } from "../../types/types";
 import SuperAdminAssign from "./SuperAdminAssign";
@@ -41,6 +41,7 @@ interface IndicatorSectionProps {
   userMap: Record<string, IUser>;
   onAssign: (prefill: AssignPrefill) => void;
   onSelectAssignment: (indicator: IIndicator) => void;
+  onUnassign: (indicatorId: string) => void;
   activeFilter: string;
 }
 
@@ -57,7 +58,9 @@ const getObjectives = (plan: IStrategicPlan): IObjective[] =>
 const getActivities = (obj: IObjective): IActivity[] =>
   Array.isArray(obj?.activities) ? obj.activities : [];
 
-const resolveIds = (assignee: string | string[] | IUser | IUser[] | undefined): string[] => {
+const resolveIds = (
+  assignee: string | string[] | IUser | IUser[] | undefined,
+): string[] => {
   if (!assignee) return [];
   const items = Array.isArray(assignee) ? assignee : [assignee];
   return items
@@ -85,12 +88,13 @@ const IndicatorSection = ({
   userMap,
   onAssign,
   onSelectAssignment,
+  onUnassign,
 }: IndicatorSectionProps) => {
   const visibleActivities = getActivities(objective);
   const total = visibleActivities.length;
 
   const assignedCount = visibleActivities.filter((act) =>
-    (indicators || []).some((ind) => matchId(ind.activityId, act.id))
+    (indicators || []).some((ind) => matchId(ind.activityId, act.id)),
   ).length;
 
   return (
@@ -118,7 +122,7 @@ const IndicatorSection = ({
       {visibleActivities.map((activity: IActivity) => {
         const activityId = activity.id;
         const assignment = (indicators || []).find((ind) =>
-          matchId(ind.activityId, activityId)
+          matchId(ind.activityId, activityId),
         );
         const ids = resolveIds(assignment?.assignee);
         const primaryUser = userMap[ids[0]];
@@ -221,14 +225,24 @@ const IndicatorSection = ({
               )}
             </td>
 
+            {/* ── Action cell ── */}
             <td className="p-4 text-center">
               {assignment ? (
-                <button
-                  onClick={() => onSelectAssignment(assignment)}
-                  className="border border-[#1a3a32] text-[#1a3a32] px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-[#1a3a32] hover:text-white transition-all mx-auto"
-                >
-                  Review <ArrowRight size={12} />
-                </button>
+                <div className="flex items-center justify-center gap-1.5">
+                  <button
+                    onClick={() => onSelectAssignment(assignment)}
+                    className="border border-[#1a3a32] text-[#1a3a32] px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-[#1a3a32] hover:text-white transition-all"
+                  >
+                    Review <ArrowRight size={12} />
+                  </button>
+                  <button
+                    onClick={() => onUnassign(assignment.id)}
+                    title="Unassign"
+                    className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={() =>
@@ -263,7 +277,7 @@ const SuperAdminIndicators = () => {
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
   const { plans, loading: plansLoading } = useAppSelector(
-    (s) => s.strategicPlan
+    (s) => s.strategicPlan,
   );
   const {
     indicators,
@@ -303,6 +317,16 @@ const SuperAdminIndicators = () => {
     setAssignPrefill(undefined);
   };
 
+  const handleUnassign = async (indicatorId: string) => {
+    if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
+    const result = await dispatch(unassignIndicator(indicatorId));
+    if (unassignIndicator.fulfilled.match(result)) {
+      toast.success("Activity unassigned successfully.");
+    } else {
+      toast.error("Failed to unassign. Please try again.");
+    }
+  };
+
   const userMap = useMemo(() => {
     const map: Record<string, IUser> = {};
     (users ?? []).forEach((u) => {
@@ -315,17 +339,15 @@ const SuperAdminIndicators = () => {
   const filteredData = useMemo(() => {
     let basePlans = [...(plans ?? [])];
 
-    // Sorting
     basePlans.sort((a, b) => {
       const orderA = PERSPECTIVE_ORDER[a?.perspective?.toUpperCase()] ?? 99;
       const orderB = PERSPECTIVE_ORDER[b?.perspective?.toUpperCase()] ?? 99;
       return orderA - orderB;
     });
 
-    // Perspective Filter
     if (activeFilter !== "ALL" && PERSPECTIVE_ORDER[activeFilter]) {
       basePlans = basePlans.filter((p) =>
-        p?.perspective?.toUpperCase().includes(activeFilter)
+        p?.perspective?.toUpperCase().includes(activeFilter),
       );
     }
 
@@ -333,15 +355,17 @@ const SuperAdminIndicators = () => {
       .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
           .map((obj: IObjective) => {
-            const filteredActivities = getActivities(obj).filter((act: IActivity) => {
-              const actId = act.id;
-              const isAssigned = (indicators ?? []).some((ind) =>
-                matchId(ind.activityId, actId)
-              );
-              if (activeFilter === "ASSIGNED") return isAssigned;
-              if (activeFilter === "UNASSIGNED") return !isAssigned;
-              return true;
-            });
+            const filteredActivities = getActivities(obj).filter(
+              (act: IActivity) => {
+                const actId = act.id;
+                const isAssigned = (indicators ?? []).some((ind) =>
+                  matchId(ind.activityId, actId),
+                );
+                if (activeFilter === "ASSIGNED") return isAssigned;
+                if (activeFilter === "UNASSIGNED") return !isAssigned;
+                return true;
+              },
+            );
             return { ...obj, activities: filteredActivities };
           })
           .filter((obj) => obj.activities.length > 0);
@@ -353,9 +377,9 @@ const SuperAdminIndicators = () => {
 
   const counts = useMemo(() => {
     const allActs = (plans ?? []).flatMap((p) =>
-      getObjectives(p).flatMap((o) => getActivities(o))
+      getObjectives(p).flatMap((o) => getActivities(o)),
     );
-    
+
     return {
       total: allActs.length,
       getPerspective: (label: string) =>
@@ -366,9 +390,9 @@ const SuperAdminIndicators = () => {
               acc +
               getObjectives(p).reduce(
                 (oAcc, obj) => oAcc + getActivities(obj).length,
-                0
+                0,
               ),
-            0
+            0,
           ),
     };
   }, [plans]);
@@ -479,17 +503,15 @@ const SuperAdminIndicators = () => {
                       objective={objective}
                       plan={plan}
                       indicators={(indicators ?? []).filter((ind) =>
-                        matchId(
-                          ind.objectiveId,
-                          objective.id
-                        )
+                        matchId(ind.objectiveId, objective.id),
                       )}
                       userMap={userMap}
                       onAssign={handleOpenAssign}
                       onSelectAssignment={handleSelectAssignment}
+                      onUnassign={handleUnassign}
                       activeFilter={activeFilter}
                     />
-                  ))
+                  )),
                 )
               ) : (
                 <tr>
