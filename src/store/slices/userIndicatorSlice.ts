@@ -2,6 +2,7 @@ import {
   createSlice,
   createAsyncThunk,
   type PayloadAction,
+  type AnyAction,
 } from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 
@@ -14,15 +15,9 @@ export interface IDocumentUI {
   evidence_public_id: string;
   file_type: "image" | "video" | "raw";
   file_name?: string;
-  created_at: string;
-}
-
-export interface IReviewHistoryEntryUI {
-  id: string;
-  action: "Submitted" | "Resubmitted" | "Verified" | "Approved" | "Rejected" | "Correction Requested";
-  reason: string;
-  reviewer_role: "user" | "admin" | "superadmin" | "examiner";
-  reviewed_by?: string; 
+  status: "Pending" | "Rejected" | "Accepted";
+  description?: string;
+  rejection_reason?: string;
   created_at: string;
 }
 
@@ -35,6 +30,7 @@ export interface ISubmissionUI {
   submitted_at: string;
   resubmission_count: number;
   documents: IDocumentUI[];
+  overallRejectionReason?: string;
 }
 
 export interface IIndicatorUI {
@@ -46,8 +42,8 @@ export interface IIndicatorUI {
   reporting_cycle: "Quarterly" | "Annual";
   assignee_id: string;
   assignee_model: "User" | "Team";
-  assigneeName: string; 
-  assignedByName: string; 
+  assigneeName: string;
+  assignedByName: string;
   status: string;
   target: number;
   unit: string;
@@ -91,28 +87,35 @@ const initialState: UserIndicatorState = {
 
 /* ─── HELPERS ──────────────────────────────────────────────────────── */
 
-const upsertIndicator = (
-  state: UserIndicatorState,
-  indicator: IIndicatorUI,
-) => {
+/**
+ * Inserts or fully replaces an indicator in the list and syncs
+ * currentIndicator. The incoming payload overwrites the stored record
+ * entirely so that replaced document arrays are never stale.
+ */
+const upsertIndicator = (state: UserIndicatorState, indicator: IIndicatorUI) => {
   if (!indicator?.id) return;
 
   const index = state.myIndicators.findIndex((i) => i.id === indicator.id);
   if (index !== -1) {
-    state.myIndicators[index] = { ...state.myIndicators[index], ...indicator };
+    state.myIndicators[index] = indicator;
   } else {
     state.myIndicators.unshift(indicator);
   }
 
   if (state.currentIndicator?.id === indicator.id) {
-    state.currentIndicator = { ...state.currentIndicator, ...indicator };
+    state.currentIndicator = indicator;
   }
 };
 
 /* ─── THUNKS ───────────────────────────────────────────────────────── */
 
-type SubmitArg = { id: string; formData: FormData };
-type AddDocumentsArg = { id: string; quarter: number; formData: FormData };
+type SubmitArg        = { id: string; formData: FormData };
+type AddDocumentsArg  = { id: string; quarter: number; formData: FormData };
+
+// FIX: updateRejectedSubmission now accepts FormData so the backend's
+// file-replacement logic can receive new evidence files, matching the
+// updated controller which purges old documents and inserts the new set.
+type UpdateSubmissionArg = { id: string; formData: FormData };
 
 export const fetchMyAssignments = createAsyncThunk<
   IIndicatorUI[],
@@ -122,15 +125,15 @@ export const fetchMyAssignments = createAsyncThunk<
   "userIndicators/fetchAll",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get<{ data: IIndicatorUI[] }>("/user-indicators/my-assignments");
+      const response = await apiPrivate.get<{ data: IIndicatorUI[] }>(
+        "/user-indicators/my-assignments"
+      );
       return response.data.data;
     } catch (error) {
       const err = error as KnownError;
-      return rejectWithValue(
-        err.response?.data?.message || err.message || "Failed to load assignments",
-      );
+      return rejectWithValue(err.response?.data?.message || "Failed to load assignments");
     }
-  },
+  }
 );
 
 export const fetchIndicatorDetails = createAsyncThunk<
@@ -141,15 +144,15 @@ export const fetchIndicatorDetails = createAsyncThunk<
   "userIndicators/fetchDetails",
   async (id, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get<{ data: IIndicatorUI }>(`/user-indicators/${id}`);
+      const response = await apiPrivate.get<{ data: IIndicatorUI }>(
+        `/user-indicators/${id}`
+      );
       return response.data.data;
     } catch (error) {
       const err = error as KnownError;
-      return rejectWithValue(
-        err.response?.data?.message || err.message || "Failed to load indicator details",
-      );
+      return rejectWithValue(err.response?.data?.message || "Failed to load details");
     }
-  },
+  }
 );
 
 export const submitIndicatorProgress = createAsyncThunk<
@@ -160,20 +163,15 @@ export const submitIndicatorProgress = createAsyncThunk<
   "userIndicators/submit",
   async (arg, { dispatch, rejectWithValue }) => {
     try {
-      await apiPrivate.post(
-        `/user-indicators/${arg.id}/submit`,
-        arg.formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
-      );
-      // Re-fetch to sync calculated progress and statuses from SQL
+      await apiPrivate.post(`/user-indicators/${arg.id}/submit`, arg.formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
       dispatch(fetchIndicatorDetails(arg.id));
     } catch (error) {
       const err = error as KnownError;
-      return rejectWithValue(
-        err.response?.data?.message || err.message || "Submission failed",
-      );
+      return rejectWithValue(err.response?.data?.message || "Submission failed");
     }
-  },
+  }
 );
 
 export const addIndicatorDocuments = createAsyncThunk<
@@ -184,30 +182,84 @@ export const addIndicatorDocuments = createAsyncThunk<
   "userIndicators/addDocuments",
   async (arg, { dispatch, rejectWithValue }) => {
     try {
-      // Append quarter if not already in formData
-      if (!arg.formData.has("quarter")) {
-        arg.formData.append("quarter", String(arg.quarter));
-      }
-      
+      if (!arg.formData.has("quarter")) arg.formData.append("quarter", String(arg.quarter));
       const response = await apiPrivate.post<{ documents: IDocumentUI[] }>(
-        `/user-indicators/${arg.id}/add-documents`, // Updated to match router
+        `/user-indicators/${arg.id}/add-documents`,
         arg.formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
+        { headers: { "Content-Type": "multipart/form-data" } }
       );
-      
-      // Refresh details to show new documents in UI
       dispatch(fetchIndicatorDetails(arg.id));
       return response.data.documents;
     } catch (error) {
       const err = error as KnownError;
-      return rejectWithValue(
-        err.response?.data?.message || err.message || "Failed to upload documents",
-      );
+      return rejectWithValue(err.response?.data?.message || "Upload failed");
     }
-  },
+  }
+);
+
+export const deleteRejectedDocument = createAsyncThunk<
+  void,
+  { docId: string; indicatorId: string },
+  { rejectValue: string }
+>(
+  "userIndicators/deleteDocument",
+  async ({ docId, indicatorId }, { dispatch, rejectWithValue }) => {
+    try {
+      await apiPrivate.delete(`/user-indicators/documents/${docId}`);
+      dispatch(fetchIndicatorDetails(indicatorId));
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(err.response?.data?.message || "Delete failed");
+    }
+  }
+);
+
+// FIX: Accepts FormData instead of plain fields so replacement documents
+// can be attached. Callers should build FormData with notes, achievedValue,
+// quarter, and any new files before dispatching.
+export const updateRejectedSubmission = createAsyncThunk<
+  void,
+  UpdateSubmissionArg,
+  { rejectValue: string }
+>(
+  "userIndicators/updateSubmission",
+  async (arg, { dispatch, rejectWithValue }) => {
+    try {
+      await apiPrivate.patch(
+        `/user-indicators/${arg.id}/update-submission`,
+        arg.formData,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      dispatch(fetchIndicatorDetails(arg.id));
+    } catch (error) {
+      const err = error as KnownError;
+      return rejectWithValue(err.response?.data?.message || "Update failed");
+    }
+  }
 );
 
 /* ─── SLICE ────────────────────────────────────────────────────────── */
+
+const WRITE_PENDING = [
+  submitIndicatorProgress.pending.type,
+  addIndicatorDocuments.pending.type,
+  deleteRejectedDocument.pending.type,
+  updateRejectedSubmission.pending.type,
+];
+
+const WRITE_FULFILLED = [
+  submitIndicatorProgress.fulfilled.type,
+  addIndicatorDocuments.fulfilled.type,
+  deleteRejectedDocument.fulfilled.type,
+  updateRejectedSubmission.fulfilled.type,
+];
+
+const WRITE_REJECTED = [
+  submitIndicatorProgress.rejected.type,
+  addIndicatorDocuments.rejected.type,
+  deleteRejectedDocument.rejected.type,
+  updateRejectedSubmission.rejected.type,
+];
 
 const userIndicatorSlice = createSlice({
   name: "userIndicators",
@@ -217,10 +269,7 @@ const userIndicatorSlice = createSlice({
       state.error = null;
     },
     resetUserIndicatorState: () => initialState,
-    setLocalSelectedIndicator: (
-      state,
-      action: PayloadAction<string | null>,
-    ) => {
+    setLocalSelectedIndicator: (state, action: PayloadAction<string | null>) => {
       state.currentIndicator = action.payload
         ? (state.myIndicators.find((i) => i.id === action.payload) ?? null)
         : null;
@@ -228,7 +277,7 @@ const userIndicatorSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // fetchMyAssignments
+      /* ── fetchMyAssignments ── */
       .addCase(fetchMyAssignments.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -239,48 +288,53 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(fetchMyAssignments.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload ?? "An unexpected error occurred";
+        state.error = action.payload || "Error loading assignments";
       })
 
-      // fetchIndicatorDetails
+      /* ── fetchIndicatorDetails ── */
+      // FIX: added pending + rejected cases so loading/error states are
+      // correctly driven when fetching a single indicator's details.
+      .addCase(fetchIndicatorDetails.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
       .addCase(fetchIndicatorDetails.fulfilled, (state, action) => {
         state.loading = false;
         state.currentIndicator = action.payload;
         upsertIndicator(state, action.payload);
       })
-
-      // submitIndicatorProgress
-      .addCase(submitIndicatorProgress.pending, (state) => {
-        state.uploading = true;
-        state.error = null;
-      })
-      .addCase(submitIndicatorProgress.fulfilled, (state) => {
-        state.uploading = false;
-      })
-      .addCase(submitIndicatorProgress.rejected, (state, action) => {
-        state.uploading = false;
-        state.error = action.payload ?? "Submission failed";
+      .addCase(fetchIndicatorDetails.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Error loading indicator details";
       })
 
-      // addIndicatorDocuments
-      .addCase(addIndicatorDocuments.pending, (state) => {
-        state.uploading = true;
-        state.error = null;
-      })
-      .addCase(addIndicatorDocuments.fulfilled, (state) => {
-        state.uploading = false;
-      })
-      .addCase(addIndicatorDocuments.rejected, (state, action) => {
-        state.uploading = false;
-        state.error = action.payload ?? "Upload failed";
-      });
+      /* ── Write operations: pending ── */
+      .addMatcher(
+        (action): action is AnyAction => WRITE_PENDING.includes(action.type),
+        (state) => {
+          state.uploading = true;
+          state.error = null;
+        }
+      )
+      /* ── Write operations: fulfilled ── */
+      .addMatcher(
+        (action): action is AnyAction => WRITE_FULFILLED.includes(action.type),
+        (state) => {
+          state.uploading = false;
+        }
+      )
+      /* ── Write operations: rejected ── */
+      .addMatcher(
+        (action): action is AnyAction => WRITE_REJECTED.includes(action.type),
+        (state, action) => {
+          state.uploading = false;
+          state.error = (action.payload as string) || "Operation failed";
+        }
+      );
   },
 });
 
-export const {
-  clearIndicatorError,
-  resetUserIndicatorState,
-  setLocalSelectedIndicator,
-} = userIndicatorSlice.actions;
+export const { clearIndicatorError, resetUserIndicatorState, setLocalSelectedIndicator } =
+  userIndicatorSlice.actions;
 
 export default userIndicatorSlice.reducer;
