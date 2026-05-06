@@ -43,6 +43,7 @@ import UserRejections from "./pages/user/UserRejections";
 import UserHistory from "./pages/user/UserHistory";
 import UserApprovals from "./pages/user/userApprovals";
 import UserTaskIdPage from "./pages/user/UserTaskIdPage";
+import AdminIndicatorReview from "./pages/admin/AdminIndicatorReview";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -134,6 +135,7 @@ const App = () => {
             <Route path="/admin/reviews" element={<AdminPendingReviews />} />
             <Route path="/admin/rejects" element={<AdminRejections />} />
             <Route path="/admin/approvals" element={<AdminApprovals />} />
+            <Route path="/admin/review/:indicatorId" element={<AdminIndicatorReview />} />
           </Route>
         </Route>
 

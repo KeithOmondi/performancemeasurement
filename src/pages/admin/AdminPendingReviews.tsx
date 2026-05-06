@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom"; // Import useNavigate
 import {
   ArrowRight,
   Loader2,
@@ -6,7 +7,6 @@ import {
   History,
   Search,
   ShieldCheck,
-  X,
   Hourglass,
   CheckCircle2,
   CalendarDays,
@@ -16,20 +16,15 @@ import {
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchAllAdminIndicators,
-  getIndicatorByIdAdmin,
-  setSelectedIndicator,
   type IAdminIndicator,
   type ISubmissionsByQuarter,
 } from "../../store/slices/adminIndicatorSlice";
-import AdminIndicatorModal from "./AdminIndicatorModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Flatten ISubmissionsByQuarter → flat ISubmission array */
 const flattenSubmissions = (submissions: ISubmissionsByQuarter) =>
   Object.values(submissions ?? {}).flat();
 
-/** True if the indicator has any pending resubmission across all quarters */
 const hasResubmission = (indicator: IAdminIndicator): boolean =>
   flattenSubmissions(indicator.submissions).some(
     (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
@@ -39,10 +34,11 @@ const hasResubmission = (indicator: IAdminIndicator): boolean =>
 
 const AdminPendingReviews = () => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate(); // Initialize navigation
   const [searchTerm, setSearchTerm] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
 
-  const { pendingAdminReview, isLoading, selectedIndicator } = useAppSelector(
+  const { pendingAdminReview, isLoading } = useAppSelector(
     (state) => state.adminIndicators
   );
 
@@ -51,18 +47,13 @@ const AdminPendingReviews = () => {
   }, [dispatch]);
 
   const handleOpenDossier = useCallback(
-    async (id: string) => {
-      if (openingId) return;
+    (id: string) => {
       setOpeningId(id);
-      await dispatch(getIndicatorByIdAdmin(id));
-      setOpeningId(null);
+      // Navigate to the dedicated review page
+      navigate(`/admin/review/${id}`);
     },
-    [dispatch, openingId]
+    [navigate]
   );
-
-  const handleCloseDrawer = useCallback(() => {
-    dispatch(setSelectedIndicator(null));
-  }, [dispatch]);
 
   const filteredRecords = pendingAdminReview.filter(
     (ind) =>
@@ -160,7 +151,6 @@ const AdminPendingReviews = () => {
                 </tr>
               ) : (
                 filteredRecords.map((indicator) => {
-                  // ✅ Use helper — submissions is Record<string, ISubmission[]>, not an array
                   const isResub = hasResubmission(indicator);
                   const isAnnual = indicator.reportingCycle === "Annual";
                   const isOpening = openingId === indicator.id;
@@ -170,7 +160,6 @@ const AdminPendingReviews = () => {
                       key={indicator.id}
                       className="group hover:bg-slate-50/80 transition-all"
                     >
-                      {/* Submission Details */}
                       <td className="px-8 py-6">
                         <div className="flex flex-col gap-2">
                           <span className="w-fit text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200">
@@ -180,97 +169,77 @@ const AdminPendingReviews = () => {
                             {indicator.objective?.title || "Untitled Objective"}
                           </h3>
                           <div className="flex items-start gap-2 max-w-md">
-                            <FileText
-                              size={12}
-                              className="text-slate-300 mt-0.5 shrink-0"
-                            />
+                            <FileText size={12} className="text-slate-300 mt-0.5 shrink-0" />
                             <p className="text-[11px] font-medium text-slate-500 leading-snug">
-                              {indicator.activity?.description ||
-                                "No activity description provided."}
+                              {indicator.activity?.description || "No description."}
                             </p>
                           </div>
                           <div className="flex items-center gap-2 mt-1">
                             <User size={10} className="text-emerald-600" />
                             <span className="text-[10px] font-black text-slate-500 uppercase">
                               {indicator.assigneeName}
-                              {indicator.pjNumber ? ` (${indicator.pjNumber})` : ""}
                             </span>
                           </div>
                         </div>
                       </td>
 
-                      {/* Cycle Type */}
                       <td className="px-6 py-6 text-center">
-                        <div className="flex flex-col items-center justify-center">
-                          {isAnnual ? (
-                            <div className="flex flex-col items-center gap-1.5">
-                              <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
-                                <CalendarDays size={14} />
-                              </div>
-                              <span className="text-[9px] font-black text-amber-800 uppercase tracking-tighter">
-                                Annual Cycle
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col items-center gap-1.5">
-                              <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600 border border-blue-100">
-                                <Layers size={14} />
-                              </div>
-                              <span className="text-[9px] font-black text-blue-800 uppercase tracking-tighter">
-                                Quarter {indicator.activeQuarter}
-                              </span>
-                            </div>
-                          )}
-                        </div>
+                         <div className="flex flex-col items-center justify-center">
+                           {isAnnual ? (
+                             <div className="flex flex-col items-center gap-1.5">
+                               <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
+                                 <CalendarDays size={14} />
+                               </div>
+                               <span className="text-[9px] font-black text-amber-800 uppercase tracking-tighter">
+                                 Annual Cycle
+                               </span>
+                             </div>
+                           ) : (
+                             <div className="flex flex-col items-center gap-1.5">
+                               <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600 border border-blue-100">
+                                 <Layers size={14} />
+                               </div>
+                               <span className="text-[9px] font-black text-blue-800 uppercase tracking-tighter">
+                                 Quarter {indicator.activeQuarter}
+                               </span>
+                             </div>
+                           )}
+                         </div>
                       </td>
 
-                      {/* Performance */}
                       <td className="px-6 py-6">
                         <div className="space-y-2">
                           <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-black text-[#1a3a32]">
-                              {indicator.progress}%
-                            </span>
-                            <span className="text-[9px] font-bold text-slate-400 uppercase">
-                              Target: {indicator.unit}
-                            </span>
+                            <span className="text-[10px] font-black text-[#1a3a32]">{indicator.progress}%</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Target: {indicator.unit}</span>
                           </div>
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
-                              className={`h-full transition-all duration-1000 ${
-                                isResub ? "bg-amber-500" : "bg-[#1a3a32]"
-                              }`}
+                              className={`h-full transition-all duration-1000 ${isResub ? "bg-amber-500" : "bg-[#1a3a32]"}`}
                               style={{ width: `${indicator.progress}%` }}
                             />
                           </div>
                         </div>
                       </td>
 
-                      {/* Status */}
                       <td className="px-6 py-6">
                         {isResub ? (
                           <div className="flex items-center gap-2 text-amber-600 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
                             <History size={12} className="animate-pulse" />
-                            <span className="text-[9px] font-black uppercase tracking-widest">
-                              Resubmitted
-                            </span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Resubmitted</span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 text-blue-600 bg-blue-50 w-fit px-3 py-1 rounded-xl border border-blue-100">
                             <Hourglass size={12} />
-                            <span className="text-[9px] font-black uppercase tracking-widest">
-                              Initial Audit
-                            </span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Initial Audit</span>
                           </div>
                         )}
                       </td>
 
-                      {/* Action */}
                       <td className="px-8 py-6 text-right">
                         <button
                           onClick={() => handleOpenDossier(indicator.id)}
-                          disabled={!!openingId}
-                          className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
+                          className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${
                             isResub
                               ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200"
                               : "bg-[#1a3a32] text-white hover:bg-black shadow-lg shadow-emerald-900/10"
@@ -280,11 +249,8 @@ const AdminPendingReviews = () => {
                             <Loader2 size={14} className="animate-spin" />
                           ) : (
                             <>
-                              <span className="relative z-10">Review</span>
-                              <ArrowRight
-                                size={14}
-                                className="relative z-10 group-hover/btn:translate-x-1 transition-transform"
-                              />
+                              <span className="relative z-10">Review Dossier</span>
+                              <ArrowRight size={14} className="relative z-10 group-hover/btn:translate-x-1 transition-transform" />
                             </>
                           )}
                         </button>
@@ -296,65 +262,6 @@ const AdminPendingReviews = () => {
             </tbody>
           </table>
         </div>
-      </div>
-
-      {/* SLIDE-OVER DRAWER */}
-      <div
-        className={`fixed inset-0 z-[1000] overflow-hidden transition-all duration-500 ease-in-out ${
-          selectedIndicator ? "visible" : "invisible"
-        }`}
-      >
-        {/* Backdrop */}
-        <div
-          className={`absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm transition-opacity duration-500 ${
-            selectedIndicator ? "opacity-100" : "opacity-0"
-          }`}
-          onClick={handleCloseDrawer}
-        />
-
-        {/* Panel */}
-        <section
-          className={`absolute inset-y-0 right-0 w-full max-w-[500px] flex transition-transform duration-700 transform ${
-            selectedIndicator ? "translate-x-0" : "translate-x-full"
-          }`}
-        >
-          <div className="w-full h-full">
-            <div className="h-full flex flex-col bg-[#fcfdfb] shadow-2xl overflow-hidden border-l border-slate-200">
-              {/* Drawer Header */}
-              <div className="flex items-center justify-between px-6 py-8 border-b border-slate-100 bg-white shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-[#1a3a32] text-white rounded-xl shadow-lg">
-                    <ShieldCheck size={20} />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-black text-[#1a3a32] uppercase tracking-tighter">
-                      Registry Audit Panel
-                    </h2>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                      ID: {selectedIndicator?.id.slice(-8).toUpperCase()}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleCloseDrawer}
-                  className="p-2 hover:bg-rose-50 rounded-lg transition-all"
-                >
-                  <X size={18} className="text-slate-400 hover:text-rose-500" />
-                </button>
-              </div>
-
-              {/* Drawer Body */}
-              <div className="flex-1 relative overflow-y-auto no-scrollbar">
-                {selectedIndicator && (
-                  <AdminIndicatorModal
-                    indicator={selectedIndicator}
-                    onClose={handleCloseDrawer}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
     </div>
   );

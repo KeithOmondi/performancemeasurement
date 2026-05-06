@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom"; // Added
 import {
   Loader2,
   Search,
@@ -15,11 +16,8 @@ import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategic
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import {
   fetchAllAdminIndicators,
-  getIndicatorByIdAdmin,
-  setSelectedIndicator,
   type IAdminIndicator,
 } from "../../store/slices/adminIndicatorSlice";
-import AdminIndicatorModal from "./AdminIndicatorModal";
 
 /* ─── Interfaces ─────────────────────────────────────────────────────────── */
 
@@ -53,6 +51,7 @@ const FILTERS = [
 
 const AdminIndicators = () => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate(); // Initialize navigate
 
   const { plans = [], loading: plansLoading = false } = useAppSelector(
     (state) => state.strategicPlan || {}
@@ -61,7 +60,6 @@ const AdminIndicators = () => {
     allAssignments = [],
     pendingAdminReview = [],
     isLoading: adminIndicatorsLoading = false,
-    selectedIndicator,
   } = useAppSelector((state) => state.adminIndicators || {});
 
   const [viewMode, setViewMode] = useState<"ALL" | "REGISTRY">("ALL");
@@ -83,15 +81,12 @@ const AdminIndicators = () => {
     load();
   }, [dispatch]);
 
-  const handleCloseDrawer = useCallback(() => {
-    dispatch(setSelectedIndicator(null));
-  }, [dispatch]);
-
+  // Changed from dispatching a fetch to a direct route navigation
   const handleOpenDossier = useCallback(
     (indicatorId: string) => {
-      dispatch(getIndicatorByIdAdmin(indicatorId));
+      navigate(`/admin/review/${indicatorId}`);
     },
-    [dispatch]
+    [navigate]
   );
 
   const indicatorMap = useMemo(() => {
@@ -101,7 +96,7 @@ const AdminIndicators = () => {
     return new Map(
       pool
         .filter((ind) => ind.activity)
-        .map((ind) => [String(ind.activity.description), ind]) // Matching by description or activity ID if available
+        .map((ind) => [String(ind.activity.description), ind])
     );
   }, [allAssignments, pendingAdminReview, viewMode]);
 
@@ -129,11 +124,8 @@ const AdminIndicators = () => {
         const processedObjectives = (plan.objectives ?? [])
           .map((obj) => {
             const filteredActivities = (obj.activities ?? []).filter((act) => {
-              // Note: Backend IAdminIndicator uses activity.description in the indicatorMap logic above
               const assignment = indicatorMap.get(act.description);
-
               if (viewMode === "REGISTRY" && !assignment) return false;
-
               if (!searchLower) return true;
               return (
                 obj.title?.toLowerCase().includes(searchLower) ||
@@ -304,23 +296,6 @@ const AdminIndicators = () => {
           </table>
         </div>
       </div>
-
-      {/* SLIDE-OVER DRAWER */}
-      {selectedIndicator && (
-        <div className="fixed inset-0 z-[300] flex justify-end">
-          <div
-            className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm transition-opacity duration-500"
-            onClick={handleCloseDrawer}
-          />
-          <div className="relative h-full w-20 md:w-[85vw] lg:w-[70vw] xl:w-[850px] bg-[#fcfdfb] shadow-2xl animate-in slide-in-from-right duration-500 ease-out border-l border-slate-200 overflow-y-auto">
-            <AdminIndicatorModal
-              key={selectedIndicator.id}
-              indicator={selectedIndicator}
-              onClose={handleCloseDrawer}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -369,7 +344,7 @@ const ObjectiveSection = ({
 
       {activities.map((act) => {
         const actId = String(act.id ?? act._id);
-        const assignment = indicatorMap.get(act.description); // Look up by description
+        const assignment = indicatorMap.get(act.description);
 
         return (
           <tr
@@ -393,22 +368,32 @@ const ObjectiveSection = ({
             <td className="px-6 py-6">
               {assignment ? (
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
-                    assignment.pjNumber 
-                    ? "bg-emerald-600/10 border-emerald-600/20 text-emerald-700" // User style
-                    : "bg-blue-600/10 border-blue-600/20 text-blue-700" // Team style
-                  }`}>
-                    {assignment.pjNumber ? <UserCheck size={14} /> : <Users size={14} />}
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                      assignment.pjNumber
+                        ? "bg-emerald-600/10 border-emerald-600/20 text-emerald-700"
+                        : "bg-blue-600/10 border-blue-600/20 text-blue-700"
+                    }`}
+                  >
+                    {assignment.pjNumber ? (
+                      <UserCheck size={14} />
+                    ) : (
+                      <Users size={14} />
+                    )}
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[10px] font-black text-slate-800 uppercase tracking-tighter">
                       {assignment.assigneeName}
                     </span>
                     {!assignment.pjNumber && (
-                      <span className="text-[8px] font-bold text-blue-500 uppercase">Team Account</span>
+                      <span className="text-[8px] font-bold text-blue-500 uppercase">
+                        Team Account
+                      </span>
                     )}
                     {assignment.pjNumber && (
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">PJ: {assignment.pjNumber}</span>
+                      <span className="text-[8px] font-bold text-slate-400 uppercase">
+                        PJ: {assignment.pjNumber}
+                      </span>
                     )}
                   </div>
                 </div>
