@@ -18,16 +18,33 @@ import {
   fetchAllAdminIndicators,
   getIndicatorByIdAdmin,
   setSelectedIndicator,
+  type IAdminIndicator,
+  type ISubmissionsByQuarter,
 } from "../../store/slices/adminIndicatorSlice";
 import AdminIndicatorModal from "./AdminIndicatorModal";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Flatten ISubmissionsByQuarter → flat ISubmission array */
+const flattenSubmissions = (submissions: ISubmissionsByQuarter) =>
+  Object.values(submissions ?? {}).flat();
+
+/** True if the indicator has any pending resubmission across all quarters */
+const hasResubmission = (indicator: IAdminIndicator): boolean =>
+  flattenSubmissions(indicator.submissions).some(
+    (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+  );
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminPendingReviews = () => {
   const dispatch = useAppDispatch();
   const [searchTerm, setSearchTerm] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
 
-  const { pendingAdminReview = [], isLoading, selectedIndicator } =
-    useAppSelector((state) => state.adminIndicators);
+  const { pendingAdminReview, isLoading, selectedIndicator } = useAppSelector(
+    (state) => state.adminIndicators
+  );
 
   useEffect(() => {
     dispatch(fetchAllAdminIndicators({ status: "Awaiting Admin Approval" }));
@@ -35,7 +52,7 @@ const AdminPendingReviews = () => {
 
   const handleOpenDossier = useCallback(
     async (id: string) => {
-      if (openingId) return; // prevent double-click
+      if (openingId) return;
       setOpeningId(id);
       await dispatch(getIndicatorByIdAdmin(id));
       setOpeningId(null);
@@ -143,9 +160,8 @@ const AdminPendingReviews = () => {
                 </tr>
               ) : (
                 filteredRecords.map((indicator) => {
-                  const isResub = indicator.submissions?.some(
-                    (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
-                  );
+                  // ✅ Use helper — submissions is Record<string, ISubmission[]>, not an array
+                  const isResub = hasResubmission(indicator);
                   const isAnnual = indicator.reportingCycle === "Annual";
                   const isOpening = openingId === indicator.id;
 

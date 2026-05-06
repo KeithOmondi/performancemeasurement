@@ -312,7 +312,7 @@ const AdminIndicators = () => {
             className="absolute inset-0 bg-[#1a3a32]/40 backdrop-blur-sm transition-opacity duration-500"
             onClick={handleCloseDrawer}
           />
-          <div className="relative h-full w-full md:w-[85vw] lg:w-[70vw] xl:w-[850px] bg-[#fcfdfb] shadow-2xl animate-in slide-in-from-right duration-500 ease-out border-l border-slate-200 overflow-y-auto">
+          <div className="relative h-full w-20 md:w-[85vw] lg:w-[70vw] xl:w-[850px] bg-[#fcfdfb] shadow-2xl animate-in slide-in-from-right duration-500 ease-out border-l border-slate-200 overflow-y-auto">
             <AdminIndicatorModal
               key={selectedIndicator.id}
               indicator={selectedIndicator}

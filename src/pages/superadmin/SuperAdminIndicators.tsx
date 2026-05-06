@@ -13,6 +13,7 @@ import {
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import toast from "react-hot-toast";
+import { shallowEqual } from "react-redux";
 
 import {
   type IStrategicPlan,
@@ -33,9 +34,13 @@ interface IUser {
   role?: string;
 }
 
+interface IObjectiveWithIndicators extends IObjective {
+  objectiveIndicators: IIndicator[];
+}
+
 interface IndicatorSectionProps {
   perspective: string;
-  objective: IObjective;
+  objective: IObjectiveWithIndicators;
   plan: IStrategicPlan;
   indicators: IIndicator[];
   userMap: Record<string, IUser>;
@@ -274,18 +279,34 @@ const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // ✅ renderKey: incremented after every successful unassign.
+  // Guarantees filteredData memo recomputes and React re-renders the table
+  // even if the selector equality check doesn't catch the new array reference.
+  const [renderKey, setRenderKey] = useState(0);
+
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
   const { plans, loading: plansLoading } = useAppSelector(
     (s) => s.strategicPlan,
+    shallowEqual,
   );
-  const {
-    indicators,
-    selectedIndicator,
-    loading: indicatorsLoading,
-    actionLoading,
-  } = useAppSelector((s) => s.indicators);
-  const { users, isLoading: usersLoading } = useAppSelector((s) => s.users);
+
+  // ✅ shallowEqual: compares array elements rather than just the reference.
+  // Ensures a removal (new array, same length - 1) always triggers re-render.
+  const indicators = useAppSelector(
+    (s) => s.indicators.indicators,
+    shallowEqual,
+  );
+  const selectedIndicator = useAppSelector(
+    (s) => s.indicators.selectedIndicator,
+  );
+  const indicatorsLoading = useAppSelector((s) => s.indicators.loading);
+  const actionLoading = useAppSelector((s) => s.indicators.actionLoading);
+
+  const { users, isLoading: usersLoading } = useAppSelector(
+    (s) => s.users,
+    shallowEqual,
+  );
 
   const [assignPrefill, setAssignPrefill] = useState<AssignPrefill | undefined>();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -319,9 +340,13 @@ const SuperAdminIndicators = () => {
 
   const handleUnassign = async (indicatorId: string) => {
     if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
+
     const result = await dispatch(unassignIndicator(indicatorId));
+
     if (unassignIndicator.fulfilled.match(result)) {
       toast.success("Activity unassigned successfully.");
+      // ✅ Force re-render — belt-and-suspenders alongside shallowEqual
+      setRenderKey((k) => k + 1);
     } else {
       toast.error("Failed to unassign. Please try again.");
     }
@@ -336,6 +361,8 @@ const SuperAdminIndicators = () => {
     return map;
   }, [users]);
 
+  // ✅ renderKey in deps: even if indicators reference didn't change in React's
+  // eyes, bumping renderKey guarantees this memo recomputes with fresh data.
   const filteredData = useMemo(() => {
     let basePlans = [...(plans ?? [])];
 
@@ -354,7 +381,7 @@ const SuperAdminIndicators = () => {
     return basePlans
       .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
-          .map((obj: IObjective) => {
+          .map((obj: IObjective): IObjectiveWithIndicators => {
             const filteredActivities = getActivities(obj).filter(
               (act: IActivity) => {
                 const actId = act.id;
@@ -366,14 +393,26 @@ const SuperAdminIndicators = () => {
                 return true;
               },
             );
-            return { ...obj, activities: filteredActivities };
+
+            // Pre-filtered per objective — passed directly as prop so
+            // IndicatorSection never derives stale data via an inline filter.
+            const objectiveIndicators = (indicators ?? []).filter((ind) =>
+              matchId(ind.objectiveId, obj.id),
+            );
+
+            return {
+              ...obj,
+              activities: filteredActivities,
+              objectiveIndicators,
+            };
           })
           .filter((obj) => obj.activities.length > 0);
 
         return { ...plan, objectives };
       })
       .filter((plan) => plan.objectives.length > 0);
-  }, [activeFilter, plans, indicators]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFilter, plans, indicators, renderKey]);
 
   const counts = useMemo(() => {
     const allActs = (plans ?? []).flatMap((p) =>
@@ -496,22 +535,23 @@ const SuperAdminIndicators = () => {
             <tbody>
               {filteredData.length > 0 ? (
                 filteredData.map((plan: IStrategicPlan) =>
-                  plan.objectives.map((objective: IObjective) => (
-                    <IndicatorSection
-                      key={objective.id}
-                      perspective={plan.perspective}
-                      objective={objective}
-                      plan={plan}
-                      indicators={(indicators ?? []).filter((ind) =>
-                        matchId(ind.objectiveId, objective.id),
-                      )}
-                      userMap={userMap}
-                      onAssign={handleOpenAssign}
-                      onSelectAssignment={handleSelectAssignment}
-                      onUnassign={handleUnassign}
-                      activeFilter={activeFilter}
-                    />
-                  )),
+                  (plan.objectives as IObjectiveWithIndicators[]).map(
+                    (objective) => (
+                      <IndicatorSection
+                        key={objective.id}
+                        perspective={plan.perspective}
+                        objective={objective}
+                        plan={plan}
+                        // ✅ Always fresh — computed inside filteredData memo
+                        indicators={objective.objectiveIndicators}
+                        userMap={userMap}
+                        onAssign={handleOpenAssign}
+                        onSelectAssignment={handleSelectAssignment}
+                        onUnassign={handleUnassign}
+                        activeFilter={activeFilter}
+                      />
+                    ),
+                  ),
                 )
               ) : (
                 <tr>

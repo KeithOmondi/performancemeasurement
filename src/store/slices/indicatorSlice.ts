@@ -91,6 +91,7 @@ export interface IIndicator {
 
 export interface IQueueItem {
   id: string;
+  submissionId: string;
   indicatorId: string;
   indicatorTitle: string;
   submittedBy: string;
@@ -156,7 +157,7 @@ const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
   const replace = (list: IIndicator[]) => {
     const idx = list.findIndex((i) => String(i.id) === String(updated.id));
     if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updated };
+      list[idx] = updated;
     }
   };
 
@@ -167,7 +168,7 @@ const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
     state.selectedIndicator &&
     String(state.selectedIndicator.id) === String(updated.id)
   ) {
-    state.selectedIndicator = { ...state.selectedIndicator, ...updated };
+    state.selectedIndicator = updated;
   }
 };
 
@@ -281,6 +282,8 @@ export const unassignIndicator = createAsyncThunk(
   async (id: string, { rejectWithValue }) => {
     try {
       await apiPrivate.delete(`/indicators/${id}/unassign`);
+      // ✅ Return the original arg id — never trust the backend response id
+      // since INDICATOR_SELECT joins can alias a different table's id column.
       return id;
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
@@ -300,6 +303,21 @@ export const superAdminReview = createAsyncThunk(
         arg.reviewData
       );
       return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
+  }
+);
+
+export const deleteSubmission = createAsyncThunk(
+  "indicators/deleteSubmission",
+  async (
+    arg: { submissionId: string; indicatorId: string },
+    { rejectWithValue }
+  ) => {
+    try {
+      await apiPrivate.delete(`/indicators/submissions/${arg.submissionId}`);
+      return arg;
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
@@ -379,6 +397,42 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // ── DELETE SUBMISSION ──────────────────────────────────────────────
+    builder
+      .addCase(deleteSubmission.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteSubmission.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        const { submissionId, indicatorId } = action.payload;
+
+        state.queue = state.queue.filter((q) => q.id !== submissionId);
+
+        if (state.selectedIndicator?.id === indicatorId) {
+          state.selectedIndicator = {
+            ...state.selectedIndicator,
+            submissions: state.selectedIndicator.submissions?.filter(
+              (s) => s.id !== submissionId
+            ),
+          };
+        }
+
+        const idx = state.indicators.findIndex((i) => i.id === indicatorId);
+        if (idx !== -1 && state.indicators[idx].submissions) {
+          state.indicators[idx] = {
+            ...state.indicators[idx],
+            submissions: state.indicators[idx].submissions!.filter(
+              (s) => s.id !== submissionId
+            ),
+          };
+        }
+      })
+      .addCase(deleteSubmission.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload as string;
+      });
+
     // ── UPDATE ─────────────────────────────────────────────────────────
     builder
       .addCase(updateIndicator.pending, (state) => {
@@ -407,20 +461,32 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
-    // ── UNASSIGN ───────────────────────────────────────────────────────
-    builder
-      .addCase(unassignIndicator.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(unassignIndicator.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        removeIndicatorById(state, String(action.payload));
-      })
-      .addCase(unassignIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
+   // ── UNASSIGN ───────────────────────────────────────────────────────
+builder
+  .addCase(unassignIndicator.pending, (state) => {
+    state.actionLoading = true;
+    state.error = null;
+  })
+  .addCase(unassignIndicator.fulfilled, (state, action) => {
+  state.actionLoading = false;
+  const id = action.payload;
+
+  const before = state.indicators.length;
+  state.indicators = state.indicators.filter((i) => String(i.id) !== id);
+  const after = state.indicators.length;
+  
+  console.log(`Removed: ${before} → ${after}, id matched: ${before !== after}`);
+
+  state.rejectedByAdmin = state.rejectedByAdmin.filter((i) => String(i.id) !== id);
+  state.queue = state.queue.filter((q) => String(q.indicatorId) !== id);
+  if (state.selectedIndicator && String(state.selectedIndicator.id) === id) {
+    state.selectedIndicator = null;
+  }
+})
+  .addCase(unassignIndicator.rejected, (state, action) => {
+    state.actionLoading = false;
+    state.error = action.payload as string;
+  });
 
     // ── SUPER ADMIN REVIEW ─────────────────────────────────────────────
     builder

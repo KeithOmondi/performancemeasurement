@@ -72,7 +72,6 @@ const UserDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { myIndicators, loading } = useAppSelector((state) => state.userIndicators);
   
-  // FIX: Passing a function to useState makes the initialization pure
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -81,7 +80,6 @@ const UserDashboard: React.FC = () => {
     return () => clearInterval(t);
   }, [dispatch]);
 
-  // FIX: useCallback prevents this function from changing on every render
   const getUIKey = useCallback((indicator: IIndicatorUI) => {
     const status = indicator.status;
     if (status === "Completed") return "completed";
@@ -106,7 +104,7 @@ const UserDashboard: React.FC = () => {
     });
     
     return Object.entries(counts).map(([key, value]) => ({ key, value })) as IStat[];
-  }, [myIndicators, getUIKey]); // getUIKey is now a stable dependency
+  }, [myIndicators, getUIKey]);
 
   if (loading && myIndicators.length === 0) {
     return (
@@ -119,7 +117,7 @@ const UserDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#FDFDFD] p-4 md:p-8 font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-8">
         
         {/* COMPACT HEADER */}
         <div className="border-b-2 border-[#C69214] pb-4 flex justify-between items-center">
@@ -136,26 +134,50 @@ const UserDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* 6-BOX GRID */}
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-          {stats.map(({ key, value }) => {
-            const config = STATUS_CONFIG[key];
-            const Icon = config.icon;
-            return (
-              <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
-                <div className="flex justify-between items-start mb-2">
-                  <Icon size={14} strokeWidth={2.5} />
-                  <span className="text-[7px] font-black uppercase opacity-40">Metric</span>
+        {/* 4+2 STATS GRID */}
+        <div className="space-y-4">
+          {/* Top Row: 4 Boxes */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {stats.slice(0, 4).map(({ key, value }) => {
+              const config = STATUS_CONFIG[key];
+              const Icon = config.icon;
+              return (
+                <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <Icon size={14} strokeWidth={2.5} />
+                    <span className="text-[7px] font-black uppercase opacity-40">Metric</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5">
+                    <p className="text-xl font-black leading-none">{value}</p>
+                    <p className="text-[8px] font-bold uppercase truncate">{config.label}</p>
+                  </div>
                 </div>
-                <div className="flex items-baseline gap-1.5">
-                  <p className="text-xl font-black leading-none">{value}</p>
-                  <p className="text-[8px] font-bold uppercase truncate">{config.label}</p>
+              );
+            })}
+          </div>
+
+          {/* Bottom Row: 2 Boxes (Centered on Desktop) */}
+          <div className="grid grid-cols-2 gap-4 lg:max-w-2xl lg:mx-auto">
+            {stats.slice(4, 6).map(({ key, value }) => {
+              const config = STATUS_CONFIG[key];
+              const Icon = config.icon;
+              return (
+                <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
+                  <div className="flex justify-between items-start mb-2">
+                    <Icon size={14} strokeWidth={2.5} />
+                    <span className="text-[7px] font-black uppercase opacity-40">Metric</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5">
+                    <p className="text-xl font-black leading-none">{value}</p>
+                    <p className="text-[8px] font-bold uppercase truncate">{config.label}</p>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
+        {/* MAIN CONTENT AREA */}
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-3">
             <div className="flex items-center justify-between px-1">

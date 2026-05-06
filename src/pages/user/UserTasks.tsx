@@ -1,14 +1,40 @@
 import { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { useNavigate } from "react-router-dom";
-import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
+import {
+  fetchMyAssignments,
+  normaliseQuarter,
+} from "../../store/slices/userIndicatorSlice";
 import { fetchTeams } from "../../store/slices/teamSlice";
 import {
   ArrowUpRight, AlertCircle, CheckCircle2, PlayCircle,
   ShieldCheck, Clock, Activity, Hash, Loader2,
   RotateCcw, Users, User, FileText
 } from "lucide-react";
-import type { IIndicatorUI } from "../../store/slices/userIndicatorSlice";
+import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
+
+/* ─── HELPERS ────────────────────────────────────────────────────────── */
+
+/**
+ * Finds the latest submission for the indicator's active quarter by
+ * building the quarter key the same way the backend does, then taking
+ * index 0 (most recent) from that bucket.
+ *
+ * active_quarter is a raw DB integer (1-4) or "Annual" — normaliseQuarter
+ * converts it to "Q1"…"Q4" | "Annual" before we look up the bucket.
+ */
+const getActiveQuarterSub = (indicator: IIndicatorUI): ISubmissionUI | undefined => {
+  if (!indicator.submissions) return undefined;
+  const normQ = normaliseQuarter(indicator.active_quarter);
+  // Quarter keys are stored as "Q1_2025", "Annual_2025", etc.
+  // Find the bucket whose key starts with the normalised quarter prefix.
+  const matchingKey = Object.keys(indicator.submissions).find((k) =>
+    k.startsWith(normQ)
+  );
+  return matchingKey ? indicator.submissions[matchingKey][0] : undefined;
+};
+
+/* ─── COMPONENT ──────────────────────────────────────────────────────── */
 
 const UserTasks = () => {
   const dispatch = useAppDispatch();
@@ -33,7 +59,7 @@ const UserTasks = () => {
     () => filteredTasks.filter((i) => i.assignee_model === "Team"),
     [filteredTasks],
   );
-  
+
   const individualTasks = useMemo(
     () => filteredTasks.filter((i) => i.assignee_model === "User"),
     [filteredTasks],
@@ -49,7 +75,8 @@ const UserTasks = () => {
     activeQuarter: number,
     cycle: "Quarterly" | "Annual",
   ) => {
-    const periodLabel = cycle === "Annual" ? "Annual" : `Q${activeQuarter || 1}`;
+    const periodLabel =
+      cycle === "Annual" ? "Annual" : `Q${activeQuarter || 1}`;
     switch (status) {
       case "Awaiting Admin Approval":
         return {
@@ -92,7 +119,10 @@ const UserTasks = () => {
       <div className="flex flex-col items-center justify-center h-screen bg-[#f8f9fa] space-y-6">
         <div className="relative">
           <Loader2 className="w-14 h-14 animate-spin text-[#1a3a32]" />
-          <ShieldCheck className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[#c2a336]" size={16} />
+          <ShieldCheck
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[#c2a336]"
+            size={16}
+          />
         </div>
         <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#8c94a4]">
           Syncing Judicial Ledger...
@@ -110,7 +140,10 @@ const UserTasks = () => {
               <Activity size={16} /> Strategic Performance Unit
             </div>
             <h1 className="text-2xl font-black font-serif tracking-tighter leading-tight">
-              Active <span className="text-gray-300 font-serif font-light italic">Assignments</span>
+              Active{" "}
+              <span className="text-gray-300 font-serif font-light italic">
+                Assignments
+              </span>
             </h1>
           </div>
 
@@ -119,19 +152,27 @@ const UserTasks = () => {
               <ShieldCheck size={60} />
             </div>
             <div className="relative z-10">
-              <p className="text-[#c2a336] text-[10px] font-black uppercase tracking-[0.2em] mb-1">Filing Queue</p>
-              <p className="text-4xl font-black leading-none tracking-tighter">{filteredTasks.length.toString().padStart(2, "0")}</p>
+              <p className="text-[#c2a336] text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                Filing Queue
+              </p>
+              <p className="text-4xl font-black leading-none tracking-tighter">
+                {filteredTasks.length.toString().padStart(2, "0")}
+              </p>
             </div>
             <div className="h-10 w-[1px] bg-white/10 relative z-10" />
             <div className="relative z-10 space-y-1">
               <div className="flex items-center gap-2">
                 <User size={11} className="text-white/50" />
-                <span className="text-[9px] text-white/60 font-bold uppercase tracking-widest">{individualTasks.length} Individual</span>
+                <span className="text-[9px] text-white/60 font-bold uppercase tracking-widest">
+                  {individualTasks.length} Individual
+                </span>
               </div>
               {teamTasks.length > 0 && (
                 <div className="flex items-center gap-2">
                   <Users size={11} className="text-[#c2a336]" />
-                  <span className="text-[9px] text-[#c2a336] font-bold uppercase tracking-widest">{teamTasks.length} Team</span>
+                  <span className="text-[9px] text-[#c2a336] font-bold uppercase tracking-widest">
+                    {teamTasks.length} Team
+                  </span>
                 </div>
               )}
             </div>
@@ -144,8 +185,18 @@ const UserTasks = () => {
               <table className="w-full text-left border-collapse min-w-[1050px]">
                 <thead>
                   <tr className="bg-gray-50/50 border-b border-gray-100">
-                    {["Indicator & Strategic Objective", "Assignment", "Cycle", "Registry Status", "Achievement", "Action"].map((h) => (
-                      <th key={h} className={`px-6 py-6 text-[9px] font-black text-gray-400 uppercase tracking-widest ${h === "Action" ? "text-right" : "text-left"} ${h.includes("Indicator") ? "pl-10" : ""}`}>
+                    {[
+                      "Indicator & Strategic Objective",
+                      "Assignment",
+                      "Cycle",
+                      "Registry Status",
+                      "Achievement",
+                      "Action",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className={`px-6 py-6 text-[9px] font-black text-gray-400 uppercase tracking-widest ${h === "Action" ? "text-right" : "text-left"} ${h.includes("Indicator") ? "pl-10" : ""}`}
+                      >
                         {h}
                       </th>
                     ))}
@@ -153,42 +204,80 @@ const UserTasks = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {filteredTasks.map((item: IIndicatorUI) => {
-                    const currentQuarterSub = item.submissions?.find(s => s.quarter === item.active_quarter);
-                    const achieved = currentQuarterSub?.achieved_value || 0;
-                    const calculatedProgress = item.target > 0 ? (achieved / item.target) * 100 : 0;
-                    
-                    const lifecycle = getLifecycleConfig(item.status || "Pending", item.active_quarter, item.reporting_cycle);
+                    // Use the helper — resolves the active quarter bucket correctly
+                    const currentQuarterSub = getActiveQuarterSub(item);
+
+                    // camelCase: achievedValue
+                    const achieved = currentQuarterSub?.achievedValue ?? 0;
+                    const calculatedProgress =
+                      item.target > 0
+                        ? (achieved / item.target) * 100
+                        : 0;
+
+                    const lifecycle = getLifecycleConfig(
+                      item.status || "Pending",
+                      item.active_quarter,
+                      item.reporting_cycle,
+                    );
                     const isFlagged = item.status?.includes("Rejected");
-                    const isUnderReview = item.status?.startsWith("Awaiting") || item.status === "Partially Approved";
+                    const isUnderReview =
+                      item.status?.startsWith("Awaiting") ||
+                      item.status === "Partially Approved";
 
                     return (
-                      <tr key={item.id} className="group hover:bg-emerald-50/30 transition-all cursor-pointer" onClick={() => navigate(`/user/assignments/${item.id}`)}>
+                      <tr
+                        key={item.id}
+                        className="group hover:bg-emerald-50/30 transition-all cursor-pointer"
+                        onClick={() =>
+                          navigate(`/user/assignments/${item.id}`)
+                        }
+                      >
                         <td className="px-10 py-7">
                           <div className="max-w-md">
-                            <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">{item.perspective}</p>
-                            <p className="text-sm font-bold leading-tight">{item.objective?.title || "Strategic Objective"}</p>
-                            
-                            {/* Document Preview Snippet */}
+                            <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">
+                              {item.perspective}
+                            </p>
+                            <p className="text-sm font-bold leading-tight">
+                              {item.objective?.title || "Strategic Objective"}
+                            </p>
+
+                            {/* Document preview — camelCase: fileName, evidenceUrl */}
                             <div className="flex flex-wrap gap-2 mt-3">
-                              {currentQuarterSub?.documents?.slice(0, 2).map((doc, idx) => (
-                                <div key={idx} className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-2 py-1 rounded-md">
-                                  <FileText size={10} className="text-gray-400" />
-                                  <span className="text-[8px] font-bold text-gray-500 truncate max-w-[120px]">
-                                    {/* FIXED: Uses evidence_url and file_name from IDocumentUI interface */}
-                                    {doc.file_name || doc.evidence_url?.split('/').pop() || "UNTITLED_EVIDENCE"}
-                                  </span>
-                                </div>
-                              ))}
-                              {(currentQuarterSub?.documents?.length || 0) > 2 && (
+                              {currentQuarterSub?.documents
+                                ?.slice(0, 2)
+                                .map((doc, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-2 py-1 rounded-md"
+                                  >
+                                    <FileText
+                                      size={10}
+                                      className="text-gray-400"
+                                    />
+                                    <span className="text-[8px] font-bold text-gray-500 truncate max-w-[120px]">
+                                      {doc.fileName ||
+                                        doc.evidenceUrl
+                                          ?.split("/")
+                                          .pop() ||
+                                        "UNTITLED_EVIDENCE"}
+                                    </span>
+                                  </div>
+                                ))}
+                              {(currentQuarterSub?.documents?.length ?? 0) >
+                                2 && (
                                 <span className="text-[8px] font-black text-[#c2a336] self-center">
-                                  +{(currentQuarterSub?.documents?.length || 0) - 2} MORE
+                                  +
+                                  {(currentQuarterSub?.documents?.length ??
+                                    0) - 2}{" "}
+                                  MORE
                                 </span>
                               )}
                             </div>
 
                             <div className="flex items-center gap-3 mt-3">
                               <div className="flex items-center gap-1 opacity-40 text-[9px] font-black uppercase">
-                                <Hash size={10} /> ID: {String(item.id).split('-')[0]}
+                                <Hash size={10} /> ID:{" "}
+                                {String(item.id).split("-")[0]}
                               </div>
                               {isFlagged && (
                                 <div className="flex items-center gap-1 text-rose-600 bg-rose-50 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-rose-100">
@@ -200,20 +289,40 @@ const UserTasks = () => {
                         </td>
 
                         <td className="px-6 py-7">
-                          <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider ${item.assignee_model === 'Team' ? 'bg-violet-50 text-violet-700 border border-violet-100' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
-                            {item.assignee_model === 'Team' ? <Users size={10} /> : <User size={10} />}
-                            {item.assignee_model === 'Team' ? getTeamName(item.assignee_id) : 'Personal'}
+                          <div
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider ${
+                              item.assignee_model === "Team"
+                                ? "bg-violet-50 text-violet-700 border border-violet-100"
+                                : "bg-slate-50 text-slate-500 border border-slate-200"
+                            }`}
+                          >
+                            {item.assignee_model === "Team" ? (
+                              <Users size={10} />
+                            ) : (
+                              <User size={10} />
+                            )}
+                            {item.assignee_model === "Team"
+                              ? getTeamName(item.assignee_id)
+                              : "Personal"}
                           </div>
                         </td>
 
                         <td className="px-6 py-7">
-                          <span className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${item.reporting_cycle === "Annual" ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
+                          <span
+                            className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${
+                              item.reporting_cycle === "Annual"
+                                ? "bg-blue-50 text-blue-600 border-blue-100"
+                                : "bg-gray-100 text-gray-500 border-gray-200"
+                            }`}
+                          >
                             {item.reporting_cycle}
                           </span>
                         </td>
 
                         <td className="px-6 py-7">
-                          <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest ${lifecycle.bg}`}>
+                          <div
+                            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest ${lifecycle.bg}`}
+                          >
                             {lifecycle.icon} {lifecycle.label}
                           </div>
                         </td>
@@ -221,13 +330,19 @@ const UserTasks = () => {
                         <td className="px-6 py-7">
                           <div className="flex items-center gap-4">
                             <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-[100px]">
-                              <div 
-                                className={`h-full transition-all duration-700 ${isFlagged ? "bg-rose-500" : "bg-[#1a3a32]"}`}
-                                style={{ width: `${Math.min(calculatedProgress, 100)}%` }}
+                              <div
+                                className={`h-full transition-all duration-700 ${
+                                  isFlagged ? "bg-rose-500" : "bg-[#1a3a32]"
+                                }`}
+                                style={{
+                                  width: `${Math.min(calculatedProgress, 100)}%`,
+                                }}
                               />
                             </div>
                             <div className="flex flex-col min-w-[40px]">
-                              <span className="text-[10px] font-black tabular-nums">{Math.round(calculatedProgress)}%</span>
+                              <span className="text-[10px] font-black tabular-nums">
+                                {Math.round(calculatedProgress)}%
+                              </span>
                               <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tighter">
                                 {achieved}/{item.target} {item.unit}
                               </span>
@@ -236,15 +351,19 @@ const UserTasks = () => {
                         </td>
 
                         <td className="px-10 py-7 text-right">
-                          <button 
-                             onClick={(e) => {
+                          <button
+                            onClick={(e) => {
                               e.stopPropagation();
                               navigate(`/user/assignments/${item.id}`);
                             }}
                             className="bg-white text-[#1a3a32] border border-gray-200 p-3 rounded-xl transition-all inline-flex items-center gap-3 hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32]"
                           >
                             <span className="text-[10px] font-black uppercase tracking-widest">
-                              {isUnderReview ? "Audit Mode" : isFlagged ? "Resolve" : "View"}
+                              {isUnderReview
+                                ? "Audit Mode"
+                                : isFlagged
+                                  ? "Resolve"
+                                  : "View"}
                             </span>
                             <ArrowUpRight size={14} />
                           </button>
@@ -257,8 +376,12 @@ const UserTasks = () => {
             ) : (
               <div className="py-40 flex flex-col items-center justify-center text-gray-300">
                 <Activity size={48} className="opacity-10 mb-6" />
-                <h3 className="text-xs font-black uppercase tracking-[0.4em] mb-2 text-gray-400">Registry Clear</h3>
-                <p className="text-[9px] font-bold uppercase text-gray-400 text-center max-w-xs">All assigned indicators finalized.</p>
+                <h3 className="text-xs font-black uppercase tracking-[0.4em] mb-2 text-gray-400">
+                  Registry Clear
+                </h3>
+                <p className="text-[9px] font-bold uppercase text-gray-400 text-center max-w-xs">
+                  All assigned indicators finalized.
+                </p>
               </div>
             )}
           </div>
