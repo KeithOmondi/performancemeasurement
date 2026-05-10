@@ -1,15 +1,19 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   ArrowLeft, Loader2, TrendingUp, FileText,
-  ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar
+  ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
+  AlertTriangle, CheckCircle, XCircle,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
   clearIndicatorError,
   flattenSubmissions,
-  normaliseQuarter,
+  getActiveQuarterDisplay,
+  hasSubmissionForCurrentQuarter,
+  getCurrentQuarterReviewStatus,
+  clearLastSubmissionId,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -20,92 +24,190 @@ const UserTaskIdPage = () => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
 
-  const [isModalOpen, setIsModalOpen]   = useState(false);
-  const [previewFile, setPreviewFile]   = useState<{ url: string; name: string } | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const lastSubmissionIdRef = useRef<string | null>(null);
 
   const currentIndicator = useAppSelector((s) => s.userIndicators.currentIndicator);
-  const loading          = useAppSelector((s) => s.userIndicators.loading);
-  const uploading        = useAppSelector((s) => s.userIndicators.uploading);
+  const loading = useAppSelector((s) => s.userIndicators.loading);
+  const uploading = useAppSelector((s) => s.userIndicators.uploading);
+  const lastSubmissionId = useAppSelector((s) => s.userIndicators.lastSubmissionId);
+  const error = useAppSelector((s) => s.userIndicators.error);
 
   useEffect(() => {
     if (id) dispatch(fetchIndicatorDetails(id));
-    return () => { dispatch(clearIndicatorError()); };
+    return () => {
+      dispatch(clearIndicatorError());
+      dispatch(clearLastSubmissionId());
+    };
   }, [id, dispatch]);
 
+  // Success toast — deferred to avoid cascading renders
+  useEffect(() => {
+    if (
+      lastSubmissionId &&
+      !uploading &&
+      !error &&
+      lastSubmissionIdRef.current !== lastSubmissionId
+    ) {
+      lastSubmissionIdRef.current = lastSubmissionId;
+
+      const showTimer = setTimeout(() => {
+        setSuccessMessage("Filing submitted successfully! Awaiting admin review.");
+        setShowSuccessToast(true);
+      }, 0);
+
+      const hideTimer = setTimeout(() => {
+        setShowSuccessToast(false);
+        setSuccessMessage("");
+      }, 5000);
+
+      return () => {
+        clearTimeout(showTimer);
+        clearTimeout(hideTimer);
+      };
+    }
+  }, [lastSubmissionId, uploading, error]);
+
+  // Reset toast ref on page/indicator change
+  useEffect(() => {
+    lastSubmissionIdRef.current = null;
+  }, [id]);
+
   const isAnnual = currentIndicator?.reporting_cycle === "Annual";
+  const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
+  const currentQuarterStatus = currentIndicator ? getCurrentQuarterReviewStatus(currentIndicator) : null;
+  const hasSubmission = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
 
-  // ── Derived data ────────────────────────────────────────────────────────────
+  // ── Derived data ──────────────────────────────────────────────────────────
 
-  /**
-   * All submissions across every quarter folder, flattened into a single array.
-   * Uses the exported helper from the slice so we don't repeat the
-   * Object.values(...).flat() pattern throughout the component.
-   */
   const allSubmissions = useMemo<ISubmissionUI[]>(
     () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
     [currentIndicator]
   );
 
-  /**
-   * The active submission for the current period.
-   *
-   * Backend stores the quarter as a normalised string ("Q1"–"Q4" or "Annual"),
-   * so we resolve the target key using normaliseQuarter() and look it up
-   * directly in the grouped object rather than searching a flat array.
-   *
-   * For Annual indicators the key is "Annual"; for quarterly it is "Q1"–"Q4".
-   * We take index [0] because each quarter's array is sorted newest-first.
-   */
   const activeSub = useMemo<ISubmissionUI | undefined>(() => {
     if (!currentIndicator?.submissions) return undefined;
+    const targetKey = isAnnual ? "Annual" : activeQuarterDisplay;
+    const quarterKey = `${targetKey}_${new Date().getFullYear()}`;
+    const submissions = currentIndicator.submissions[quarterKey];
+    if (!submissions || submissions.length === 0) return undefined;
+    return submissions[0];
+  }, [currentIndicator, isAnnual, activeQuarterDisplay]);
 
-    const targetKey = isAnnual
-      ? "Annual"
-      : normaliseQuarter(currentIndicator.active_quarter);
+  const submissionHistory = useMemo(() => {
+    if (!currentIndicator?.submissions) return [];
+    const targetKey = isAnnual ? "Annual" : activeQuarterDisplay;
+    const quarterKey = `${targetKey}_${new Date().getFullYear()}`;
+    return currentIndicator.submissions[quarterKey] || [];
+  }, [currentIndicator, isAnnual, activeQuarterDisplay]);
 
-    // Find the quarter folder whose key matches the target period
-    const matchingEntry = Object.entries(currentIndicator.submissions).find(
-      ([key]) => key.startsWith(targetKey + "_")
-    );
-
-    return matchingEntry?.[1]?.[0]; // latest submission in that folder
-  }, [currentIndicator, isAnnual]);
-
-  /**
-   * Rejected documents across ALL quarters, enriched with their quarter label.
-   * Uses camelCase fields to match the updated IDocumentUI type.
-   */
   const rejectedDocs = useMemo(() => {
     return allSubmissions.flatMap((sub) =>
       (sub.documents ?? [])
         .filter((doc: IDocumentUI) => doc.status === "Rejected")
         .map((doc) => ({
           doc,
-          // sub.quarter is already a normalised string ("Q1" / "Annual")
-          quarterLabel: sub.quarter === "Annual" ? "Annual" : sub.quarter,
-          rejectionReason: doc.rejectionReason, // camelCase
+          quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
+          year: sub.year,
+          rejectionReason: doc.rejectionReason,
         }))
     );
   }, [allSubmissions]);
 
-  /**
-   * Non-rejected documents across ALL quarters.
-   */
   const activeDocs = useMemo(() => {
     return allSubmissions.flatMap((sub) =>
       (sub.documents ?? [])
         .filter((doc: IDocumentUI) => doc.status !== "Rejected")
         .map((doc) => ({
           doc,
-          quarterLabel: sub.quarter === "Annual" ? "Annual" : sub.quarter,
+          quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
+          year: sub.year,
         }))
     );
   }, [allSubmissions]);
 
-  // reviewStatus is camelCase in the updated ISubmissionUI
-  const isGlobalRejected = activeSub?.reviewStatus === "Rejected";
+  // ── Status badge ──────────────────────────────────────────────────────────
 
-  // ── Loading / empty states ──────────────────────────────────────────────────
+  const getStatusBadge = useCallback(() => {
+    if (!currentQuarterStatus && !hasSubmission) {
+      return {
+        icon: AlertCircle,
+        text: "Not Started",
+        color: "text-gray-500 bg-gray-50 border-gray-200",
+        iconColor: "text-gray-400",
+      };
+    }
+    switch (currentQuarterStatus) {
+      case "Rejected":
+        return {
+          icon: XCircle,
+          text: "Revision Required",
+          color: "text-rose-600 bg-rose-50 border-rose-100",
+          iconColor: "text-rose-500",
+        };
+      case "Pending":
+        return {
+          icon: Clock,
+          text: "Awaiting Review",
+          color: "text-amber-600 bg-amber-50 border-amber-100",
+          iconColor: "text-amber-500",
+        };
+      case "Accepted":
+        return {
+          icon: CheckCircle,
+          text: "Approved",
+          color: "text-emerald-600 bg-emerald-50 border-emerald-100",
+          iconColor: "text-emerald-500",
+        };
+      default:
+        return {
+          icon: AlertCircle,
+          text: "Draft",
+          color: "text-gray-500 bg-gray-50 border-gray-200",
+          iconColor: "text-gray-400",
+        };
+    }
+  }, [currentQuarterStatus, hasSubmission]);
+
+  const statusBadge = getStatusBadge();
+  const StatusIcon = statusBadge.icon;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  const handleModalClose = useCallback(() => {
+    setIsModalOpen(false);
+    if (id) dispatch(fetchIndicatorDetails(id));
+  }, [id, dispatch]);
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return "N/A";
+    return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  // Submit button label
+  const submitButtonLabel = isAnnual
+    ? hasSubmission && currentQuarterStatus === "Rejected"
+      ? "Resubmit Annual Filing"
+      : hasSubmission
+      ? "Update Annual Filing"
+      : "Submit Annual Filing"
+    : hasSubmission && currentQuarterStatus === "Rejected"
+    ? `Resubmit ${activeQuarterDisplay} Filing`
+    : hasSubmission
+    ? `Update ${activeQuarterDisplay} Filing`
+    : `Submit ${activeQuarterDisplay} Filing`;
+
+  // ── Loading / empty states ────────────────────────────────────────────────
 
   if (loading && !currentIndicator) {
     return (
@@ -120,11 +222,24 @@ const UserTaskIdPage = () => {
 
   if (!currentIndicator) return null;
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] p-6 lg:p-12 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
+
+        {/* Success Toast */}
+        {showSuccessToast && (
+          <div className="fixed top-24 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-lg flex items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-emerald-500" />
+              <div>
+                <p className="text-[10px] font-black uppercase text-emerald-700">Success</p>
+                <p className="text-sm text-emerald-600">{successMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Navigation & Header */}
         <nav className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -137,7 +252,8 @@ const UserTaskIdPage = () => {
             </span>
           </button>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Cycle badge */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-gray-100 shadow-sm">
               <Calendar size={12} className="text-[#c2a336]" />
               <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
@@ -145,38 +261,62 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {isGlobalRejected && (
-              <div className="px-4 py-2 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-[9px] font-black uppercase tracking-widest">
-                Revision Required
-              </div>
-            )}
+            {/* Status badge */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${statusBadge.color}`}>
+              <StatusIcon size={12} className={statusBadge.iconColor} />
+              <span className="text-[9px] font-black uppercase tracking-widest">
+                {statusBadge.text}
+              </span>
+            </div>
 
+            {/* Submit button — only locked when this specific quarter is Accepted
+                or the entire indicator is marked Completed by the admin.
+                Pending quarters (awaiting review) remain open so users can
+                freely submit other quarters without waiting for approval. */}
             <button
               onClick={() => setIsModalOpen(true)}
-              disabled={uploading}
-              className="px-6 py-2.5 rounded-xl bg-[#1a3a32] text-white font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 hover:shadow-xl shadow-md disabled:bg-gray-200"
-            >
-              {uploading
-                ? <Loader2 size={12} className="animate-spin" />
-                : (
-                  <>
-                    <ShieldCheck size={14} />
-                    {isAnnual ? "Submit Annual Filing" : "Update Quarter Filing"}
-                  </>
-                )
+              disabled={
+                uploading ||
+                currentQuarterStatus === "Accepted" ||
+                currentIndicator.status === "Completed"
               }
+              className="px-6 py-2.5 rounded-xl bg-[#1a3a32] text-white font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 hover:shadow-xl shadow-md disabled:bg-gray-200 disabled:cursor-not-allowed"
+            >
+              {uploading ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <>
+                  <ShieldCheck size={14} />
+                  {submitButtonLabel}
+                </>
+              )}
             </button>
           </div>
         </nav>
 
-        {/* ── Rejected documents ──────────────────────────────────────────── */}
+        {/* Resubmission history banner */}
+        {submissionHistory.length > 1 && (
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+            <div className="flex items-center gap-2 text-blue-700">
+              <Clock size={14} />
+              <span className="text-[9px] font-black uppercase tracking-wider">
+                Resubmission History: {submissionHistory.length} total submissions
+              </span>
+            </div>
+            <div className="mt-2 text-xs text-blue-600">
+              Latest submission: {formatDate(submissionHistory[0]?.submittedAt)}
+            </div>
+          </div>
+        )}
+
+        {/* Rejected documents */}
         {rejectedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
-              <AlertCircle size={16} /> Action Required: Returned Evidence
+              <AlertTriangle size={16} /> Action Required: Returned Evidence
             </h3>
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
-              {rejectedDocs.map(({ doc, quarterLabel, rejectionReason }) => (
+              {rejectedDocs.map(({ doc, quarterLabel, rejectionReason, year }) => (
                 <div
                   key={doc.id}
                   className="bg-rose-50 border border-rose-100 p-5 rounded-[2rem] flex flex-col md:flex-row gap-4 items-start"
@@ -185,17 +325,18 @@ const UserTaskIdPage = () => {
                     <FileText size={24} />
                   </div>
                   <div className="flex-1 space-y-1">
-                    {/* fileName (camelCase) with fallback */}
                     <p className="text-[10px] font-black text-rose-900 uppercase truncate max-w-[200px]">
                       {doc.fileName ?? "Evidence File"}
                     </p>
                     <p className="text-xs text-rose-700 font-medium italic">
                       "{rejectionReason ?? "Please provide clearer evidence for this metric."}"
                     </p>
-                    <div className="pt-2">
-                      {/* quarterLabel is already "Q1" or "Annual" — no extra "Q" prefix */}
+                    <div className="flex items-center gap-2 pt-2">
                       <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
-                        {quarterLabel} Rejected
+                        {quarterLabel} {year}
+                      </span>
+                      <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
+                        Rejected
                       </span>
                     </div>
                   </div>
@@ -205,7 +346,7 @@ const UserTaskIdPage = () => {
           </section>
         )}
 
-        {/* ── Main stats ──────────────────────────────────────────────────── */}
+        {/* Main stats */}
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
@@ -214,9 +355,7 @@ const UserTaskIdPage = () => {
               </span>
               <span className="w-1 h-1 rounded-full bg-gray-200" />
               <span className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">
-                {isAnnual
-                  ? "Full Year Target"
-                  : `Quarter ${normaliseQuarter(currentIndicator.active_quarter)}`}
+                {isAnnual ? "Full Year Target" : `${activeQuarterDisplay} ${new Date().getFullYear()}`}
               </span>
             </div>
             <h1 className="text-3xl font-serif font-black text-[#1a3a32] leading-tight">
@@ -238,10 +377,54 @@ const UserTaskIdPage = () => {
             <span className="text-6xl font-serif font-bold">
               {Math.round(currentIndicator.progress || 0)}%
             </span>
+            {activeSub && (
+              <p className="text-[8px] text-gray-400 mt-2 uppercase tracking-wider">
+                Target: {currentIndicator.target} {currentIndicator.unit}
+              </p>
+            )}
           </div>
         </div>
 
-        {/* ── Active evidence registry ─────────────────────────────────────── */}
+        {/* Current Submission Summary */}
+        {activeSub && (
+          <section className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-sm">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32] mb-4">
+              <FileText size={16} className="text-[#c2a336]" />
+              Current Filing Summary
+            </h3>
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Notes</p>
+                <p className="text-sm text-gray-700">{activeSub.notes}</p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Achieved Value</p>
+                <p className="text-2xl font-bold text-[#1a3a32]">
+                  {activeSub.achievedValue}{" "}
+                  <span className="text-sm font-normal text-gray-400">{currentIndicator.unit}</span>
+                </p>
+              </div>
+            </div>
+            {activeSub.adminComment && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-[9px] font-black uppercase text-amber-600 mb-1">Admin Comment</p>
+                <p className="text-sm text-amber-700">{activeSub.adminComment}</p>
+              </div>
+            )}
+            <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4">
+              <p className="text-[8px] text-gray-400">
+                Submitted: {formatDate(activeSub.submittedAt)}
+              </p>
+              {activeSub.resubmissionCount > 0 && (
+                <p className="text-[8px] text-amber-600">
+                  Resubmission #{activeSub.resubmissionCount}
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Document Registry */}
         <section className="space-y-6">
           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
             <FileText size={16} className="text-[#c2a336]" /> Document Registry
@@ -255,10 +438,10 @@ const UserTaskIdPage = () => {
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {activeDocs.map(({ doc, quarterLabel }) => {
-                // fileName (camelCase) with fallback
+              {activeDocs.map(({ doc, quarterLabel, year }) => {
                 const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
-                const isPending    = doc.status === "Pending" || !doc.status;
+                const isPending = doc.status === "Pending" || !doc.status;
+                const isAcceptedStatus = doc.status === "Accepted";
 
                 return (
                   <div
@@ -269,14 +452,14 @@ const UserTaskIdPage = () => {
                       <div className={`p-3 rounded-2xl ${
                         isPending
                           ? "bg-amber-50 text-amber-500"
-                          : "bg-emerald-50 text-emerald-500"
+                          : isAcceptedStatus
+                          ? "bg-emerald-50 text-emerald-500"
+                          : "bg-gray-50 text-gray-500"
                       }`}>
                         {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
                       </div>
                       <button
-                        onClick={() =>
-                          setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })
-                        }
+                        onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
                         className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
                       >
                         <ExternalLink size={16} />
@@ -291,41 +474,43 @@ const UserTaskIdPage = () => {
                     </p>
 
                     <div className="flex items-center gap-2 mt-1 mb-4">
-                      {/* quarterLabel is "Q1"–"Q4" or "Annual" — safe to render directly */}
                       <span className="text-[8px] font-black text-gray-300 uppercase">
-                        {quarterLabel}
+                        {quarterLabel} {year}
                       </span>
                       <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
                         isPending
                           ? "bg-amber-100 text-amber-700"
-                          : "bg-emerald-100 text-emerald-700"
+                          : isAcceptedStatus
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-gray-100 text-gray-700"
                       }`}>
                         {doc.status ?? "Under Review"}
                       </span>
                     </div>
 
-                    <div className="mt-4 pt-4 border-t border-slate-50">
-                      <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
-                        {doc.description
-                          ? `"${doc.description}"`
-                          : "No description provided."}
-                      </p>
-                    </div>
+                    {doc.description && (
+                      <div className="mt-4 pt-4 border-t border-slate-50">
+                        <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
+                          "{doc.description}"
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
         </section>
-
       </div>
 
       {isModalOpen && (
         <SubmissionModal
           task={currentIndicator}
-          onClose={() => setIsModalOpen(false)}
+          onClose={handleModalClose}
+          existingSubmission={activeSub}
         />
       )}
+
       {previewFile && (
         <FilePreviewModal
           url={previewFile.url}
