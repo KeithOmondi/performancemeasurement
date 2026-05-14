@@ -47,7 +47,11 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
 
   const getInitialQuarter = useCallback(() => {
     if (existingSubmission?.reviewStatus === "Rejected") {
-      return existingSubmission.quarter === 0 ? "Annual" : `Q${existingSubmission.quarter}`;
+      // For display purposes, show "Annual" for quarter 1 when reporting cycle is Annual
+      if (isAnnual && existingSubmission.quarter === 1) {
+        return "Annual";
+      }
+      return `Q${existingSubmission.quarter}`;
     }
     return isAnnual ? "Annual" : (task ? getActiveQuarterDisplay(task) : "Q1");
   }, [existingSubmission, isAnnual, task]);
@@ -131,7 +135,6 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
     if (errors.length > 0) toast.error(errors.join("\n"));
     if (newFiles.length > 0) {
       setFileEntries((prev) => [...prev, ...newFiles].slice(0, 50));
-      // Clear files error as soon as files are added
       setValidationErrors(prev => {
         const next = { ...prev };
         delete next.files;
@@ -190,112 +193,129 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
     return Object.keys(errors).length === 0;
   }, [fileEntries]);
 
- const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-
-  if (!validateForm()) {
-    toast.error("Please fix the validation errors");
-    return;
-  }
-
-  const formData = new FormData();
-  const year = new Date().getFullYear();
-  formData.append("quarter", selectedQuarter);
-  formData.append("year", String(year));
-
-  try {
-    if (submitMode === "replace") {
-      formData.append("notes", "-");
-      formData.append("achievedValue", "0");
-
-      fileEntries.forEach((entry) => {
-        formData.append("documents", entry.file);
-        formData.append("descriptions", entry.description.trim());
-      });
-
-      let result;
-
-      if (existingSubmission && existingSubmission.reviewStatus === "Rejected") {
-        result = await dispatch(updateRejectedSubmission({ id: task!.id, formData }));
-      } else if (currentPeriodSubmission) {
-        result = await dispatch(resubmitIndicatorProgress({ id: task!.id, formData }));
-      } else {
-        result = await dispatch(submitIndicatorProgress({ id: task!.id, formData }));
-      }
-
-      if (
-        submitIndicatorProgress.rejected.match(result) ||
-        resubmitIndicatorProgress.rejected.match(result) ||
-        updateRejectedSubmission.rejected.match(result)
-      ) {
-        const payload = result.payload;
-        const errMsg =
-          typeof payload === "object" && payload !== null && "message" in payload
-            ? String((payload as { message: unknown }).message)
-            : result.error?.message ?? "Submission failed. Please try again.";
-        toast.error(errMsg);
-        return;
-      }
-
-      if (
-        submitIndicatorProgress.fulfilled.match(result) ||
-        resubmitIndicatorProgress.fulfilled.match(result) ||
-        updateRejectedSubmission.fulfilled.match(result)
-      ) {
-        toast.success(
-          existingSubmission?.reviewStatus === "Rejected"
-            ? "Correction submitted for review."
-            : currentPeriodSubmission
-            ? "Registry updated — record revised."
-            : "Evidence filed successfully."
-        );
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-          setSuccess(false);
-        }, 1500);
-      }
-
-    } else {
-      fileEntries.forEach((entry) => {
-        formData.append("documents", entry.file);
-        formData.append("descriptions", entry.description.trim());
-      });
-
-      const result = await dispatch(
-        addIndicatorDocuments({ id: task!.id, quarter: selectedQuarter, formData })
-      );
-
-      if (addIndicatorDocuments.rejected.match(result)) {
-        const payload = result.payload;
-        const errMsg =
-          typeof payload === "object" && payload !== null && "message" in payload
-            ? String((payload as { message: unknown }).message)
-            : result.error?.message ?? "Failed to add documents.";
-        toast.error(errMsg);
-        return;
-      }
-
-      if (addIndicatorDocuments.fulfilled.match(result)) {
-        const payload = result.payload;
-        const successMsg =
-          typeof payload === "object" && payload !== null && "message" in payload
-            ? String((payload as { message: unknown }).message)
-            : `${fileEntries.length} document(s) added to the registry.`;
-        toast.success(successMsg);
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-          setSuccess(false);
-        }, 1500);
-      }
+  // Helper function to convert quarter display value to database value
+  const getQuarterValueForDatabase = useCallback((quarterDisplay: string): number => {
+    if (quarterDisplay === "Annual") {
+      return 1; // Annual submissions use quarter 1
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "An unexpected error occurred.";
-    console.error("[SubmissionModal] Unexpected error:", err);
-    toast.error(message);
-  }
-};
+    return parseInt(quarterDisplay.replace("Q", ""), 10);
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      toast.error("Please fix the validation errors");
+      return;
+    }
+
+    const formData = new FormData();
+    const year = new Date().getFullYear();
+    
+    // ✅ Convert quarter display value to database value (number)
+    const quarterValue = getQuarterValueForDatabase(selectedQuarter);
+    formData.append("quarter", String(quarterValue));
+    formData.append("year", String(year));
+
+    try {
+      if (submitMode === "replace") {
+        formData.append("notes", "-");
+        formData.append("achievedValue", "0");
+
+        fileEntries.forEach((entry) => {
+          formData.append("documents", entry.file);
+          formData.append("descriptions", entry.description.trim());
+        });
+
+        let result;
+
+        if (existingSubmission && existingSubmission.reviewStatus === "Rejected") {
+          result = await dispatch(updateRejectedSubmission({ id: task!.id, formData }));
+        } else if (currentPeriodSubmission) {
+          result = await dispatch(resubmitIndicatorProgress({ id: task!.id, formData }));
+        } else {
+          result = await dispatch(submitIndicatorProgress({ id: task!.id, formData }));
+        }
+
+        if (
+          submitIndicatorProgress.rejected.match(result) ||
+          resubmitIndicatorProgress.rejected.match(result) ||
+          updateRejectedSubmission.rejected.match(result)
+        ) {
+          const payload = result.payload;
+          const errMsg =
+            typeof payload === "object" && payload !== null && "message" in payload
+              ? String((payload as { message: unknown }).message)
+              : result.error?.message ?? "Submission failed. Please try again.";
+          toast.error(errMsg);
+          return;
+        }
+
+        if (
+          submitIndicatorProgress.fulfilled.match(result) ||
+          resubmitIndicatorProgress.fulfilled.match(result) ||
+          updateRejectedSubmission.fulfilled.match(result)
+        ) {
+          toast.success(
+            existingSubmission?.reviewStatus === "Rejected"
+              ? "Correction submitted for review."
+              : currentPeriodSubmission
+              ? "Registry updated — record revised."
+              : "Evidence filed successfully."
+          );
+          setSuccess(true);
+          setTimeout(() => {
+            onClose();
+            setSuccess(false);
+          }, 1500);
+        }
+
+      } else {
+        // Append mode - add additional documents to existing submission
+        fileEntries.forEach((entry) => {
+          formData.append("documents", entry.file);
+          formData.append("descriptions", entry.description.trim());
+        });
+
+        // ✅ Use the numeric quarter value for the API call
+        const result = await dispatch(
+          addIndicatorDocuments({ 
+            id: task!.id, 
+            quarter: quarterValue,  // Send number, not string
+            formData 
+          })
+        );
+
+        if (addIndicatorDocuments.rejected.match(result)) {
+          const payload = result.payload;
+          const errMsg =
+            typeof payload === "object" && payload !== null && "message" in payload
+              ? String((payload as { message: unknown }).message)
+              : result.error?.message ?? "Failed to add documents.";
+          toast.error(errMsg);
+          return;
+        }
+
+        if (addIndicatorDocuments.fulfilled.match(result)) {
+          const payload = result.payload;
+          const successMsg =
+            typeof payload === "object" && payload !== null && "message" in payload
+              ? String((payload as { message: unknown }).message)
+              : `${fileEntries.length} document(s) added to the registry.`;
+          toast.success(successMsg);
+          setSuccess(true);
+          setTimeout(() => {
+            onClose();
+            setSuccess(false);
+          }, 1500);
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "An unexpected error occurred.";
+      console.error("[SubmissionModal] Unexpected error:", err);
+      toast.error(message);
+    }
+  };
 
   const getQuarterStatus = useCallback((quarter: string) => {
     const submission = getSubmissionForQuarter(quarter);
@@ -397,7 +417,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
                 </div>
               )}
 
-              {/* Quarter selector */}
+              {/* Quarter selector - hide for Annual since it's not applicable */}
               {!isAnnual && (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
@@ -435,6 +455,21 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* For Annual indicators, show a read-only period indicator */}
+              {isAnnual && (
+                <div className="space-y-2.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
+                    Reporting Period
+                  </label>
+                  <div className="bg-slate-100 rounded-xl p-4 text-center">
+                    <p className="text-[11px] font-black text-[#1a3a32] uppercase tracking-wider">
+                      Annual Report {new Date().getFullYear()}
+                    </p>
+                    <p className="text-[8px] text-slate-400 mt-1">Single annual submission for the entire year</p>
                   </div>
                 </div>
               )}
@@ -548,7 +583,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
             {uploading ? (
               <><Loader2 className="animate-spin" size={14} /><span>Syncing...</span></>
             ) : isAccepted ? (
-              "Quarter Certified"
+              "Period Certified"
             ) : (
               <>
                 <ShieldCheck size={14} />

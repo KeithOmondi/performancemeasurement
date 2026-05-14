@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom"; // Import useNavigate
+import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Loader2,
@@ -17,12 +17,12 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchAllAdminIndicators,
   type IAdminIndicator,
-  type ISubmissionsByQuarter,
+  type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const flattenSubmissions = (submissions: ISubmissionsByQuarter) =>
+const flattenSubmissions = (submissions: ISubmissionsByPeriod | undefined) =>
   Object.values(submissions ?? {}).flat();
 
 const hasResubmission = (indicator: IAdminIndicator): boolean =>
@@ -30,11 +30,26 @@ const hasResubmission = (indicator: IAdminIndicator): boolean =>
     (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
   );
 
+const getLatestSubmission = (indicator: IAdminIndicator) => {
+  const submissions = flattenSubmissions(indicator.submissions);
+  return submissions.length > 0 ? submissions[0] : null;
+};
+
+const getDocumentCount = (indicator: IAdminIndicator): number => {
+  const submissions = flattenSubmissions(indicator.submissions);
+  return submissions.reduce((total, sub) => total + sub.documents.length, 0);
+};
+
+const getDocumentNames = (indicator: IAdminIndicator): string[] => {
+  const submissions = flattenSubmissions(indicator.submissions);
+  return submissions.flatMap(sub => sub.documents.map(doc => doc.fileName));
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminPendingReviews = () => {
   const dispatch = useAppDispatch();
-  const navigate = useNavigate(); // Initialize navigation
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -49,7 +64,6 @@ const AdminPendingReviews = () => {
   const handleOpenDossier = useCallback(
     (id: string) => {
       setOpeningId(id);
-      // Navigate to the dedicated review page
       navigate(`/admin/review/${id}`);
     },
     [navigate]
@@ -130,6 +144,9 @@ const AdminPendingReviews = () => {
                   Performance
                 </th>
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                  Documents
+                </th>
+                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Status
                 </th>
                 <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">
@@ -140,7 +157,7 @@ const AdminPendingReviews = () => {
             <tbody className="divide-y divide-slate-50">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-32 text-center">
+                  <td colSpan={6} className="py-32 text-center">
                     <div className="flex flex-col items-center">
                       <CheckCircle2 size={48} className="text-emerald-100 mb-4" />
                       <p className="text-sm font-black text-[#1a3a32] uppercase tracking-widest">
@@ -154,6 +171,10 @@ const AdminPendingReviews = () => {
                   const isResub = hasResubmission(indicator);
                   const isAnnual = indicator.reportingCycle === "Annual";
                   const isOpening = openingId === indicator.id;
+                  const latestSubmission = getLatestSubmission(indicator);
+                  const documentCount = getDocumentCount(indicator);
+                  const documentNames = getDocumentNames(indicator);
+                  const latestDocuments = latestSubmission?.documents || [];
 
                   return (
                     <tr
@@ -184,34 +205,36 @@ const AdminPendingReviews = () => {
                       </td>
 
                       <td className="px-6 py-6 text-center">
-                         <div className="flex flex-col items-center justify-center">
-                           {isAnnual ? (
-                             <div className="flex flex-col items-center gap-1.5">
-                               <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
-                                 <CalendarDays size={14} />
-                               </div>
-                               <span className="text-[9px] font-black text-amber-800 uppercase tracking-tighter">
-                                 Annual Cycle
-                               </span>
-                             </div>
-                           ) : (
-                             <div className="flex flex-col items-center gap-1.5">
-                               <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600 border border-blue-100">
-                                 <Layers size={14} />
-                               </div>
-                               <span className="text-[9px] font-black text-blue-800 uppercase tracking-tighter">
-                                 Quarter {indicator.activeQuarter}
-                               </span>
-                             </div>
-                           )}
-                         </div>
+                        <div className="flex flex-col items-center justify-center">
+                          {isAnnual ? (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
+                                <CalendarDays size={14} />
+                              </div>
+                              <span className="text-[9px] font-black text-amber-800 uppercase tracking-tighter">
+                                Annual Cycle
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600 border border-blue-100">
+                                <Layers size={14} />
+                              </div>
+                              <span className="text-[9px] font-black text-blue-800 uppercase tracking-tighter">
+                                Quarter {indicator.activeQuarter}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-6 py-6">
                         <div className="space-y-2">
                           <div className="flex justify-between items-center">
                             <span className="text-[10px] font-black text-[#1a3a32]">{indicator.progress}%</span>
-                            <span className="text-[9px] font-bold text-slate-400 uppercase">Target: {indicator.unit}</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">
+                              Target: {indicator.target} {indicator.unit}
+                            </span>
                           </div>
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
@@ -219,6 +242,49 @@ const AdminPendingReviews = () => {
                               style={{ width: `${indicator.progress}%` }}
                             />
                           </div>
+                          {latestSubmission && (
+                            <div className="mt-2 pt-2 border-t border-slate-100">
+                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                Reported: {latestSubmission.achievedValue} {indicator.unit}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-6">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <FileText size={12} className="text-slate-400" />
+                            <span className="text-[10px] font-black text-slate-600">
+                              {documentCount} document{documentCount !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+                          {documentNames.length > 0 && (
+                            <div className="flex flex-wrap gap-1 max-w-[200px]">
+                              {documentNames.slice(0, 2).map((name, idx) => (
+                                <span
+                                  key={idx}
+                                  className="text-[8px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 truncate max-w-[80px]"
+                                  title={name}
+                                >
+                                  {name.length > 15 ? name.substring(0, 12) + "..." : name}
+                                </span>
+                              ))}
+                              {documentNames.length > 2 && (
+                                <span className="text-[8px] font-black text-slate-400">
+                                  +{documentNames.length - 2} more
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {latestDocuments.length > 0 && latestDocuments[0].description && (
+                            <div className="mt-1 p-1.5 bg-slate-50 rounded border border-slate-100">
+                              <p className="text-[8px] italic text-slate-500 line-clamp-2">
+                                "{latestDocuments[0].description.substring(0, 80)}"
+                              </p>
+                            </div>
+                          )}
                         </div>
                       </td>
 
@@ -226,12 +292,16 @@ const AdminPendingReviews = () => {
                         {isResub ? (
                           <div className="flex items-center gap-2 text-amber-600 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
                             <History size={12} className="animate-pulse" />
-                            <span className="text-[9px] font-black uppercase tracking-widest">Resubmitted</span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              Resubmitted
+                            </span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 text-blue-600 bg-blue-50 w-fit px-3 py-1 rounded-xl border border-blue-100">
                             <Hourglass size={12} />
-                            <span className="text-[9px] font-black uppercase tracking-widest">Initial Audit</span>
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              Initial Audit
+                            </span>
                           </div>
                         )}
                       </td>
@@ -239,11 +309,12 @@ const AdminPendingReviews = () => {
                       <td className="px-8 py-6 text-right">
                         <button
                           onClick={() => handleOpenDossier(indicator.id)}
+                          disabled={isOpening}
                           className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${
                             isResub
                               ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200"
                               : "bg-[#1a3a32] text-white hover:bg-black shadow-lg shadow-emerald-900/10"
-                          }`}
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                           {isOpening ? (
                             <Loader2 size={14} className="animate-spin" />

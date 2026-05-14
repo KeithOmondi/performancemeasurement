@@ -14,6 +14,8 @@ export interface IDocument {
   evidencePublicId?: string;
   fileType: string;
   fileName: string;
+  description?: string;           // ✅ Added document description
+  fileDescription?: string;       // ✅ Alias for description
   status?: "Accepted" | "Rejected" | "Pending";
   rejectionReason?: string;
   uploadedAt: string;
@@ -22,7 +24,7 @@ export interface IDocument {
 export interface ISubmission {
   id: string;
   indicatorId: string;
-  quarter: string; // e.g. "Q1", "Q2"
+  quarter: string | number;       // Can be "Q1", "Q2", or 0 for annual
   year: number;
   documents: IDocument[];
   notes: string;
@@ -35,11 +37,11 @@ export interface ISubmission {
 }
 
 /**
- * Submissions are now grouped by quarter key (e.g. "Q1_2025").
+ * Submissions are now grouped by quarter key (e.g. "Q1_2025" or "Annual_2025").
  * Each key maps to an array of that quarter's submissions sorted newest-first,
  * so index 0 is always the latest (re)submission.
  */
-export type ISubmissionsByQuarter = Record<string, ISubmission[]>;
+export type ISubmissionsByPeriod = Record<string, ISubmission[]>;
 
 export interface IDocumentReviewUpdate {
   documentId: string;
@@ -90,10 +92,11 @@ export interface IAdminIndicator {
   reportingCycle: "Quarterly" | "Annual";
   activeQuarter: number;
   deadline: string;
-  submissions: ISubmissionsByQuarter; // was ISubmission[]
+  submissions: ISubmissionsByPeriod;  // Changed from ISubmissionsByQuarter to ISubmissionsByPeriod
   reviewHistory?: IReviewHistoryEntry[];
   updatedAt: string;
   adminOverallComments?: string;
+  instructions?: string;
 }
 
 interface IAdminIndicatorState {
@@ -122,9 +125,24 @@ const initialState: IAdminIndicatorState = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Flatten all quarterly submissions into a single array for filtering logic. */
+/** Flatten all submissions by period into a single array for filtering logic. */
 const allSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
+
+/** Helper to safely get document description */
+export const getDocumentDescription = (doc: IDocument): string => {
+  return doc.description || doc.fileDescription || "";
+};
+
+/** Helper to check if a submission has any rejected documents */
+export const hasRejectedDocuments = (submission: ISubmission): boolean => {
+  return submission.documents.some(doc => doc.status === "Rejected");
+};
+
+/** Helper to get only accepted documents */
+export const getAcceptedDocuments = (submission: ISubmission): IDocument[] => {
+  return submission.documents.filter(doc => doc.status !== "Rejected");
+};
 
 const refreshQueues = (state: IAdminIndicatorState) => {
   state.pendingAdminReview = state.allAssignments.filter(

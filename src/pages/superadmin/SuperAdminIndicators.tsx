@@ -139,6 +139,35 @@ const IndicatorSection = ({
         const needsReview = assignment?.needsAction || 
                            assignment?.status === "Awaiting Admin Approval" ||
                            assignment?.status === "Awaiting Super Admin";
+        
+        // ✅ IMPROVED: Check if indicator has an assignee
+        // Check multiple sources for assignee information
+        const hasAssigneeValue = assignment && (
+          (assignment.assignee && assignment.assignee !== "") ||
+          (assignment.assignee && assignment.assignee !== "")
+        );
+        
+        // Check if there's a valid display name (not "Unassigned" or empty)
+        const hasValidDisplayName = assignment?.assigneeDisplayName && 
+                                    assignment.assigneeDisplayName !== "Unassigned" &&
+                                    assignment.assigneeDisplayName !== "";
+        
+        // Also check if there's a primary user from the assignee ID
+        const hasPrimaryUser = primaryUser && primaryUser.name;
+        
+        // Final determination - indicator is assigned if any of these are true
+        const isAssigned = hasAssigneeValue || hasValidDisplayName || hasPrimaryUser;
+        
+        // Get the display name for the assignee column
+        const getAssigneeDisplayName = () => {
+          if (assignment?.assigneeDisplayName && assignment.assigneeDisplayName !== "Unassigned") {
+            return assignment.assigneeDisplayName;
+          }
+          if (primaryUser?.name) {
+            return primaryUser.name;
+          }
+          return "Assigned";
+        };
 
         return (
           <tr
@@ -170,18 +199,15 @@ const IndicatorSection = ({
               {assignment?.unit || "—"}
             </td>
 
+            {/* Assignee column - shows "Unassigned" when no assignee */}
             <td className="p-4">
-              {assignment ? (
+              {isAssigned ? (
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-full bg-[#1a3a32] flex items-center justify-center text-[9px] text-white font-bold uppercase shadow-sm">
-                    {primaryUser?.name?.charAt(0) ||
-                      assignment.assigneeDisplayName?.charAt(0) ||
-                      "U"}
+                    {getAssigneeDisplayName().charAt(0) || "U"}
                   </div>
                   <span className="text-[10px] font-bold text-gray-700 uppercase truncate max-w-[100px]">
-                    {assignment.assigneeDisplayName ||
-                      primaryUser?.name ||
-                      "Assigned"}
+                    {getAssigneeDisplayName()}
                   </span>
                 </div>
               ) : (
@@ -192,7 +218,7 @@ const IndicatorSection = ({
             </td>
 
             <td className="p-4">
-              {assignment?.deadline ? (
+              {assignment?.deadline && isAssigned ? (
                 <div className="flex items-center gap-2 text-slate-500">
                   <Calendar size={12} className="text-amber-500" />
                   <span className="text-[10px] font-black uppercase tracking-tighter">
@@ -222,6 +248,7 @@ const IndicatorSection = ({
               </div>
             </td>
 
+            {/* Status badge - shows "Active" for Pending status */}
             <td className="p-4">
               {needsReview ? (
                 <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-amber-100">
@@ -231,23 +258,19 @@ const IndicatorSection = ({
                 <span className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-rose-100">
                   Rejected
                 </span>
-              ) : assignment?.status === "Unassigned" ? (
-                <span className="text-[9px] text-gray-300 font-bold uppercase tracking-widest pl-2">
-                  Open
-                </span>
               ) : (
                 <span className="text-[9px] text-emerald-600 font-bold uppercase tracking-widest pl-2">
-                  {assignment?.status || "Active"}
+                  {assignment?.status === "Completed" ? "Completed" : "Active"}
                 </span>
               )}
             </td>
 
-            {/* ── Action cell ── */}
+            {/* Action cell - shows "Assign" when no assignee, "View" and "Unassign" when has assignee */}
             <td className="p-4 text-center">
-              {assignment ? (
+              {isAssigned ? (
                 <div className="flex items-center justify-center gap-1.5">
                   <button
-                    onClick={() => onSelectAssignment(assignment)}
+                    onClick={() => onSelectAssignment(assignment!)}
                     className={`border px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 transition-all ${
                       needsReview
                         ? "border-amber-500 text-amber-600 hover:bg-amber-500 hover:text-white"
@@ -256,15 +279,13 @@ const IndicatorSection = ({
                   >
                     {needsReview ? "Review" : "View"} <ArrowRight size={12} />
                   </button>
-                  {assignment.status !== "Unassigned" && (
-                    <button
-                      onClick={() => onUnassign(assignment.id)}
-                      title="Unassign"
-                      className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => onUnassign(assignment!.id)}
+                    title="Unassign"
+                    className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
+                  >
+                    <X size={12} />
+                  </button>
                 </div>
               ) : (
                 <button
@@ -296,11 +317,6 @@ const IndicatorSection = ({
 const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
   const [searchParams, setSearchParams] = useSearchParams();
-
-  // ✅ renderKey: incremented after every successful unassign.
-  // Guarantees filteredData memo recomputes and React re-renders the table
-  // even if the selector equality check doesn't catch the new array reference.
-  const [renderKey, setRenderKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
@@ -310,7 +326,7 @@ const SuperAdminIndicators = () => {
     shallowEqual,
   );
 
-  // ✅ Use the categorized lists from the slice
+  // Use the categorized lists from the slice
   const assignedIndicators = useAppSelector(
     (s) => s.indicators.assignedIndicators,
     shallowEqual,
@@ -324,7 +340,7 @@ const SuperAdminIndicators = () => {
     shallowEqual,
   );
   
-  // ✅ Master list for filtering
+  // Master list for filtering
   const allIndicators = useAppSelector(
     (s) => s.indicators.indicators,
     shallowEqual,
@@ -344,9 +360,20 @@ const SuperAdminIndicators = () => {
   const [assignPrefill, setAssignPrefill] = useState<AssignPrefill | undefined>();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
 
+  // Debug logging for state changes
+  useEffect(() => {
+    console.log('📊 State Summary:', {
+      assigned: assignedIndicators.length,
+      unassigned: unassignedIndicators.length,
+      review: reviewIndicators.length,
+      total: allIndicators.length,
+      activeFilter
+    });
+  }, [assignedIndicators.length, unassignedIndicators.length, reviewIndicators.length, allIndicators.length, activeFilter]);
+
   // Refresh all indicator lists
   const refreshAllLists = async () => {
-    if (isRefreshing) return;
+    if (isRefreshing || actionLoading) return;
     setIsRefreshing(true);
     try {
       await Promise.all([
@@ -355,7 +382,6 @@ const SuperAdminIndicators = () => {
         dispatch(fetchUnassignedIndicators()).unwrap(),
         dispatch(fetchReviewIndicators()).unwrap(),
       ]);
-      setRenderKey((k) => k + 1);
     } catch (error) {
       console.error("Failed to refresh indicators:", error);
     } finally {
@@ -366,20 +392,22 @@ const SuperAdminIndicators = () => {
   useEffect(() => {
     // Fetch all data on mount
     const loadInitialData = async () => {
-      await Promise.all([
-        dispatch(getAllStrategicPlans()).unwrap(),
-        dispatch(fetchIndicators()).unwrap(),
-        dispatch(fetchAssignedIndicators()).unwrap(),
-        dispatch(fetchUnassignedIndicators()).unwrap(),
-        dispatch(fetchReviewIndicators()).unwrap(),
-        dispatch(fetchAllUsers()).unwrap(),
-      ]);
+      try {
+        await Promise.all([
+          dispatch(getAllStrategicPlans()).unwrap(),
+          dispatch(fetchIndicators()).unwrap(),
+          dispatch(fetchAssignedIndicators()).unwrap(),
+          dispatch(fetchUnassignedIndicators()).unwrap(),
+          dispatch(fetchReviewIndicators()).unwrap(),
+          dispatch(fetchAllUsers()).unwrap(),
+        ]);
+      } catch (error) {
+        console.error("Failed to load initial data:", error);
+        toast.error("Failed to load indicators data");
+      }
     };
     
-    loadInitialData().catch((error) => {
-      console.error("Failed to load initial data:", error);
-      toast.error("Failed to load indicators data");
-    });
+    loadInitialData();
     
     return () => {
       dispatch(clearIndicatorError());
@@ -414,8 +442,10 @@ const SuperAdminIndicators = () => {
     try {
       await dispatch(unassignIndicator(indicatorId)).unwrap();
       toast.success("Activity unassigned successfully.");
+      // Refresh to ensure consistency with backend
       await refreshAllLists();
-    } catch {
+    } catch (error) {
+      console.error("Unassign failed:", error);
       toast.error("Failed to unassign. Please try again.");
     }
   };
@@ -429,17 +459,14 @@ const SuperAdminIndicators = () => {
     return map;
   }, [users]);
 
-  // ✅ Use the appropriate indicator list based on filter
-  const getIndicatorsForFilter = () => {
-    if (activeFilter === "ASSIGNED") return assignedIndicators;
-    if (activeFilter === "UNASSIGNED") return unassignedIndicators;
-    if (activeFilter === "REVIEW") return reviewIndicators;
-    return allIndicators;
-  };
-
-  // ✅ renderKey in deps: even if indicators reference didn't change in React's
-  // eyes, bumping renderKey guarantees this memo recomputes with fresh data.
   const filteredData = useMemo(() => {
+    const getIndicatorsForFilter = () => {
+      if (activeFilter === "ASSIGNED") return assignedIndicators;
+      if (activeFilter === "UNASSIGNED") return unassignedIndicators;
+      if (activeFilter === "REVIEW") return reviewIndicators;
+      return allIndicators;
+    };
+
     let basePlans = [...(plans ?? [])];
 
     basePlans.sort((a, b) => {
@@ -482,8 +509,7 @@ const SuperAdminIndicators = () => {
               },
             );
 
-            // Pre-filtered per objective — passed directly as prop so
-            // IndicatorSection never derives stale data via an inline filter.
+            // Pre-filtered per objective
             const objectiveIndicators = (currentIndicators ?? []).filter((ind) =>
               matchId(ind.objectiveId, obj.id),
             );
@@ -499,8 +525,7 @@ const SuperAdminIndicators = () => {
         return { ...plan, objectives };
       })
       .filter((plan) => plan.objectives.length > 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter, plans, assignedIndicators, unassignedIndicators, reviewIndicators, allIndicators, renderKey]);
+  }, [activeFilter, plans, assignedIndicators, unassignedIndicators, reviewIndicators, allIndicators]);
 
   const counts = useMemo(() => {
     const allActs = (plans ?? []).flatMap((p) =>
@@ -643,7 +668,6 @@ const SuperAdminIndicators = () => {
                         perspective={plan.perspective}
                         objective={objective}
                         plan={plan}
-                        // ✅ Always fresh — computed inside filteredData memo
                         indicators={objective.objectiveIndicators}
                         userMap={userMap}
                         onAssign={handleOpenAssign}
@@ -678,7 +702,6 @@ const SuperAdminIndicators = () => {
         <SuperAdminAssign
           prefill={assignPrefill}
           onClose={handleCloseAssign}
-          //onAssignSuccess={refreshAllLists}
         />
       )}
 

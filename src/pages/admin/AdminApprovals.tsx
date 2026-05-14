@@ -4,7 +4,6 @@ import {
   Loader2,   
   FileCheck,
   ShieldCheck,
-  History as HistoryIcon,
   UserCheck,
   CheckCircle2,
   Clock,
@@ -16,23 +15,18 @@ import {
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
   fetchAllAdminIndicators, 
-  getIndicatorByIdAdmin, 
-  setSelectedIndicator 
 } from "../../store/slices/adminIndicatorSlice";
 
 const AdminApprovals = () => {
   const dispatch = useAppDispatch();
   const { allAssignments, isLoading } = useAppSelector((state) => state.adminIndicators);
   const [searchTerm, setSearchTerm] = useState("");
-  const [fetchingId, setFetchingId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Passing 'all' to fetch all records for the vault view
     dispatch(fetchAllAdminIndicators({ status: 'all' }));
   }, [dispatch]);
 
   const approvedItems = useMemo(() => {
-    // Statuses that represent verified or completed work in the Postgres workflow
     const targets = ["Awaiting Super Admin", "Completed", "Verified"];
     
     return allAssignments.filter((ind) => {
@@ -45,19 +39,6 @@ const AdminApprovals = () => {
       return matchesStatus && matchesSearch;
     });
   }, [allAssignments, searchTerm]);
-
-  const handleViewDossier = async (id: string) => {
-    setFetchingId(id);
-    dispatch(setSelectedIndicator(null)); 
-    try {
-      await dispatch(getIndicatorByIdAdmin(id)).unwrap();
-      // Logic for opening your specific review modal would trigger here
-    } catch (err) {
-      console.error("Failed to fetch dossier:", err);
-    } finally {
-      setFetchingId(null);
-    }
-  };
 
   if (isLoading && allAssignments.length === 0) {
     return (
@@ -117,12 +98,12 @@ const AdminApprovals = () => {
 
       {/* Main Table Content */}
       {approvedItems.length === 0 ? (
-        <div className="bg-white rounded-[3.5rem] py-40 text-center border border-dashed border-slate-200 shadow-2xl shadow-slate-200/30">
+        <div className="bg-white rounded-[0.5rem] py-40 text-center border border-dashed border-slate-200 shadow-2xl shadow-slate-200/30">
           <FileSearch className="mx-auto mb-6 text-slate-100" size={80} />
           <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest">No verified records found</h2>
         </div>
       ) : (
-        <div className="bg-white rounded-[3rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
+        <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left min-w-[1300px]">
               <thead>
@@ -130,7 +111,6 @@ const AdminApprovals = () => {
                   <th className="px-10 py-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Activity Dossier</th>
                   <th className="px-6 py-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-center w-48">Execution</th>
                   <th className="px-6 py-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-center">Verification Pipeline</th>
-                  <th className="px-10 py-8 text-right text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Operations</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -138,12 +118,9 @@ const AdminApprovals = () => {
                   const isCompleted = indicator.status === "Completed";
                   const history = indicator.reviewHistory || [];
                   
-                  // Logic to check verification steps from history
                   const adminEntry = [...history].reverse().find(h => h.reviewerRole === 'admin' && h.action === "Verified");
                   const superEntry = [...history].reverse().find(h => h.reviewerRole === 'superadmin' && h.action === "Approved");
                   
-                  const isBeingFetched = fetchingId === indicator.id;
-
                   return (
                     <tr key={indicator.id} className="hover:bg-slate-50/60 transition-all group">
                       <td className="px-10 py-7">
@@ -222,28 +199,7 @@ const AdminApprovals = () => {
                       </td>
 
                       <td className="px-10 py-7 text-right">
-                        <div className="flex justify-end items-center gap-3">
-                          <button 
-                            onClick={() => handleViewDossier(indicator.id)}
-                            className="p-3 text-slate-400 hover:text-[#1a3a32] hover:bg-white hover:shadow-md rounded-2xl transition-all"
-                            title="Review Timeline"
-                          >
-                            <HistoryIcon size={18} />
-                          </button>
-                          <button 
-                            onClick={() => handleViewDossier(indicator.id)}
-                            disabled={isBeingFetched}
-                            className="group/btn relative overflow-hidden px-6 py-3.5 bg-white  text-[#1a3a32]  text-[10px] font-black uppercase tracking-[0.2em] hover:border-[#1a3a32] transition-all"
-                          >
-                            <span className="relative z-10 flex items-center gap-2">
-                              {isBeingFetched ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <></>
-                              )}
-                            </span>
-                          </button>
-                        </div>
+                        {/* Operations cell is now empty per request */}
                       </td>
                     </tr>
                   );

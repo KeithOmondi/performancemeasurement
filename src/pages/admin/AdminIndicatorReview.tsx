@@ -10,6 +10,7 @@ import {
   XCircle,
   CheckCircle2,
   Paperclip,
+  Info,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -21,36 +22,87 @@ import {
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface IDocument {
+  id: string;
+  fileName?: string;
+  evidenceUrl: string;
+  description?: string;
+  fileDescription?: string;
+  file_type?: string;
+  status?: string;
+  rejectionReason?: string;
+  uploadedAt?: string;
+}
+
+// ─── Deduplication helper with safe array handling ──────────────────────────
+
+function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
+  // Handle undefined, null, or non-array values
+  if (!docs || !Array.isArray(docs) || docs.length === 0) {
+    return [];
+  }
+  
+  const seen = new Map<string, IDocument>();
+  
+  for (const doc of docs) {
+    // Skip invalid documents
+    if (!doc || !doc.id) continue;
+    
+    // Use fileName as the key for deduplication, fallback to id
+    const key = doc.fileName || doc.id;
+    
+    // Only keep the first occurrence (or latest based on uploadedAt if needed)
+    if (!seen.has(key)) {
+      seen.set(key, doc);
+    }
+  }
+  
+  return Array.from(seen.values());
+}
+
+// ─── Helper to safely get documents array ───────────────────────────────────
+
+function getSafeDocuments(sub: ISubmission): IDocument[] {
+  const docs = sub.documents;
+  if (!docs || !Array.isArray(docs)) {
+    return [];
+  }
+  return docs as IDocument[];
+}
+
 const AdminIndicatorReview: React.FC = () => {
   const { indicatorId } = useParams<{ indicatorId: string }>();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
 
-  // ── Selectors ─────────────────────────────────────────────────────────────
-  // Updated to match your slice's property names: selectedIndicator, isReviewing, isLoading
   const { selectedIndicator: indicator, isReviewing, isLoading } = useAppSelector(
     (state) => state.adminIndicators
   );
 
-  // ── Load Data ─────────────────────────────────────────────────────────────
+  // Fetch indicator data on mount
   useEffect(() => {
     if (indicatorId) {
       dispatch(getIndicatorByIdAdmin(indicatorId));
     }
   }, [dispatch, indicatorId]);
 
-  // ── Derived Data ──────────────────────────────────────────────────────────
-  const allSubmissions = useMemo<ISubmission[]>(
-    () => (indicator ? Object.values(indicator.submissions ?? {}).flat() : []),
-    [indicator]
-  );
+  // Get all submissions as a flat array
+  const allSubmissions = useMemo<ISubmission[]>(() => {
+    if (!indicator || !indicator.submissions) {
+      return [];
+    }
+    return Object.values(indicator.submissions).flat();
+  }, [indicator]);
 
+  // Filter only pending submissions
   const pendingSubmissions = useMemo(
     () => allSubmissions.filter((s) => s.reviewStatus === "Pending"),
     [allSubmissions]
   );
 
-  // Pre-populate review state for pending items
+  // Initialize review states for pending submissions
   const initialReviews = useMemo<ISubmissionReviewUpdate[]>(
     () =>
       pendingSubmissions.map((s) => ({
@@ -61,31 +113,40 @@ const AdminIndicatorReview: React.FC = () => {
     [pendingSubmissions]
   );
 
-  // ── State ─────────────────────────────────────────────────────────────────
+  // State management
   const [docReviews, setDocReviews] = useState<ISubmissionReviewUpdate[]>([]);
   const [documentUpdates, setDocumentUpdates] = useState<IDocumentReviewUpdate[]>([]);
   const [overallComment, setOverallComment] = useState("");
   const [rejectionMode, setRejectionMode] = useState(false);
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
+  // Sync initial reviews
   useEffect(() => {
     setDocReviews(initialReviews);
   }, [initialReviews]);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // Toggle file rejection status
   const toggleFileRejection = useCallback((documentId: string, fileName: string) => {
     setDocumentUpdates((prev) => {
       const exists = prev.find((d) => d.documentId === documentId);
-      if (exists) return prev.filter((d) => d.documentId !== documentId);
-      if (!rejectionMode) setRejectionMode(true);
+      if (exists) {
+        return prev.filter((d) => d.documentId !== documentId);
+      }
       return [...prev, { documentId, status: "Rejected", reason: `File [${fileName}] rejected.` }];
     });
-  }, [rejectionMode]);
+  }, []);
 
+  // Auto-enable rejection mode when any document is rejected
+  useEffect(() => {
+    if (documentUpdates.length > 0 && !rejectionMode) setRejectionMode(true);
+    if (documentUpdates.length === 0 && rejectionMode) setRejectionMode(false);
+  }, [documentUpdates.length, rejectionMode]);
+
+  // Handle final approval or rejection
   const handleFinalAction = useCallback(async (decision: "Verified" | "Rejected") => {
     if (!indicator) return;
 
-    // If documents are flagged, the overall decision must be Rejected
     const finalDecision = documentUpdates.length > 0 ? "Rejected" : decision;
 
     if (finalDecision === "Rejected" && !overallComment.trim()) {
@@ -104,7 +165,9 @@ const AdminIndicatorReview: React.FC = () => {
         id: indicator.id,
         reviewData: {
           decision: finalDecision,
-          adminOverallComments: overallComment.trim() || (finalDecision === "Verified" ? "Verified and approved." : "Returned for corrections."),
+          adminOverallComments:
+            overallComment.trim() ||
+            (finalDecision === "Verified" ? "Verified and approved." : "Returned for corrections."),
           submissionUpdates: finalSubmissionUpdates,
           documentUpdates,
         },
@@ -116,22 +179,30 @@ const AdminIndicatorReview: React.FC = () => {
     }
   }, [dispatch, docReviews, documentUpdates, indicator, navigate, overallComment]);
 
-  // ── Render States ──────────────────────────────────────────────────────────
+  // Loading state
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#fcfdfb]">
         <Loader2 className="w-10 h-10 text-[#1d3331] animate-spin mb-4" />
-        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Loading Dossier...</p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+          Loading Dossier...
+        </p>
       </div>
     );
   }
 
+  // Not found state
   if (!indicator) {
     return (
       <div className="flex flex-col items-center justify-center h-screen space-y-4">
         <AlertOctagon size={48} className="text-slate-200" />
         <p className="text-slate-500 font-bold">Indicator not found.</p>
-        <button onClick={() => navigate(-1)} className="px-6 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold uppercase">Return to Registry</button>
+        <button
+          onClick={() => navigate(-1)}
+          className="px-6 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold uppercase"
+        >
+          Return to Registry
+        </button>
       </div>
     );
   }
@@ -140,19 +211,21 @@ const AdminIndicatorReview: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#fcfdfb]">
-      {/* Navigation Header */}
+      {/* Header */}
       <div className="px-8 py-5 bg-white/80 backdrop-blur-md border-b border-slate-100 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-6">
-          <button 
+          <button
             onClick={() => navigate(-1)}
             className="p-2.5 hover:bg-slate-100 rounded-xl transition-all text-slate-500 hover:text-black group"
           >
             <ChevronLeft size={20} className="group-hover:-translate-x-0.5 transition-transform" />
           </button>
           <div>
-            <h2 className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-0.5">Registry Audit</h2>
+            <h2 className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-0.5">
+              Registry Audit
+            </h2>
             <h1 className="text-[13px] font-black text-slate-900 uppercase truncate max-w-[400px]">
-               {indicator.activity.description}
+              {indicator.activity?.description || "Indicator Details"}
             </h1>
           </div>
         </div>
@@ -172,53 +245,78 @@ const AdminIndicatorReview: React.FC = () => {
               disabled={isReviewing}
               onClick={() => handleFinalAction(rejectionMode ? "Rejected" : "Verified")}
               className={`px-7 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95 ${
-                rejectionMode 
-                  ? "bg-rose-600 text-white hover:bg-rose-700 shadow-rose-200" 
+                rejectionMode
+                  ? "bg-rose-600 text-white hover:bg-rose-700 shadow-rose-200"
                   : "bg-[#1d3331] text-white hover:bg-black shadow-emerald-900/20"
               }`}
             >
-              {isReviewing ? <Loader2 size={14} className="animate-spin" /> : rejectionMode ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+              {isReviewing ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : rejectionMode ? (
+                <XCircle size={14} />
+              ) : (
+                <CheckCircle2 size={14} />
+              )}
               {rejectionMode ? "Confirm Rejection" : "Approve Progress"}
             </button>
           </div>
         )}
       </div>
 
+      {/* Main Content */}
       <div className="flex-1 p-6 md:p-12">
         <div className="w-full max-w-6xl mx-auto space-y-10">
-          
-          {/* Info Cards */}
+          {/* Indicator Summary Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-             <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
-                <div className="flex items-center gap-3 mb-6">
-                    <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-1.5 uppercase tracking-widest rounded-lg">
-                        {indicator.perspective}
-                    </span>
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-slate-50 text-slate-500 border border-slate-100">
-                        {indicator.reportingCycle === "Annual" ? <CalendarDays size={12} /> : <Clock size={12} />}
-                        {indicator.reportingCycle} Cycle
-                    </div>
+            <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
+              <div className="flex items-center gap-3 mb-6">
+                <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-1.5 uppercase tracking-widest rounded-lg">
+                  {indicator.perspective || "General"}
+                </span>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-slate-50 text-slate-500 border border-slate-100">
+                  {indicator.reportingCycle === "Annual" ? (
+                    <CalendarDays size={12} />
+                  ) : (
+                    <Clock size={12} />
+                  )}
+                  {indicator.reportingCycle || "Quarterly"} Cycle
                 </div>
-                <h3 className="text-2xl font-serif font-black text-slate-900 mb-4 leading-tight">{indicator.objective.title}</h3>
-                <p className="text-[15px] text-slate-500 font-medium leading-relaxed max-w-3xl">{indicator.activity.description}</p>
-             </div>
+              </div>
+              <h3 className="text-2xl font-serif font-black text-slate-900 mb-4 leading-tight">
+                {indicator.objective?.title || "Objective Title"}
+              </h3>
+              <p className="text-[15px] text-slate-500 font-medium leading-relaxed max-w-3xl">
+                {indicator.activity?.description || "Activity description"}
+              </p>
+            </div>
 
-             <div className="bg-[#1d3331] p-10 rounded-[2.5rem] text-white flex flex-col justify-center shadow-2xl shadow-emerald-900/20">
-                <p className="text-[10px] font-black opacity-50 uppercase tracking-[0.2em] mb-3">Target Performance</p>
-                <p className="text-5xl font-serif font-black tracking-tighter">{indicator.target}</p>
-                <p className="text-[12px] font-bold opacity-70 mt-2 uppercase tracking-widest">{indicator.unit}</p>
-             </div>
+            <div className="bg-[#1d3331] p-10 rounded-[2.5rem] text-white flex flex-col justify-center shadow-2xl shadow-emerald-900/20">
+              <p className="text-[10px] font-black opacity-50 uppercase tracking-[0.2em] mb-3">
+                Target Performance
+              </p>
+              <p className="text-5xl font-serif font-black tracking-tighter">{indicator.target || 0}</p>
+              <p className="text-[12px] font-bold opacity-70 mt-2 uppercase tracking-widest">
+                {indicator.unit || "%"}
+              </p>
+            </div>
           </div>
 
-          {/* Rejection UI */}
+          {/* Rejection Mode Textarea */}
           {rejectionMode && (
             <div className="space-y-4 bg-rose-50/50 p-8 rounded-[2.5rem] border-2 border-dashed border-rose-200">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-rose-600">
-                    <AlertOctagon size={20} />
-                    <h4 className="text-[11px] font-black uppercase tracking-widest">Global Correction Note</h4>
+                  <AlertOctagon size={20} />
+                  <h4 className="text-[11px] font-black uppercase tracking-widest">
+                    Global Correction Note
+                  </h4>
                 </div>
-                <button onClick={() => setRejectionMode(false)} className="text-[10px] font-black text-slate-400 hover:text-black uppercase">Cancel</button>
+                <button
+                  onClick={() => setRejectionMode(false)}
+                  className="text-[10px] font-black text-slate-400 hover:text-black uppercase"
+                >
+                  Cancel
+                </button>
               </div>
               <textarea
                 autoFocus
@@ -230,94 +328,207 @@ const AdminIndicatorReview: React.FC = () => {
             </div>
           )}
 
-          {/* Submissions List */}
+          {/* Evidence Trail */}
           <div className="space-y-6">
-            <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Evidence Trail</h4>
-            
-            {Object.entries(indicator.submissions).map(([quarterKey, submissions]) => (
+            <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">
+              Evidence Trail
+            </h4>
+
+            {indicator.submissions && Object.entries(indicator.submissions).map(([quarterKey, submissions]) => (
               <div key={quarterKey} className="space-y-4">
                 <div className="flex items-center gap-4 px-2">
-                    <div className="h-[1px] flex-1 bg-slate-100"></div>
-                    <span className="text-[10px] font-black text-slate-300 uppercase">{quarterKey.replace('_', ' ')}</span>
-                    <div className="h-[1px] flex-1 bg-slate-100"></div>
+                  <div className="h-[1px] flex-1 bg-slate-100"></div>
+                  <span className="text-[10px] font-black text-slate-300 uppercase">
+                    {quarterKey.replace("_", " ")}
+                  </span>
+                  <div className="h-[1px] flex-1 bg-slate-100"></div>
                 </div>
 
-                {submissions.map((sub: ISubmission) => (
-                  <div key={sub.id} className="bg-white border border-slate-200/60 rounded-[2rem] p-8 shadow-sm">
-                    <div className="flex flex-col md:flex-row justify-between gap-8">
-                      <div className="flex-1 space-y-6">
-                        <div className="flex items-center justify-between">
-                           <div className="flex items-center gap-3">
+                {submissions.map((sub: ISubmission) => {
+                  // ✅ Safely get documents array
+                  const documents = getSafeDocuments(sub);
+                  const uniqueDocs = deduplicateDocs(documents);
+
+                  return (
+                    <div
+                      key={sub.id}
+                      className="bg-white border border-slate-200/60 rounded-[2rem] p-8 shadow-sm"
+                    >
+                      <div className="flex flex-col md:flex-row justify-between gap-8">
+                        <div className="flex-1 space-y-6">
+                          {/* Submission Header */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                 <FileText size={20} />
+                                <FileText size={20} />
                               </div>
                               <div>
-                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Reported Value</p>
-                                 <p className="text-lg font-black text-slate-900">{sub.achievedValue} {indicator.unit}</p>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                  Reported Value
+                                </p>
+                                <p className="text-lg font-black text-slate-900">
+                                  {sub.achievedValue || 0} {indicator.unit || "%"}
+                                </p>
                               </div>
-                           </div>
-                           <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                              sub.reviewStatus === "Verified" || sub.reviewStatus === "Accepted" ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
-                              sub.reviewStatus === "Rejected" ? "bg-rose-50 text-rose-600 border-rose-100" :
-                              "bg-orange-50 text-orange-600 border-orange-100"
-                           }`}>
-                              {sub.reviewStatus}
-                           </span>
-                        </div>
+                            </div>
+                            <span
+                              className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                sub.reviewStatus === "Verified" ||
+                                sub.reviewStatus === "Accepted"
+                                  ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                  : sub.reviewStatus === "Rejected"
+                                  ? "bg-rose-50 text-rose-600 border-rose-100"
+                                  : "bg-orange-50 text-orange-600 border-orange-100"
+                              }`}
+                            >
+                              {sub.reviewStatus || "Pending"}
+                            </span>
+                          </div>
 
-                        <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
-                           <p className="text-[13px] text-slate-600 font-medium leading-relaxed italic">
-                             "{sub.notes || "No user commentary provided."}"
-                           </p>
-                        </div>
+                          {/* Notes */}
+                          <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                            <p className="text-[13px] text-slate-600 font-medium leading-relaxed italic">
+                              "{sub.notes || "No user commentary provided."}"
+                            </p>
+                          </div>
 
-                        {/* Documents Section */}
-                        <div className="space-y-3">
-                           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                             <Paperclip size={12} /> Supporting Documents
-                           </p>
-                           <div className="flex flex-wrap gap-3">
-                              {sub.documents.map((doc) => {
-                                const isRejected = documentUpdates.some(du => du.documentId === doc.id);
-                                return (
-                                  <div key={doc.id} className="group relative">
-                                    <button
-                                      onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: doc.fileName })}
-                                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
-                                        isRejected 
-                                          ? "border-rose-200 bg-rose-50/30 text-rose-600" 
-                                          : "border-slate-100 bg-white hover:border-emerald-500 text-slate-600 shadow-sm"
-                                      }`}
-                                    >
-                                      <FileText size={14} className={isRejected ? "text-rose-500" : "text-emerald-600"} />
-                                      <span className="text-[11px] font-bold truncate max-w-[150px]">{doc.fileName}</span>
-                                    </button>
-                                    
-                                    {sub.reviewStatus === "Pending" && (
-                                      <button 
-                                        onClick={() => toggleFileRejection(doc.id, doc.fileName)}
-                                        className={`absolute -top-2 -right-2 p-1 rounded-full shadow-md transition-all ${
-                                            isRejected ? "bg-rose-500 text-white" : "bg-white text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100"
+                          {/* Documents Section */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                <Paperclip size={12} /> Supporting Documents
+                              </p>
+                              {documents.length > 0 && uniqueDocs.length < documents.length && (
+                                <span className="text-[9px] font-bold text-amber-500 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg">
+                                  {documents.length - uniqueDocs.length} duplicate
+                                  {documents.length - uniqueDocs.length > 1 ? "s" : ""}{" "}
+                                  collapsed · showing latest versions
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                              {uniqueDocs.length > 0 ? (
+                                uniqueDocs.map((doc) => {
+                                  const isRejected = documentUpdates.some(
+                                    (du) => du.documentId === doc.id
+                                  );
+                                  const isExpanded = expandedDocId === doc.id;
+                                  const docDescription = doc.description || doc.fileDescription || null;
+
+                                  return (
+                                    <div key={doc.id} className="group relative">
+                                      <div
+                                        className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
+                                          isRejected
+                                            ? "border-rose-200 bg-rose-50/30"
+                                            : "border-slate-100 bg-white shadow-sm"
                                         }`}
                                       >
-                                        {isRejected ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                           </div>
+                                        <button
+                                          onClick={() =>
+                                            setPreviewFile({
+                                              url: doc.evidenceUrl,
+                                              name: doc.fileName || "Document",
+                                            })
+                                          }
+                                          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                                        >
+                                          <FileText
+                                            size={14}
+                                            className={
+                                              isRejected ? "text-rose-500 shrink-0" : "text-emerald-600 shrink-0"
+                                            }
+                                          />
+                                          <span
+                                            className={`text-[11px] font-bold truncate ${
+                                              isRejected ? "text-rose-600" : "text-slate-700"
+                                            }`}
+                                          >
+                                            {doc.fileName || "Untitled Document"}
+                                          </span>
+                                        </button>
+
+                                        {docDescription && (
+                                          <button
+                                            onClick={() =>
+                                              setExpandedDocId(isExpanded ? null : doc.id)
+                                            }
+                                            title="Toggle document description"
+                                            className={`shrink-0 p-1 rounded-lg transition-all ${
+                                              isExpanded
+                                                ? "bg-emerald-100 text-emerald-700"
+                                                : "text-slate-300 hover:text-slate-500 hover:bg-slate-50"
+                                            }`}
+                                          >
+                                            <Info size={13} />
+                                          </button>
+                                        )}
+
+                                        {sub.reviewStatus === "Pending" && (
+                                          <button
+                                            onClick={() =>
+                                              toggleFileRejection(doc.id, doc.fileName || "document")
+                                            }
+                                            title={isRejected ? "Un-reject file" : "Reject file"}
+                                            className={`shrink-0 p-1 rounded-full shadow-sm transition-all ${
+                                              isRejected
+                                                ? "bg-rose-500 text-white"
+                                                : "bg-white text-slate-300 hover:text-rose-500 border border-slate-100 opacity-0 group-hover:opacity-100"
+                                            }`}
+                                          >
+                                            {isRejected ? (
+                                              <CheckCircle2 size={12} />
+                                            ) : (
+                                              <XCircle size={12} />
+                                            )}
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {docDescription && isExpanded && (
+                                        <div className="mt-1.5 ml-4 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl">
+                                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                                            Document Description
+                                          </p>
+                                          <p className="text-[12px] text-slate-600 font-medium leading-relaxed">
+                                            {docDescription}
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
+                                  <p className="text-[10px] text-slate-400 font-medium">
+                                    No documents attached for this submission.
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ))}
+            
+            {(!indicator.submissions || Object.keys(indicator.submissions).length === 0) && (
+              <div className="text-center py-12 bg-white rounded-[2rem] border border-slate-100">
+                <FileText size={48} className="mx-auto text-slate-200 mb-3" />
+                <p className="text-[11px] text-slate-400 font-medium">
+                  No submissions found for this indicator.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
+      {/* File Preview Modal */}
       {previewFile && (
         <FilePreviewModal
           url={previewFile.url}

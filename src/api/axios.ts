@@ -10,7 +10,7 @@ const axiosConfig = {
 
 // Public instance — for login, OTP, refresh
 // Timeout of 6s so a dead server doesn't hang the app indefinitely
-export const api = axios.create({ ...axiosConfig, timeout: 6000 });
+export const api = axios.create({ ...axiosConfig, timeout: 6000,  });
 
 // Private instance — for all authenticated requests
 export const apiPrivate = axios.create({ ...axiosConfig, timeout: 10000 });
