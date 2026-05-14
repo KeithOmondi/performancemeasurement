@@ -20,21 +20,24 @@ import {
   setSelectedIndicator,
   type IAdminIndicator,
   type ISubmission,
-  type ISubmissionsByQuarter,
+  type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Flatten ISubmissionsByQuarter → flat ISubmission array, newest-first per quarter */
-const flattenSubmissions = (submissions: ISubmissionsByQuarter): ISubmission[] =>
-  Object.values(submissions ?? {}).flat();
+/** Flatten ISubmissionsByPeriod → flat ISubmission array, newest-first per period */
+const flattenSubmissions = (
+  submissions: ISubmissionsByPeriod | undefined
+): ISubmission[] => Object.values(submissions ?? {}).flat();
 
 /**
- * Find the latest rejected submission across all quarters.
- * Each quarter's array is already sorted newest-first (index 0 = latest),
+ * Find the latest rejected submission across all periods.
+ * Each period's array is already sorted newest-first (index 0 = latest),
  * so we flatten then search in reverse to find the most recent rejection.
  */
-const findLatestRejection = (submissions: ISubmissionsByQuarter): ISubmission | undefined =>
+const findLatestRejection = (
+  submissions: ISubmissionsByPeriod | undefined
+): ISubmission | undefined =>
   flattenSubmissions(submissions)
     .reverse()
     .find((s) => s.reviewStatus === "Rejected");
@@ -155,8 +158,6 @@ const AdminRejections = () => {
           {rejectedItems.map((indicator) => {
             const isViewingHistory = selectedHistoryId === indicator.id;
             const isAnnual = indicator.reportingCycle === "Annual";
-
-            // ✅ submissions is Record<string, ISubmission[]> — use helper
             const latestRejection = findLatestRejection(indicator.submissions);
 
             return (

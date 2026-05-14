@@ -9,7 +9,8 @@ import { fetchDashboardStats } from "../../store/slices/dashboardSlice";
 import {
   fetchAllAdminIndicators,
   type IAdminIndicator,
-  type ISubmissionsByQuarter,
+  type ISubmission,
+  type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 
@@ -52,9 +53,10 @@ const ACTIONABLE_STATUSES = new Set([
   "Rejected by Super Admin",
 ]);
 
-/** Flatten ISubmissionsByQuarter → flat array, newest-first per quarter. */
-const flattenSubmissions = (submissions: ISubmissionsByQuarter) =>
-  Object.values(submissions ?? {}).flat();
+/** Flatten ISubmissionsByPeriod → flat ISubmission array, newest-first per period. */
+const flattenSubmissions = (
+  submissions: ISubmissionsByPeriod | undefined
+): ISubmission[] => Object.values(submissions ?? {}).flat();
 
 const isIndicatorOverdue = (
   indicator: IAdminIndicator,
@@ -85,7 +87,6 @@ const AdminDashboardPage = () => {
   // ── Selectors ─────────────────────────────────────────────────────────────
   const { isLoading: uLoad } = useSelector((state: RootState) => state.users);
 
-  // No cast needed — allAssignments is IAdminIndicator[] from the slice
   const { allAssignments: indicators, isLoading: iLoad } = useSelector(
     (state: RootState) => state.adminIndicators
   );
@@ -166,7 +167,7 @@ const AdminDashboardPage = () => {
     );
   }
 
-  // Top 5 indicators awaiting action — use flattenSubmissions for resubmission check
+  // Top 5 indicators awaiting action
   const pendingQueue = indicators
     .filter((ind) =>
       ["Awaiting Admin Approval", "Awaiting Super Admin", "Partially Approved"].includes(
@@ -290,11 +291,10 @@ const AdminDashboardPage = () => {
             {pendingQueue.length > 0 ? (
               pendingQueue.map((item) => {
                 const isEscalated = item.status === "Awaiting Super Admin";
-
-                // ✅ Use flattenSubmissions — submissions is now Record<string, ISubmission[]>
                 const flat = flattenSubmissions(item.submissions);
                 const isResub = flat.some(
-                  (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+                  (s: ISubmission) =>
+                    s.resubmissionCount > 0 && s.reviewStatus === "Pending"
                 );
 
                 return (
