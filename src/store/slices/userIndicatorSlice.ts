@@ -19,6 +19,7 @@ export interface IDocumentUI {
   status: "Pending" | "Rejected" | "Accepted";
   rejectionReason?: string;
   uploadedAt?: string;
+  updatedAt?: string;
 }
 
 export interface ISubmissionUI {
@@ -285,6 +286,30 @@ interface SubmissionResult {
   idempotent?: boolean;
 }
 
+interface UpdateDocumentDescriptionsPayload {
+  submissionId: string;
+  documents: Array<{ documentId: string; description: string }>;
+  idempotencyKey?: string;
+}
+
+interface UpdateDocumentDescriptionPayload {
+  docId: string;
+  description: string;
+  idempotencyKey?: string;
+}
+
+interface UpdateDocumentDescriptionsResult {
+  submissionId: string;
+  updatedDocuments: IDocumentUI[];
+  message: string;
+}
+
+interface UpdateDocumentDescriptionResult {
+  document: IDocumentUI;
+  previousDescription: string;
+  message: string;
+}
+
 /* ─── THUNKS ─────────────────────────────────────────────────────────────────*/
 
 const extractError = (error: unknown, fallback: string): string => {
@@ -488,6 +513,80 @@ export const updateRejectedSubmission = createAsyncThunk<
   },
 );
 
+// NEW: Update multiple document descriptions for a submission
+export const updateDocumentDescriptions = createAsyncThunk<
+  UpdateDocumentDescriptionsResult,
+  UpdateDocumentDescriptionsPayload,
+  { rejectValue: string }
+>(
+  "userIndicators/updateDocumentDescriptions",
+  async (arg, {  rejectWithValue }) => {
+    try {
+      const response = await apiPrivate.patch<{
+        success: boolean;
+        message: string;
+        data: {
+          submissionId: string;
+          updatedDocuments: IDocumentUI[];
+        };
+        idempotent?: boolean;
+      }>(`/user-indicators/submissions/${arg.submissionId}/documents/descriptions`, 
+        {
+          documents: arg.documents,
+          idempotencyKey: arg.idempotencyKey,
+        }
+      );
+
+      // Refresh the indicator data to get the updated documents
+      // We need the indicator ID - you might want to pass it in the payload
+      // For now, we'll note that the parent component should refresh
+      
+      return {
+        submissionId: response.data.data.submissionId,
+        updatedDocuments: response.data.data.updatedDocuments,
+        message: response.data.message,
+      };
+    } catch (error) {
+      return rejectWithValue(extractError(error, "Failed to update document descriptions"));
+    }
+  },
+);
+
+// NEW: Update single document description
+export const updateDocumentDescription = createAsyncThunk<
+  UpdateDocumentDescriptionResult,
+  UpdateDocumentDescriptionPayload,
+  { rejectValue: string }
+>(
+  "userIndicators/updateDocumentDescription",
+  async (arg, { rejectWithValue }) => {
+    try {
+      const response = await apiPrivate.patch<{
+        success: boolean;
+        message: string;
+        data: {
+          document: IDocumentUI;
+          previousDescription: string;
+        };
+        idempotent?: boolean;
+      }>(`/user-indicators/documents/${arg.docId}/description`, 
+        {
+          description: arg.description,
+          idempotencyKey: arg.idempotencyKey,
+        }
+      );
+
+      return {
+        document: response.data.data.document,
+        previousDescription: response.data.data.previousDescription,
+        message: response.data.message,
+      };
+    } catch (error) {
+      return rejectWithValue(extractError(error, "Failed to update document description"));
+    }
+  },
+);
+
 /* ─── SLICE ──────────────────────────────────────────────────────────────────*/
 
 const WRITE_ACTIONS = {
@@ -497,6 +596,8 @@ const WRITE_ACTIONS = {
     addIndicatorDocuments.pending.type,
     deleteRejectedDocument.pending.type,
     updateRejectedSubmission.pending.type,
+    updateDocumentDescriptions.pending.type,
+    updateDocumentDescription.pending.type,
   ],
   fulfilled: [
     submitIndicatorProgress.fulfilled.type,
@@ -504,6 +605,8 @@ const WRITE_ACTIONS = {
     addIndicatorDocuments.fulfilled.type,
     deleteRejectedDocument.fulfilled.type,
     updateRejectedSubmission.fulfilled.type,
+    updateDocumentDescriptions.fulfilled.type,
+    updateDocumentDescription.fulfilled.type,
   ],
   rejected: [
     submitIndicatorProgress.rejected.type,
@@ -511,6 +614,8 @@ const WRITE_ACTIONS = {
     addIndicatorDocuments.rejected.type,
     deleteRejectedDocument.rejected.type,
     updateRejectedSubmission.rejected.type,
+    updateDocumentDescriptions.rejected.type,
+    updateDocumentDescription.rejected.type,
   ],
 };
 
@@ -563,6 +668,37 @@ const userIndicatorSlice = createSlice({
             if (doc) {
               doc.status = status;
               if (rejectionReason) doc.rejectionReason = rejectionReason;
+            }
+          });
+        });
+      };
+
+      if (state.currentIndicator) {
+        updateDocInIndicator(state.currentIndicator);
+      }
+
+      state.myIndicators.forEach(updateDocInIndicator);
+      state.rejectedIndicators.forEach(updateDocInIndicator);
+    },
+
+    /**
+     * Optimistically update a document's description in the local state
+     */
+    optimisticUpdateDocumentDescription: (
+      state,
+      action: PayloadAction<{
+        docId: string;
+        description: string;
+      }>,
+    ) => {
+      const { docId, description } = action.payload;
+
+      const updateDocInIndicator = (indicator: IIndicatorUI) => {
+        Object.values(indicator.submissions).forEach((submissions) => {
+          submissions.forEach((submission) => {
+            const doc = submission.documents.find((d) => d.id === docId);
+            if (doc) {
+              doc.description = description;
             }
           });
         });
@@ -642,6 +778,20 @@ const userIndicatorSlice = createSlice({
         state.lastSubmissionId = action.payload.submissionId;
       })
 
+      /* ── Update Document Descriptions ───────────────────────────────── */
+      .addCase(updateDocumentDescriptions.fulfilled, (state) => {
+        state.uploading = false;
+        // Optionally update the documents in the local state
+        // The parent component should refresh the indicator data
+      })
+
+      /* ── Update Document Description ────────────────────────────────── */
+      .addCase(updateDocumentDescription.fulfilled, (state) => {
+        state.uploading = false;
+        // Optionally update the document in the local state
+        // The parent component should refresh the indicator data
+      })
+
       /* ── Write operations (submit / resubmit / add docs / delete / update) */
       .addMatcher(
         (action): action is AnyAction =>
@@ -675,6 +825,7 @@ export const {
   setLocalSelectedIndicator,
   clearLastSubmissionId,
   optimisticUpdateDocumentStatus,
+  optimisticUpdateDocumentDescription,
 } = userIndicatorSlice.actions;
 
 export default userIndicatorSlice.reducer;

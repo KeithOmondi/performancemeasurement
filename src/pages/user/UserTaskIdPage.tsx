@@ -4,7 +4,7 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
-  AlertTriangle, CheckCircle, XCircle,
+  AlertTriangle, CheckCircle, XCircle, Edit2, Save, X,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -14,6 +14,8 @@ import {
   hasSubmissionForCurrentQuarter,
   getCurrentQuarterReviewStatus,
   clearLastSubmissionId,
+  updateDocumentDescription,
+  optimisticUpdateDocumentDescription,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -28,6 +30,9 @@ const UserTaskIdPage = () => {
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingDescription, setEditingDescription] = useState("");
+  const [updatingDescription, setUpdatingDescription] = useState(false);
 
   const lastSubmissionIdRef = useRef<string | null>(null);
 
@@ -130,6 +135,71 @@ const UserTaskIdPage = () => {
     );
   }, [allSubmissions]);
 
+  // ── Document description handlers ─────────────────────────────────────────
+
+  const handleStartEditDescription = (doc: IDocumentUI) => {
+    setEditingDocId(doc.id);
+    setEditingDescription(doc.description || "");
+  };
+
+  const handleCancelEditDescription = () => {
+    setEditingDocId(null);
+    setEditingDescription("");
+    setUpdatingDescription(false);
+  };
+
+  const handleSaveDescription = async (docId: string) => {
+    if (updatingDescription) return;
+
+    setUpdatingDescription(true);
+
+    // Optimistic update
+    dispatch(optimisticUpdateDocumentDescription({
+      docId,
+      description: editingDescription,
+    }));
+
+    try {
+      await dispatch(updateDocumentDescription({
+        docId,
+        description: editingDescription,
+        idempotencyKey: crypto.randomUUID(),
+      })).unwrap();
+
+      // Show success toast
+      setSuccessMessage("Document description updated successfully!");
+      setShowSuccessToast(true);
+      setTimeout(() => {
+        setShowSuccessToast(false);
+        setSuccessMessage("");
+      }, 3000);
+
+      // Refresh indicator data
+      if (id) {
+        await dispatch(fetchIndicatorDetails(id));
+      }
+
+      // Clear editing state
+      setEditingDocId(null);
+      setEditingDescription("");
+    } catch (err) {
+      console.error("Failed to update description:", err);
+      setSuccessMessage("Failed to update description. Please try again.");
+      setShowSuccessToast(true);
+      setTimeout(() => {
+        setShowSuccessToast(false);
+        setSuccessMessage("");
+      }, 3000);
+      
+      // Revert optimistic update by refreshing data
+      if (id) {
+        await dispatch(fetchIndicatorDetails(id));
+      }
+    } finally {
+      setUpdatingDescription(false);
+    }
+  };
+
   // ── Status badge ──────────────────────────────────────────────────────────
 
   const getStatusBadge = useCallback(() => {
@@ -207,6 +277,16 @@ const UserTaskIdPage = () => {
     ? `Update ${activeQuarterDisplay} Filing`
     : `Submit ${activeQuarterDisplay} Filing`;
 
+  // Check if user can edit document descriptions
+  const canEditDescription = (docStatus: string, submissionReviewStatus?: string) => {
+    // Can't edit if document is accepted
+    if (docStatus === "Accepted") return false;
+    // Can't edit if submission is accepted
+    if (submissionReviewStatus === "Accepted") return false;
+    // Can edit for pending or rejected documents
+    return true;
+  };
+
   // ── Loading / empty states ────────────────────────────────────────────────
 
   if (loading && !currentIndicator) {
@@ -269,10 +349,7 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {/* Submit button — only locked when this specific quarter is Accepted
-                or the entire indicator is marked Completed by the admin.
-                Pending quarters (awaiting review) remain open so users can
-                freely submit other quarters without waiting for approval. */}
+            {/* Submit button */}
             <button
               onClick={() => setIsModalOpen(true)}
               disabled={
@@ -424,11 +501,16 @@ const UserTaskIdPage = () => {
           </section>
         )}
 
-        {/* Document Registry */}
+        {/* Document Registry with Edit Descriptions */}
         <section className="space-y-6">
-          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
-            <FileText size={16} className="text-[#c2a336]" /> Document Registry
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
+              <FileText size={16} className="text-[#c2a336]" /> Document Registry
+            </h3>
+            <p className="text-[8px] text-gray-400 italic">
+              {editingDocId ? "Editing description..." : "Click ✎ to add/edit description"}
+            </p>
+          </div>
 
           {activeDocs.length === 0 ? (
             <div className="py-20 text-center bg-white rounded-[2rem] border-2 border-dashed border-gray-100">
@@ -442,6 +524,11 @@ const UserTaskIdPage = () => {
                 const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
                 const isPending = doc.status === "Pending" || !doc.status;
                 const isAcceptedStatus = doc.status === "Accepted";
+                const submissionReviewStatus = allSubmissions.find(
+                  (sub) => sub.documents.some((d) => d.id === doc.id)
+                )?.reviewStatus;
+                const canEdit = canEditDescription(doc.status, submissionReviewStatus);
+                const isEditing = editingDocId === doc.id;
 
                 return (
                   <div
@@ -458,12 +545,24 @@ const UserTaskIdPage = () => {
                       }`}>
                         {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
                       </div>
-                      <button
-                        onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
-                        className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
-                      >
-                        <ExternalLink size={16} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {canEdit && !isEditing && (
+                          <button
+                            onClick={() => handleStartEditDescription(doc)}
+                            className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                            title="Edit description"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
+                          className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                          title="Preview file"
+                        >
+                          <ExternalLink size={16} />
+                        </button>
+                      </div>
                     </div>
 
                     <p
@@ -488,13 +587,76 @@ const UserTaskIdPage = () => {
                       </span>
                     </div>
 
-                    {doc.description && (
-                      <div className="mt-4 pt-4 border-t border-slate-50">
-                        <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
-                          "{doc.description}"
+                    {/* Editable Description Section */}
+                    <div className="mt-4 pt-4 border-t border-slate-50">
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={editingDescription}
+                            onChange={(e) => setEditingDescription(e.target.value)}
+                            className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
+                            rows={3}
+                            placeholder="Add a description for this document..."
+                            maxLength={500}
+                            autoFocus
+                          />
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] text-gray-400">
+                              {editingDescription.length}/500 characters
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleCancelEditDescription}
+                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                                disabled={updatingDescription}
+                              >
+                                <X size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleSaveDescription(doc.id)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors"
+                                disabled={updatingDescription}
+                              >
+                                {updatingDescription ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Save size={14} />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        doc.description && (
+                          <div className="group relative">
+                            <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed pr-6">
+                              "{doc.description}"
+                            </p>
+                            {canEdit && (
+                              <button
+                                onClick={() => handleStartEditDescription(doc)}
+                                className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-[#1a3a32]"
+                              >
+                                <Edit2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        )
+                      )}
+                      {!isEditing && !doc.description && canEdit && (
+                        <button
+                          onClick={() => handleStartEditDescription(doc)}
+                          className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
+                        >
+                          + Add description
+                        </button>
+                      )}
+                      {!isEditing && !doc.description && !canEdit && (
+                        <p className="text-[8px] text-gray-300 italic text-center py-2">
+                          No description provided
                         </p>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}
