@@ -12,6 +12,8 @@ import {
   CalendarDays,
   Layers,
   FileText,
+  Filter,
+  X,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -19,6 +21,10 @@ import {
   type IAdminIndicator,
   type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type FilterType = "all" | "quarterly" | "annual" | "resubmitted";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -52,6 +58,7 @@ const AdminPendingReviews = () => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<FilterType>("all");
 
   const { pendingAdminReview, isLoading } = useAppSelector(
     (state) => state.adminIndicators
@@ -69,13 +76,48 @@ const AdminPendingReviews = () => {
     [navigate]
   );
 
-  const filteredRecords = pendingAdminReview.filter(
-    (ind) =>
+  // Apply filters
+  const filteredRecords = pendingAdminReview.filter((ind) => {
+    // First apply search filter
+    const matchesSearch =
+      !searchTerm ||
       ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       ind.perspective?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+      ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
+
+    if (!matchesSearch) return false;
+
+    // Apply toggle filters
+    if (activeFilter === "all") return true;
+    
+    if (activeFilter === "quarterly") {
+      return ind.reportingCycle === "Quarterly";
+    }
+    
+    if (activeFilter === "annual") {
+      return ind.reportingCycle === "Annual";
+    }
+    
+    if (activeFilter === "resubmitted") {
+      return hasResubmission(ind);
+    }
+    
+    return true;
+  });
+
+  // Get counts for each filter
+  const counts = {
+    all: pendingAdminReview.length,
+    quarterly: pendingAdminReview.filter(ind => ind.reportingCycle === "Quarterly").length,
+    annual: pendingAdminReview.filter(ind => ind.reportingCycle === "Annual").length,
+    resubmitted: pendingAdminReview.filter(ind => hasResubmission(ind)).length,
+  };
+
+  const clearFilters = () => {
+    setSearchTerm("");
+    setActiveFilter("all");
+  };
 
   if (isLoading && pendingAdminReview.length === 0) {
     return (
@@ -105,7 +147,7 @@ const AdminPendingReviews = () => {
             </h1>
             <div className="flex items-center bg-[#1a3a32] text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
               <span className="w-2 h-2 bg-emerald-400 rounded-full mr-2 animate-pulse" />
-              {pendingAdminReview.length} PENDING VERIFICATION
+              {filteredRecords.length} PENDING VERIFICATION
             </div>
           </div>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
@@ -127,6 +169,94 @@ const AdminPendingReviews = () => {
           />
         </div>
       </div>
+
+      {/* FILTER TOGGLES */}
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 mr-2">
+            <Filter size={12} className="text-slate-400" />
+            <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">
+              Filter:
+            </span>
+          </div>
+          
+          {/* All button */}
+          <button
+            onClick={() => setActiveFilter("all")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+              activeFilter === "all"
+                ? "bg-[#1a3a32] text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            All ({counts.all})
+          </button>
+
+          {/* Quarterly button */}
+          <button
+            onClick={() => setActiveFilter("quarterly")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              activeFilter === "quarterly"
+                ? "bg-blue-600 text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            <Layers size={12} />
+            Quarterly ({counts.quarterly})
+          </button>
+
+          {/* Annual button */}
+          <button
+            onClick={() => setActiveFilter("annual")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              activeFilter === "annual"
+                ? "bg-amber-600 text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            <CalendarDays size={12} />
+            Annual ({counts.annual})
+          </button>
+
+          {/* Resubmitted button */}
+          <button
+            onClick={() => setActiveFilter("resubmitted")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              activeFilter === "resubmitted"
+                ? "bg-amber-500 text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            <History size={12} />
+            Resubmitted ({counts.resubmitted})
+          </button>
+        </div>
+
+        {/* Clear filters button - only shows when filters are active */}
+        {(activeFilter !== "all" || searchTerm) && (
+          <button
+            onClick={clearFilters}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors text-[8px] font-black uppercase tracking-wider text-slate-600"
+          >
+            <X size={10} />
+            Clear Filters
+          </button>
+        )}
+      </div>
+
+      {/* Active filter indicator */}
+      {activeFilter !== "all" && (
+        <div className="mb-4 flex items-center gap-2">
+          <div className={`w-1.5 h-1.5 rounded-full ${
+            activeFilter === "quarterly" ? "bg-blue-500" :
+            activeFilter === "annual" ? "bg-amber-500" :
+            "bg-amber-500"
+          }`} />
+          <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">
+            Showing {activeFilter === "quarterly" ? "Quarterly" : activeFilter === "annual" ? "Annual" : "Resubmitted"} submissions only
+          </span>
+        </div>
+      )}
 
       {/* TABLE */}
       <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
@@ -152,7 +282,7 @@ const AdminPendingReviews = () => {
                 <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">
                   Action
                 </th>
-              </tr>
+               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredRecords.length === 0 ? (
@@ -161,8 +291,18 @@ const AdminPendingReviews = () => {
                     <div className="flex flex-col items-center">
                       <CheckCircle2 size={48} className="text-emerald-100 mb-4" />
                       <p className="text-sm font-black text-[#1a3a32] uppercase tracking-widest">
-                        Registry Queue Clear
+                        {activeFilter !== "all" 
+                          ? `No ${activeFilter} submissions pending review`
+                          : "Registry Queue Clear"}
                       </p>
+                      {(activeFilter !== "all" || searchTerm) && (
+                        <button
+                          onClick={clearFilters}
+                          className="mt-4 text-[9px] font-black text-emerald-600 underline underline-offset-4"
+                        >
+                          Clear Filters
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

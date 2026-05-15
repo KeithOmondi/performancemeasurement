@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
   fetchIndicators,
-  fetchIndicatorById,
   fetchAssignedIndicators,
   fetchUnassignedIndicators,
   fetchReviewIndicators,
-  clearSelectedIndicator,
   clearIndicatorError,
   unassignIndicator,
   type IIndicator,
@@ -24,7 +22,6 @@ import {
   type IActivity,
 } from "../../store/slices/strategicPlan/strategicPlanService";
 
-import IndicatorsPageIdModal from "./IndicatorsPageIdModal";
 import type { AssignPrefill } from "../../types/types";
 import SuperAdminAssign from "./SuperAdminAssign";
 
@@ -48,7 +45,7 @@ interface IndicatorSectionProps {
   indicators: IIndicator[];
   userMap: Record<string, IUser>;
   onAssign: (prefill: AssignPrefill) => void;
-  onSelectAssignment: (indicator: IIndicator) => void;
+  onViewIndicator: (indicatorId: string) => void;
   onUnassign: (indicatorId: string) => void;
   activeFilter: string;
 }
@@ -95,7 +92,7 @@ const IndicatorSection = ({
   indicators,
   userMap,
   onAssign,
-  onSelectAssignment,
+  onViewIndicator,
   onUnassign,
 }: IndicatorSectionProps) => {
   const visibleActivities = getActivities(objective);
@@ -140,25 +137,17 @@ const IndicatorSection = ({
                            assignment?.status === "Awaiting Admin Approval" ||
                            assignment?.status === "Awaiting Super Admin";
         
-        // ✅ IMPROVED: Check if indicator has an assignee
-        // Check multiple sources for assignee information
         const hasAssigneeValue = assignment && (
-          (assignment.assignee && assignment.assignee !== "") ||
           (assignment.assignee && assignment.assignee !== "")
         );
         
-        // Check if there's a valid display name (not "Unassigned" or empty)
         const hasValidDisplayName = assignment?.assigneeDisplayName && 
                                     assignment.assigneeDisplayName !== "Unassigned" &&
                                     assignment.assigneeDisplayName !== "";
         
-        // Also check if there's a primary user from the assignee ID
         const hasPrimaryUser = primaryUser && primaryUser.name;
-        
-        // Final determination - indicator is assigned if any of these are true
         const isAssigned = hasAssigneeValue || hasValidDisplayName || hasPrimaryUser;
         
-        // Get the display name for the assignee column
         const getAssigneeDisplayName = () => {
           if (assignment?.assigneeDisplayName && assignment.assigneeDisplayName !== "Unassigned") {
             return assignment.assigneeDisplayName;
@@ -182,9 +171,7 @@ const IndicatorSection = ({
                 </span>
               </div>
             </td>
-
             <td />
-
             <td className="p-4 text-center">
               {assignment ? (
                 <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-[11px] font-bold border border-amber-100">
@@ -194,12 +181,9 @@ const IndicatorSection = ({
                 "—"
               )}
             </td>
-
             <td className="p-4 text-center text-[12px] font-bold text-gray-500">
               {assignment?.unit || "—"}
             </td>
-
-            {/* Assignee column - shows "Unassigned" when no assignee */}
             <td className="p-4">
               {isAssigned ? (
                 <div className="flex items-center gap-2">
@@ -216,7 +200,6 @@ const IndicatorSection = ({
                 </span>
               )}
             </td>
-
             <td className="p-4">
               {assignment?.deadline && isAssigned ? (
                 <div className="flex items-center gap-2 text-slate-500">
@@ -233,7 +216,6 @@ const IndicatorSection = ({
                 <span className="text-gray-300 text-[10px]">No Date</span>
               )}
             </td>
-
             <td className="p-4 text-center">
               <div className="flex items-center justify-center gap-2">
                 <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -247,8 +229,6 @@ const IndicatorSection = ({
                 </span>
               </div>
             </td>
-
-            {/* Status badge - shows "Active" for Pending status */}
             <td className="p-4">
               {needsReview ? (
                 <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-amber-100">
@@ -264,13 +244,11 @@ const IndicatorSection = ({
                 </span>
               )}
             </td>
-
-            {/* Action cell - shows "Assign" when no assignee, "View" and "Unassign" when has assignee */}
             <td className="p-4 text-center">
               {isAssigned ? (
                 <div className="flex items-center justify-center gap-1.5">
                   <button
-                    onClick={() => onSelectAssignment(assignment!)}
+                    onClick={() => onViewIndicator(assignment!.id)}
                     className={`border px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 transition-all ${
                       needsReview
                         ? "border-amber-500 text-amber-600 hover:bg-amber-500 hover:text-white"
@@ -316,6 +294,7 @@ const IndicatorSection = ({
 
 const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -326,7 +305,6 @@ const SuperAdminIndicators = () => {
     shallowEqual,
   );
 
-  // Use the categorized lists from the slice
   const assignedIndicators = useAppSelector(
     (s) => s.indicators.assignedIndicators,
     shallowEqual,
@@ -340,15 +318,11 @@ const SuperAdminIndicators = () => {
     shallowEqual,
   );
   
-  // Master list for filtering
   const allIndicators = useAppSelector(
     (s) => s.indicators.indicators,
     shallowEqual,
   );
   
-  const selectedIndicator = useAppSelector(
-    (s) => s.indicators.selectedIndicator,
-  );
   const indicatorsLoading = useAppSelector((s) => s.indicators.loading);
   const actionLoading = useAppSelector((s) => s.indicators.actionLoading);
 
@@ -360,18 +334,6 @@ const SuperAdminIndicators = () => {
   const [assignPrefill, setAssignPrefill] = useState<AssignPrefill | undefined>();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
 
-  // Debug logging for state changes
-  useEffect(() => {
-    console.log('📊 State Summary:', {
-      assigned: assignedIndicators.length,
-      unassigned: unassignedIndicators.length,
-      review: reviewIndicators.length,
-      total: allIndicators.length,
-      activeFilter
-    });
-  }, [assignedIndicators.length, unassignedIndicators.length, reviewIndicators.length, allIndicators.length, activeFilter]);
-
-  // Refresh all indicator lists
   const refreshAllLists = async () => {
     if (isRefreshing || actionLoading) return;
     setIsRefreshing(true);
@@ -390,7 +352,6 @@ const SuperAdminIndicators = () => {
   };
 
   useEffect(() => {
-    // Fetch all data on mount
     const loadInitialData = async () => {
       try {
         await Promise.all([
@@ -414,14 +375,8 @@ const SuperAdminIndicators = () => {
     };
   }, [dispatch]);
 
-  const handleSelectAssignment = (indicator: IIndicator) => {
-    dispatch(fetchIndicatorById(indicator.id));
-  };
-
-  const handleCloseDrawer = () => {
-    dispatch(clearSelectedIndicator());
-    // Refresh after closing drawer in case of changes
-    refreshAllLists();
+  const handleViewIndicator = (indicatorId: string) => {
+    navigate(`/super-admin/indicators/${indicatorId}`);
   };
 
   const handleOpenAssign = (prefill?: AssignPrefill) => {
@@ -432,7 +387,6 @@ const SuperAdminIndicators = () => {
   const handleCloseAssign = async () => {
     setIsAssignModalOpen(false);
     setAssignPrefill(undefined);
-    // Refresh all lists when modal closes (in case assignment was made)
     await refreshAllLists();
   };
 
@@ -442,7 +396,6 @@ const SuperAdminIndicators = () => {
     try {
       await dispatch(unassignIndicator(indicatorId)).unwrap();
       toast.success("Activity unassigned successfully.");
-      // Refresh to ensure consistency with backend
       await refreshAllLists();
     } catch (error) {
       console.error("Unassign failed:", error);
@@ -494,7 +447,6 @@ const SuperAdminIndicators = () => {
                   matchId(ind.activityId, actId),
                 );
                 
-                // Filter based on active filter type
                 if (activeFilter === "ASSIGNED") return isAssigned;
                 if (activeFilter === "UNASSIGNED") return !isAssigned;
                 if (activeFilter === "REVIEW") {
@@ -509,7 +461,6 @@ const SuperAdminIndicators = () => {
               },
             );
 
-            // Pre-filtered per objective
             const objectiveIndicators = (currentIndicators ?? []).filter((ind) =>
               matchId(ind.objectiveId, obj.id),
             );
@@ -671,7 +622,7 @@ const SuperAdminIndicators = () => {
                         indicators={objective.objectiveIndicators}
                         userMap={userMap}
                         onAssign={handleOpenAssign}
-                        onSelectAssignment={handleSelectAssignment}
+                        onViewIndicator={handleViewIndicator}
                         onUnassign={handleUnassign}
                         activeFilter={activeFilter}
                       />
@@ -704,30 +655,6 @@ const SuperAdminIndicators = () => {
           onClose={handleCloseAssign}
         />
       )}
-
-      <div
-        className={`fixed inset-0 z-[300] transition-all duration-300 ${
-          selectedIndicator ? "visible opacity-100" : "invisible opacity-0"
-        }`}
-      >
-        <div
-          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-          onClick={handleCloseDrawer}
-        />
-        <div
-          className={`fixed right-0 top-0 h-full w-full md:w-[700px] bg-white shadow-2xl transition-transform duration-500 transform ${
-            selectedIndicator ? "translate-x-0" : "translate-x-full"
-          }`}
-        >
-          {selectedIndicator ? (
-            <IndicatorsPageIdModal
-              indicator={selectedIndicator}
-              allStaff={users}
-              onClose={handleCloseDrawer}
-            />
-          ) : null}
-        </div>
-      </div>
     </div>
   );
 };

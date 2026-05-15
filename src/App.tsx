@@ -44,6 +44,9 @@ import UserHistory from "./pages/user/UserHistory";
 import UserApprovals from "./pages/user/userApprovals";
 import UserTaskIdPage from "./pages/user/UserTaskIdPage";
 import AdminIndicatorReview from "./pages/admin/AdminIndicatorReview";
+import SuperAdminRejected from "./pages/superadmin/SuperAdminRejected";
+import SuperAdminApprovals from "./pages/superadmin/SuperAdminApprovals";
+import SuperAdminIndicatorDetail from "./pages/superadmin/SuperAdminIndicatorDetail";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -104,6 +107,11 @@ const App = () => {
               path="/superadmin/submissions"
               element={<SuperAdminSubmissions />}
             />
+
+            <Route
+  path="/super-admin/indicators/:id"
+  element={<SuperAdminIndicatorDetail />}
+/>
             <Route path="/superadmin/reports" element={<SuperAdminReports />} />
             <Route
               path="/superadmin/reviewer"
@@ -122,6 +130,8 @@ const App = () => {
               element={<SuperAdminRegistry />}
             />
             <Route path="/superadmin/teams" element={<SuperAdminTeams />} />
+            <Route path="/superadmin/rejections" element={<SuperAdminRejected />} />
+            <Route path="/superadmin/approvals" element={<SuperAdminApprovals />} />
           </Route>
         </Route>
 

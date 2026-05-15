@@ -13,6 +13,10 @@ import {
   CalendarDays,
   Layers,
   FileSearch,
+  FileText,
+  ExternalLink,
+  XCircle,
+  FileWarning,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -21,7 +25,9 @@ import {
   type IAdminIndicator,
   type ISubmission,
   type ISubmissionsByPeriod,
+  type IDocument,
 } from "../../store/slices/adminIndicatorSlice";
+import FilePreviewModal from "../PreviewModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,8 +38,6 @@ const flattenSubmissions = (
 
 /**
  * Find the latest rejected submission across all periods.
- * Each period's array is already sorted newest-first (index 0 = latest),
- * so we flatten then search in reverse to find the most recent rejection.
  */
 const findLatestRejection = (
   submissions: ISubmissionsByPeriod | undefined
@@ -41,6 +45,50 @@ const findLatestRejection = (
   flattenSubmissions(submissions)
     .reverse()
     .find((s) => s.reviewStatus === "Rejected");
+
+/**
+ * Get all rejected documents from all submissions with their submission context
+ */
+const getRejectedDocuments = (
+  submissions: ISubmissionsByPeriod | undefined
+): Array<{ document: IDocument; submission: ISubmission }> => {
+  const allSubmissions = flattenSubmissions(submissions);
+  const rejectedDocs: Array<{ document: IDocument; submission: ISubmission }> = [];
+  
+  allSubmissions.forEach((submission) => {
+    // Check if submission is rejected and has documents
+    if (submission.reviewStatus === "Rejected" && submission.documents) {
+      submission.documents.forEach((doc) => {
+        rejectedDocs.push({ 
+          document: doc, 
+          submission 
+        });
+      });
+    }
+  });
+  
+  return rejectedDocs;
+};
+
+/**
+ * Get unique rejected documents (avoid duplicates)
+ */
+const getUniqueRejectedDocuments = (
+  submissions: ISubmissionsByPeriod | undefined
+): Array<{ document: IDocument; submission: ISubmission }> => {
+  const rejectedDocs = getRejectedDocuments(submissions);
+  const uniqueDocs = new Map();
+  
+  // Keep the most recent version of each document
+  rejectedDocs.forEach((item) => {
+    const existing = uniqueDocs.get(item.document.id);
+    if (!existing || new Date(item.submission.submittedAt) > new Date(existing.submission.submittedAt)) {
+      uniqueDocs.set(item.document.id, item);
+    }
+  });
+  
+  return Array.from(uniqueDocs.values());
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -51,6 +99,7 @@ const AdminRejections = () => {
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
 
   useEffect(() => {
     dispatch(fetchAllAdminIndicators({ status: "all" }));
@@ -84,6 +133,10 @@ const AdminRejections = () => {
     if (!dateStr) return "N/A";
     const date = new Date(dateStr);
     return isNaN(date.getTime()) ? "Invalid Date" : date.toLocaleDateString();
+  };
+
+  const getQuarterLabel = (quarter: number, year: number): string => {
+    return quarter === 0 ? `Annual ${year}` : `Q${quarter} ${year}`;
   };
 
   if (isLoading && allAssignments.length === 0) {
@@ -159,6 +212,7 @@ const AdminRejections = () => {
             const isViewingHistory = selectedHistoryId === indicator.id;
             const isAnnual = indicator.reportingCycle === "Annual";
             const latestRejection = findLatestRejection(indicator.submissions);
+            const rejectedDocuments = getUniqueRejectedDocuments(indicator.submissions);
 
             return (
               <div
@@ -171,7 +225,7 @@ const AdminRejections = () => {
               >
                 <div className="p-0">
                   {isViewingHistory ? (
-                    /* --- INLINE AUDIT TRAIL VIEW --- */
+                    /* --- INLINE AUDIT TRAIL VIEW WITH REJECTED DOCUMENTS --- */
                     <div className="p-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
                       <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-50">
                         <button
@@ -201,6 +255,71 @@ const AdminRejections = () => {
                         </div>
                       </div>
 
+                      {/* Rejected Documents Section - Simplified */}
+                      {rejectedDocuments.length > 0 && (
+                        <div className="mb-8">
+                          <div className="flex items-center gap-2 mb-4">
+                            <FileWarning size={16} className="text-red-600" />
+                            <h3 className="text-[11px] font-black uppercase tracking-wider text-red-800">
+                              Rejected Evidence Documents ({rejectedDocuments.length})
+                            </h3>
+                          </div>
+                          
+                          <div className="grid gap-3">
+                            {rejectedDocuments.map(({ document, submission }) => (
+                              <div
+                                key={document.id}
+                                className="bg-white rounded-lg p-4 border border-red-100 hover:shadow-md transition-all"
+                              >
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3">
+                                      <div className="p-2 bg-red-50 rounded-lg">
+                                        <FileText size={16} className="text-red-600" />
+                                      </div>
+                                      <div>
+                                        <p className="text-[11px] font-black text-slate-800">
+                                          {document.fileName || "Untitled Document"}
+                                        </p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                          <span className="text-[8px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-full uppercase">
+                                            {getQuarterLabel(
+                                              Number(submission.quarter), 
+                                              submission.year
+                                            )}
+                                          </span>
+                                          <span className="text-[8px] font-black bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full uppercase">
+                                            {document.fileType}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    
+                                    {document.description && (
+                                      <p className="text-[10px] text-gray-600 italic ml-11 mt-2">
+                                        "{document.description}"
+                                      </p>
+                                    )}
+                                  </div>
+                                  
+                                  <button
+                                    onClick={() => setPreviewFile({ 
+                                      url: document.evidenceUrl, 
+                                      name: document.fileName || "Document" 
+                                    })}
+                                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                                    title="Preview document"
+                                  >
+                                    <ExternalLink size={16} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Audit Trail Timeline */}
                       <div className="space-y-6 relative before:absolute before:left-[17px] before:top-2 before:bottom-2 before:w-px before:bg-gray-100">
                         {indicator.reviewHistory?.map((log, idx) => (
                           <div key={idx} className="relative pl-12">
@@ -279,6 +398,18 @@ const AdminRejections = () => {
                             </span>
                           </div>
                         </div>
+                        
+                        {/* Show rejected documents count in overview */}
+                        {rejectedDocuments.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-gray-100">
+                            <div className="flex items-center gap-2 text-red-600">
+                              <XCircle size={12} />
+                              <span className="text-[9px] font-bold uppercase">
+                                {rejectedDocuments.length} Rejected Document(s)
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="p-6 flex-1">
@@ -327,7 +458,7 @@ const AdminRejections = () => {
                               Review Cycle
                             </p>
                             <p className="text-xs font-bold text-red-600">
-                              Attempt #{latestRejection?.resubmissionCount ?? 1}
+                              Attempt #{(latestRejection?.resubmissionCount ?? 0) + 1}
                             </p>
                           </div>
                         </div>
@@ -354,6 +485,15 @@ const AdminRejections = () => {
             );
           })}
         </div>
+      )}
+
+      {/* File Preview Modal */}
+      {previewFile && (
+        <FilePreviewModal
+          url={previewFile.url}
+          fileName={previewFile.name}
+          onClose={() => setPreviewFile(null)}
+        />
       )}
     </div>
   );

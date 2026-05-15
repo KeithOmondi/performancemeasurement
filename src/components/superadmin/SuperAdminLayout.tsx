@@ -24,13 +24,7 @@ const SuperAdminLayout = () => {
         
         <main className="p-4 md:p-6 overflow-y-auto">
           {/* Status Alert Banner */}
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-md p-3 flex flex-wrap items-center gap-2 text-[11px] text-yellow-800">
-            <span className="flex items-center font-bold">⚠️ 3 indicators</span>
-            <span>have evidence pending review</span>
-            <span className="hidden sm:inline mx-2">•</span>
-            <span className="flex items-center font-bold">2 indicators</span>
-            <span>are due within 7 days</span>
-          </div>
+          
 
           {/* Child Routes Render Here */}
           <Outlet />

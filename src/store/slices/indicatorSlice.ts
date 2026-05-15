@@ -98,6 +98,7 @@ export interface IQueueItem {
   indicatorId: string;
   indicatorTitle: string;
   submittedBy: string;
+  year?: number;
   submittedOn: string;
   status: string;
   quarter: string;

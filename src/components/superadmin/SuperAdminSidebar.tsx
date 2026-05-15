@@ -11,6 +11,7 @@ import {
   X,
   Book,
   Folder,
+  CheckCircle2,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
@@ -46,7 +47,7 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
     }
   }, [pathname, setIsOpen]);
 
-  const totalIndicators = plans.length;
+  
 
   const menuItems: MenuItem[] = [
     { type: "label", title: "NAVIGATION" },
@@ -67,14 +68,24 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
       name: "PMMU Indicators",
       path: "/superadmin/indicators",
       icon: <BarChart3 size={18} />,
-      badge: totalIndicators > 0 ? totalIndicators : undefined,
     },
     {
       type: "link",
       name: "Submissions Queue",
       path: "/superadmin/submissions",
       icon: <ListTodo size={18} />,
-      badge: 3,
+    },
+    {
+      type: "link",
+      name: "Awaiting Approval",
+      path: "/superadmin/approvals",
+      icon: <CheckCircle2 size={18} />,
+    },
+    {
+      type: "link",
+      name: "Rejected Submissions",
+      path: "/superadmin/rejections",
+      icon: <ListTodo size={18} />,
     },
     {
       type: "link",
