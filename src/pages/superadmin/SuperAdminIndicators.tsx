@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
@@ -15,6 +15,7 @@ import {
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import toast from "react-hot-toast";
 import { shallowEqual } from "react-redux";
+import { apiPrivate } from "../../api/axios";
 
 import {
   type IStrategicPlan,
@@ -25,7 +26,7 @@ import {
 import type { AssignPrefill } from "../../types/types";
 import SuperAdminAssign from "./SuperAdminAssign";
 
-/* ─── ADDITIONAL TYPES ───────────────────────────────────────────────── */
+/* ─── TYPES ──────────────────────────────────────────────────────────────── */
 
 interface IUser {
   id: string;
@@ -50,7 +51,18 @@ interface IndicatorSectionProps {
   activeFilter: string;
 }
 
-/* ─── HELPERS ────────────────────────────────────────────────────────── */
+/* ─── SERVER COUNTS SHAPE ────────────────────────────────────────────────── */
+
+interface IIndicatorCounts {
+  total:      number;
+  assigned:   number;
+  unassigned: number;
+  review:     number;
+  overdue:    number;
+  perspectives: Record<string, number>;
+}
+
+/* ─── HELPERS ────────────────────────────────────────────────────────────── */
 
 const matchId = (a: string | undefined, b: string | undefined): boolean => {
   if (!a || !b) return false;
@@ -73,7 +85,7 @@ const resolveIds = (
     .filter(Boolean);
 };
 
-/* ─── CONSTANTS ──────────────────────────────────────────────────────── */
+/* ─── CONSTANTS ──────────────────────────────────────────────────────────── */
 
 const PERSPECTIVE_ORDER: Record<string, number> = {
   "CORE BUSINESS": 1,
@@ -83,7 +95,7 @@ const PERSPECTIVE_ORDER: Record<string, number> = {
   "INTERNAL PROCESS": 5,
 };
 
-/* ─── INDICATOR SECTION ──────────────────────────────────────────────── */
+/* ─── INDICATOR SECTION ──────────────────────────────────────────────────── */
 
 const IndicatorSection = ({
   perspective,
@@ -132,29 +144,27 @@ const IndicatorSection = ({
         const ids = resolveIds(assignment?.assignee);
         const primaryUser = userMap[ids[0]];
 
-        // Determine if this indicator needs review
-        const needsReview = assignment?.needsAction || 
-                           assignment?.status === "Awaiting Admin Approval" ||
-                           assignment?.status === "Awaiting Super Admin";
-        
-        const hasAssigneeValue = assignment && (
-          (assignment.assignee && assignment.assignee !== "")
-        );
-        
-        const hasValidDisplayName = assignment?.assigneeDisplayName && 
-                                    assignment.assigneeDisplayName !== "Unassigned" &&
-                                    assignment.assigneeDisplayName !== "";
-        
+        const needsReview =
+          assignment?.needsAction ||
+          assignment?.status === "Awaiting Admin Approval" ||
+          assignment?.status === "Awaiting Super Admin";
+
+        const hasAssigneeValue = assignment && assignment.assignee && assignment.assignee !== "";
+        const hasValidDisplayName =
+          assignment?.assigneeDisplayName &&
+          assignment.assigneeDisplayName !== "Unassigned" &&
+          assignment.assigneeDisplayName !== "";
         const hasPrimaryUser = primaryUser && primaryUser.name;
         const isAssigned = hasAssigneeValue || hasValidDisplayName || hasPrimaryUser;
-        
+
         const getAssigneeDisplayName = () => {
-          if (assignment?.assigneeDisplayName && assignment.assigneeDisplayName !== "Unassigned") {
+          if (
+            assignment?.assigneeDisplayName &&
+            assignment.assigneeDisplayName !== "Unassigned"
+          ) {
             return assignment.assigneeDisplayName;
           }
-          if (primaryUser?.name) {
-            return primaryUser.name;
-          }
+          if (primaryUser?.name) return primaryUser.name;
           return "Assigned";
         };
 
@@ -213,7 +223,7 @@ const IndicatorSection = ({
                   </span>
                 </div>
               ) : (
-                <span className="text-gray-300 text-[10px]">No Date</span>
+                <span className="text-gray-300 text-[10px]">No date</span>
               )}
             </td>
             <td className="p-4 text-center">
@@ -232,7 +242,7 @@ const IndicatorSection = ({
             <td className="p-4">
               {needsReview ? (
                 <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-amber-100">
-                  Needs Review
+                  Needs review
                 </span>
               ) : assignment?.status?.toLowerCase().includes("rejected") ? (
                 <span className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-rose-100">
@@ -290,13 +300,27 @@ const IndicatorSection = ({
   );
 };
 
-/* ─── MAIN COMPONENT ─────────────────────────────────────────────────── */
+/* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
 
 const SuperAdminIndicators = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  /* ── Server-side counts — single source of truth for tab badges ── */
+  const [serverCounts, setServerCounts] = useState<IIndicatorCounts | null>(null);
+
+  const fetchCounts = useCallback(async () => {
+    try {
+      const res = await apiPrivate.get<{ success: boolean; data: IIndicatorCounts }>(
+        "/indicators/counts"
+      );
+      setServerCounts(res.data.data);
+    } catch (err) {
+      console.error("Failed to fetch indicator counts:", err);
+    }
+  }, []);
 
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
@@ -317,40 +341,22 @@ const SuperAdminIndicators = () => {
     (s) => s.indicators.reviewIndicators,
     shallowEqual,
   );
-  
   const allIndicators = useAppSelector(
     (s) => s.indicators.indicators,
     shallowEqual,
   );
-  
   const indicatorsLoading = useAppSelector((s) => s.indicators.loading);
-  const actionLoading = useAppSelector((s) => s.indicators.actionLoading);
+  const actionLoading     = useAppSelector((s) => s.indicators.actionLoading);
 
   const { users, isLoading: usersLoading } = useAppSelector(
     (s) => s.users,
     shallowEqual,
   );
 
-  const [assignPrefill, setAssignPrefill] = useState<AssignPrefill | undefined>();
+  const [assignPrefill, setAssignPrefill]     = useState<AssignPrefill | undefined>();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
 
-  const refreshAllLists = async () => {
-    if (isRefreshing || actionLoading) return;
-    setIsRefreshing(true);
-    try {
-      await Promise.all([
-        dispatch(fetchIndicators()).unwrap(),
-        dispatch(fetchAssignedIndicators()).unwrap(),
-        dispatch(fetchUnassignedIndicators()).unwrap(),
-        dispatch(fetchReviewIndicators()).unwrap(),
-      ]);
-    } catch (error) {
-      console.error("Failed to refresh indicators:", error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
+  /* ── Initial load ── */
   useEffect(() => {
     const loadInitialData = async () => {
       try {
@@ -361,19 +367,39 @@ const SuperAdminIndicators = () => {
           dispatch(fetchUnassignedIndicators()).unwrap(),
           dispatch(fetchReviewIndicators()).unwrap(),
           dispatch(fetchAllUsers()).unwrap(),
+          fetchCounts(),
         ]);
       } catch (error) {
         console.error("Failed to load initial data:", error);
         toast.error("Failed to load indicators data");
       }
     };
-    
+
     loadInitialData();
-    
+
     return () => {
       dispatch(clearIndicatorError());
     };
-  }, [dispatch]);
+  }, [dispatch, fetchCounts]);
+
+  /* ── Refresh after mutations ── */
+  const refreshAllLists = async () => {
+    if (isRefreshing || actionLoading) return;
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        dispatch(fetchIndicators()).unwrap(),
+        dispatch(fetchAssignedIndicators()).unwrap(),
+        dispatch(fetchUnassignedIndicators()).unwrap(),
+        dispatch(fetchReviewIndicators()).unwrap(),
+        fetchCounts(),
+      ]);
+    } catch (error) {
+      console.error("Failed to refresh indicators:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleViewIndicator = (indicatorId: string) => {
     navigate(`/super-admin/indicators/${indicatorId}`);
@@ -392,7 +418,6 @@ const SuperAdminIndicators = () => {
 
   const handleUnassign = async (indicatorId: string) => {
     if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
-
     try {
       await dispatch(unassignIndicator(indicatorId)).unwrap();
       toast.success("Activity unassigned successfully.");
@@ -403,20 +428,21 @@ const SuperAdminIndicators = () => {
     }
   };
 
+  /* ── User map ── */
   const userMap = useMemo(() => {
     const map: Record<string, IUser> = {};
     (users ?? []).forEach((u) => {
-      const key = u.id;
-      if (key) map[String(key)] = u as IUser;
+      if (u.id) map[String(u.id)] = u as IUser;
     });
     return map;
   }, [users]);
 
+  /* ── Filtered table data (unchanged logic, still needed for the table rows) ── */
   const filteredData = useMemo(() => {
     const getIndicatorsForFilter = () => {
-      if (activeFilter === "ASSIGNED") return assignedIndicators;
+      if (activeFilter === "ASSIGNED")   return assignedIndicators;
       if (activeFilter === "UNASSIGNED") return unassignedIndicators;
-      if (activeFilter === "REVIEW") return reviewIndicators;
+      if (activeFilter === "REVIEW")     return reviewIndicators;
       return allIndicators;
     };
 
@@ -442,19 +468,20 @@ const SuperAdminIndicators = () => {
           .map((obj: IObjective): IObjectiveWithIndicators => {
             const filteredActivities = getActivities(obj).filter(
               (act: IActivity) => {
-                const actId = act.id;
-                const isAssigned = (currentIndicators ?? []).some((ind) =>
+                const actId    = act.id;
+                const isActAssigned = (currentIndicators ?? []).some((ind) =>
                   matchId(ind.activityId, actId),
                 );
-                
-                if (activeFilter === "ASSIGNED") return isAssigned;
-                if (activeFilter === "UNASSIGNED") return !isAssigned;
+
+                if (activeFilter === "ASSIGNED")   return isActAssigned;
+                if (activeFilter === "UNASSIGNED") return !isActAssigned;
                 if (activeFilter === "REVIEW") {
-                  return (currentIndicators ?? []).some((ind) =>
-                    matchId(ind.activityId, actId) && 
-                    (ind.needsAction || 
-                     ind.status === "Awaiting Admin Approval" ||
-                     ind.status === "Awaiting Super Admin")
+                  return (currentIndicators ?? []).some(
+                    (ind) =>
+                      matchId(ind.activityId, actId) &&
+                      (ind.needsAction ||
+                        ind.status === "Awaiting Admin Approval" ||
+                        ind.status === "Awaiting Super Admin"),
                   );
                 }
                 return true;
@@ -465,61 +492,62 @@ const SuperAdminIndicators = () => {
               matchId(ind.objectiveId, obj.id),
             );
 
-            return {
-              ...obj,
-              activities: filteredActivities,
-              objectiveIndicators,
-            };
+            return { ...obj, activities: filteredActivities, objectiveIndicators };
           })
           .filter((obj) => obj.activities.length > 0);
 
         return { ...plan, objectives };
       })
       .filter((plan) => plan.objectives.length > 0);
-  }, [activeFilter, plans, assignedIndicators, unassignedIndicators, reviewIndicators, allIndicators]);
+  }, [
+    activeFilter,
+    plans,
+    assignedIndicators,
+    unassignedIndicators,
+    reviewIndicators,
+    allIndicators,
+  ]);
 
-  const counts = useMemo(() => {
-    const allActs = (plans ?? []).flatMap((p) =>
-      getObjectives(p).flatMap((o) => getActivities(o)),
-    );
+  /* ── Tab counts — server values when available, fallback to array length ── */
+  const counts = serverCounts ?? {
+    total:      allIndicators.length,
+    assigned:   assignedIndicators.length,
+    unassigned: unassignedIndicators.length,
+    review:     reviewIndicators.length,
+    overdue:    0,
+    perspectives: {},
+  };
 
-    return {
-      total: allActs.length,
-      assigned: assignedIndicators.length,
-      unassigned: unassignedIndicators.length,
-      review: reviewIndicators.length,
-      getPerspective: (label: string) =>
-        (plans ?? [])
-          .filter((p) => p?.perspective?.toUpperCase().includes(label))
-          .reduce(
-            (acc, p) =>
-              acc +
-              getObjectives(p).reduce(
-                (oAcc, obj) => oAcc + getActivities(obj).length,
-                0,
-              ),
-            0,
-          ),
-    };
-  }, [plans, assignedIndicators.length, unassignedIndicators.length, reviewIndicators.length]);
+  const getPerspectiveCount = (label: string): number => {
+    if (serverCounts) {
+      const key = Object.keys(serverCounts.perspectives).find((k) =>
+        k.toUpperCase().includes(label),
+      );
+      return key ? serverCounts.perspectives[key] : 0;
+    }
+    /* Fallback — derive from plans */
+    return (plans ?? [])
+      .filter((p) => p?.perspective?.toUpperCase().includes(label))
+      .reduce(
+        (acc, p) =>
+          acc + getObjectives(p).reduce((o, obj) => o + getActivities(obj).length, 0),
+        0,
+      );
+  };
 
   const filterTabs = [
-    { label: "ALL", count: counts.total },
-    { label: "ASSIGNED", count: counts.assigned },
-    { label: "UNASSIGNED", count: counts.unassigned },
-    { label: "REVIEW", count: counts.review },
-    { label: "CORE BUSINESS", count: counts.getPerspective("CORE BUSINESS") },
-    {
-      label: "CUSTOMER PERSPECTIVE",
-      count: counts.getPerspective("CUSTOMER PERSPECTIVE"),
-    },
-    { label: "FINANCIAL", count: counts.getPerspective("FINANCIAL") },
-    { label: "INNOVATION", count: counts.getPerspective("INNOVATION") },
-    {
-      label: "INTERNAL PROCESS",
-      count: counts.getPerspective("INTERNAL PROCESS"),
-    },
+    { label: "ALL",                  count: counts.total },
+    { label: "ASSIGNED",             count: counts.assigned },
+    { label: "UNASSIGNED",           count: counts.unassigned },
+    { label: "REVIEW",               count: counts.review },
+    { label: "CORE BUSINESS",        count: getPerspectiveCount("CORE BUSINESS") },
+    { label: "CUSTOMER PERSPECTIVE", count: getPerspectiveCount("CUSTOMER PERSPECTIVE") },
+    { label: "FINANCIAL",            count: getPerspectiveCount("FINANCIAL") },
+    { label: "INNOVATION",           count: getPerspectiveCount("INNOVATION") },
+    { label: "INTERNAL PROCESS",     count: getPerspectiveCount("INTERNAL PROCESS") },
   ];
+
+  /* ─── LOADING ────────────────────────────────────────────────────────── */
 
   if (
     (plansLoading || indicatorsLoading || usersLoading) &&
@@ -535,6 +563,8 @@ const SuperAdminIndicators = () => {
     );
   }
 
+  /* ─── RENDER ─────────────────────────────────────────────────────────── */
+
   return (
     <div className="p-4 md:p-10 bg-[#fcfdfb] min-h-screen font-sans">
       <div className="flex flex-col md:flex-row justify-between items-start mb-8 gap-4">
@@ -543,12 +573,12 @@ const SuperAdminIndicators = () => {
             PMMU Indicators — 2025/2026
           </h1>
           <p className="text-sm text-gray-500 font-medium">
-            {activeFilter === "ASSIGNED" && `📋 ${counts.assigned} assigned activities`}
-            {activeFilter === "UNASSIGNED" && `📌 ${counts.unassigned} unassigned activities`}
-            {activeFilter === "REVIEW" && `⚠️ ${counts.review} pending review`}
-            {activeFilter !== "ASSIGNED" && activeFilter !== "UNASSIGNED" && activeFilter !== "REVIEW" && activeFilter !== "ALL" && 
+            {activeFilter === "ASSIGNED"   && `${counts.assigned} assigned activities`}
+            {activeFilter === "UNASSIGNED" && `${counts.unassigned} unassigned activities`}
+            {activeFilter === "REVIEW"     && `${counts.review} pending review`}
+            {activeFilter === "ALL"        && `Monitoring ${counts.total} total activities`}
+            {!["ASSIGNED", "UNASSIGNED", "REVIEW", "ALL"].includes(activeFilter) &&
               `Viewing ${activeFilter.toLowerCase()}`}
-            {activeFilter === "ALL" && `Monitoring ${counts.total} total activities`}
           </p>
         </div>
         <div className="flex gap-2 items-center">
@@ -565,6 +595,7 @@ const SuperAdminIndicators = () => {
         </div>
       </div>
 
+      {/* Filter tabs */}
       <div className="flex overflow-x-auto pb-4 gap-2 mb-8 no-scrollbar">
         {filterTabs.map((f) => (
           <button
@@ -575,7 +606,9 @@ const SuperAdminIndicators = () => {
                 ? "bg-[#1a3a32] text-white border-[#1a3a32]"
                 : "bg-white text-gray-400 border-gray-100 hover:border-gray-300"
             } ${
-              (f.label === "REVIEW" && counts.review > 0) ? "ring-2 ring-amber-400 ring-opacity-50" : ""
+              f.label === "REVIEW" && counts.review > 0
+                ? "ring-2 ring-amber-400 ring-opacity-50"
+                : ""
             }`}
           >
             {f.label === "REVIEW" && "⚠️ "}
@@ -593,6 +626,7 @@ const SuperAdminIndicators = () => {
         ))}
       </div>
 
+      {/* Table */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1250px]">
@@ -635,10 +669,11 @@ const SuperAdminIndicators = () => {
                     <div className="flex flex-col items-center gap-2">
                       <AlertCircle className="text-gray-200" size={48} />
                       <p className="text-gray-400 font-medium italic">
-                        {activeFilter === "ASSIGNED" && "No assigned indicators found"}
+                        {activeFilter === "ASSIGNED"   && "No assigned indicators found"}
                         {activeFilter === "UNASSIGNED" && "No unassigned indicators found"}
-                        {activeFilter === "REVIEW" && "No pending reviews"}
-                        {!["ASSIGNED", "UNASSIGNED", "REVIEW"].includes(activeFilter) && "No indicators found"}
+                        {activeFilter === "REVIEW"     && "No pending reviews"}
+                        {!["ASSIGNED", "UNASSIGNED", "REVIEW"].includes(activeFilter) &&
+                          "No indicators found"}
                       </p>
                     </div>
                   </td>

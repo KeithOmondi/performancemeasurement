@@ -118,6 +118,16 @@ export interface ISuperAdminReviewPayload {
   nextDeadline?: string;
 }
 
+/* ─── NEW: COUNTS TYPE (from /dashboard-stats/full) ──────────────────── */
+export interface ICounts {
+  total: number;
+  assigned: number;
+  unassigned: number;
+  review: number;
+  overdue: number;
+  perspectives: Record<string, number>;
+}
+
 /* ─── STATE ──────────────────────────────────────────────────────────── */
 
 interface IndicatorState {
@@ -132,6 +142,8 @@ interface IndicatorState {
   detailLoading: boolean;
   actionLoading: boolean;
   error: string | null;
+  /* NEW: dashboard counts */
+  counts: ICounts | null;
 }
 
 const initialState: IndicatorState = {
@@ -146,6 +158,7 @@ const initialState: IndicatorState = {
   detailLoading: false,
   actionLoading: false,
   error: null,
+  counts: null,
 };
 
 /* ─── HELPERS ─────────────────────────────────────────────────────────── */
@@ -160,48 +173,39 @@ const getErrorMessage = (error: unknown): string => {
   return "An unexpected error occurred";
 };
 
-/**
- * Categorizes indicators based on their status and assignment
- */
 const categorizeIndicators = (indicators: IIndicator[]) => {
   const assigned: IIndicator[] = [];
   const unassigned: IIndicator[] = [];
   const review: IIndicator[] = [];
 
-  indicators.forEach(indicator => {
-    // Check if indicator needs review (has pending submissions or needs action)
-    if (indicator.needsAction || 
-        indicator.status === "Awaiting Admin Approval" ||
-        indicator.status === "Awaiting Super Admin" ||
-        (indicator.submissions?.some(s => s.reviewStatus === "Pending"))) {
-      review.push(indicator);
-    }
-    // Check if unassigned - by checking if assignee is null/empty
-    else if (!indicator.assignee || indicator.assignee === "") {
+  indicators.forEach((indicator) => {
+    if (indicator.assignee && indicator.assignee.trim() !== "") {
+      assigned.push(indicator);
+    } else {
       unassigned.push(indicator);
     }
-    // Otherwise assigned
-    else {
-      assigned.push(indicator);
+
+    if (
+      indicator.status === "Awaiting Admin Approval" ||
+      indicator.status === "Awaiting Super Admin" ||
+      indicator.submissions?.some((s) => s.reviewStatus === "Pending")
+    ) {
+      review.push(indicator);
     }
   });
 
   return { assigned, unassigned, review };
 };
 
-/**
- * Synchronizes the categorized lists after any update
- */
 const syncCategorizedLists = (state: IndicatorState) => {
-  const { assigned, unassigned, review } = categorizeIndicators(state.indicators);
+  const { assigned, unassigned, review } = categorizeIndicators(
+    state.indicators
+  );
   state.assignedIndicators = assigned;
   state.unassignedIndicators = unassigned;
   state.reviewIndicators = review;
 };
 
-/**
- * Synchronizes the indicator data across all state arrays and the selected reference.
- */
 const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
   const replace = (list: IIndicator[]) => {
     const idx = list.findIndex((i) => String(i.id) === String(updated.id));
@@ -225,23 +229,29 @@ const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
     state.selectedIndicator = updated;
   }
 
-  // Re-sync after update
   syncCategorizedLists(state);
 };
 
-/**
- * Removes an indicator by ID from every state list and clears selectedIndicator
- * if it matches. Used by deleteIndicator.
- */
 const removeIndicatorById = (state: IndicatorState, id: string) => {
   state.indicators = state.indicators.filter((i) => String(i.id) !== id);
-  state.rejectedByAdmin = state.rejectedByAdmin.filter((i) => String(i.id) !== id);
+  state.rejectedByAdmin = state.rejectedByAdmin.filter(
+    (i) => String(i.id) !== id
+  );
   state.queue = state.queue.filter((q) => String(q.indicatorId) !== id);
-  state.assignedIndicators = state.assignedIndicators.filter((i) => String(i.id) !== id);
-  state.unassignedIndicators = state.unassignedIndicators.filter((i) => String(i.id) !== id);
-  state.reviewIndicators = state.reviewIndicators.filter((i) => String(i.id) !== id);
+  state.assignedIndicators = state.assignedIndicators.filter(
+    (i) => String(i.id) !== id
+  );
+  state.unassignedIndicators = state.unassignedIndicators.filter(
+    (i) => String(i.id) !== id
+  );
+  state.reviewIndicators = state.reviewIndicators.filter(
+    (i) => String(i.id) !== id
+  );
 
-  if (state.selectedIndicator && String(state.selectedIndicator.id) === id) {
+  if (
+    state.selectedIndicator &&
+    String(state.selectedIndicator.id) === id
+  ) {
     state.selectedIndicator = null;
   }
 };
@@ -332,6 +342,19 @@ export const fetchRejectedByAdmin = createAsyncThunk(
   }
 );
 
+/* ─── NEW: FETCH DASHBOARD COUNTS (MISSING getIndicatorCounts) ───────── */
+export const fetchIndicatorCounts = createAsyncThunk(
+  "indicators/fetchCounts",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get("/indicators/dashboard-stats/full");
+      return res.data.data as ICounts;
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
+  }
+);
+
 export const createIndicator = createAsyncThunk(
   "indicators/create",
   async (data: Partial<IIndicator>, { rejectWithValue }) => {
@@ -376,7 +399,7 @@ export const assignIndicator = createAsyncThunk(
   async (arg: { id: string; assigneeId: string }, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.post(`/indicators/${arg.id}/assign`, {
-        assigneeId: arg.assigneeId
+        assigneeId: arg.assigneeId,
       });
       return res.data.data as IIndicator;
     } catch (err) {
@@ -464,22 +487,22 @@ const indicatorSlice = createSlice({
       });
 
     // ── FETCH ASSIGNED ─────────────────────────────────────────────────
-    builder
-      .addCase(fetchAssignedIndicators.fulfilled, (state, action) => {
-        state.assignedIndicators = action.payload;
-      });
+    builder.addCase(fetchAssignedIndicators.fulfilled, (state, action) => {
+      state.assignedIndicators = action.payload;
+    });
 
     // ── FETCH UNASSIGNED ───────────────────────────────────────────────
-    builder
-      .addCase(fetchUnassignedIndicators.fulfilled, (state, action) => {
+    builder.addCase(
+      fetchUnassignedIndicators.fulfilled,
+      (state, action) => {
         state.unassignedIndicators = action.payload;
-      });
+      }
+    );
 
     // ── FETCH REVIEW ───────────────────────────────────────────────────
-    builder
-      .addCase(fetchReviewIndicators.fulfilled, (state, action) => {
-        state.reviewIndicators = action.payload;
-      });
+    builder.addCase(fetchReviewIndicators.fulfilled, (state, action) => {
+      state.reviewIndicators = action.payload;
+    });
 
     // ── FETCH BY ID ────────────────────────────────────────────────────
     builder
@@ -511,6 +534,20 @@ const indicatorSlice = createSlice({
         state.rejectedByAdmin = action.payload;
       });
 
+    /* ── NEW: FETCH COUNTS ───────────────────────────────────────────── */
+    builder
+      .addCase(fetchIndicatorCounts.pending, () => {
+        // optional: you could set a specific loading flag for counts
+        // state.countsLoading = true;
+      })
+      .addCase(fetchIndicatorCounts.fulfilled, (state, action) => {
+        state.counts = action.payload;
+      })
+      .addCase(fetchIndicatorCounts.rejected, (state, action) => {
+        console.error("Failed to fetch indicator counts:", action.payload);
+        state.counts = null;
+      });
+
     // ── CREATE ─────────────────────────────────────────────────────────
     builder
       .addCase(createIndicator.pending, (state) => {
@@ -537,7 +574,7 @@ const indicatorSlice = createSlice({
         const updatedIndicator = {
           ...action.payload,
           assignedDate: new Date().toISOString(),
-          completionPercentage: 0
+          completionPercentage: 0,
         };
         upsertIndicator(state, updatedIndicator);
       })
@@ -620,28 +657,21 @@ const indicatorSlice = createSlice({
       })
       .addCase(unassignIndicator.fulfilled, (state, action) => {
         state.actionLoading = false;
-        // ✅ Keep the backend status (which is 'Pending') - don't override to 'Unassigned'
         const updatedIndicator = {
           ...action.payload,
-          assignee: "",  // Clear assignee ID
+          assignee: "",
           assigneeDisplayName: undefined,
           assignedDate: null,
           completionPercentage: 0,
           progress: 0,
           needsAction: false,
           isOverdue: false,
-          // Status remains whatever backend returned (should be 'Pending')
         };
-        
-        // Use upsertIndicator to sync across all lists
         upsertIndicator(state, updatedIndicator);
-        
-        console.log(`✅ Indicator ${updatedIndicator.id} successfully unassigned and moved to unassigned list`);
       })
       .addCase(unassignIndicator.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload as string;
-        console.error(`❌ Unassign failed:`, action.payload);
       });
 
     // ── SUPER ADMIN REVIEW ─────────────────────────────────────────────
@@ -653,28 +683,34 @@ const indicatorSlice = createSlice({
       .addCase(superAdminReview.fulfilled, (state, action) => {
         state.actionLoading = false;
         const updated = action.payload;
-        
-        if (updated.status !== "Rejected by Super Admin" && 
-            updated.status !== "Rejected by Admin") {
+
+        if (
+          updated.status !== "Rejected by Super Admin" &&
+          updated.status !== "Rejected by Admin"
+        ) {
           updated.status = "Pending";
         }
-        
+
         upsertIndicator(state, updated);
 
         state.queue = state.queue.filter(
           (q) => String(q.indicatorId) !== String(updated.id)
         );
 
-        if (updated.status === "Rejected by Super Admin" || 
-            updated.status === "Rejected by Admin") {
-          const exists = state.rejectedByAdmin.some((r) => r.id === updated.id);
+        if (
+          updated.status === "Rejected by Super Admin" ||
+          updated.status === "Rejected by Admin"
+        ) {
+          const exists = state.rejectedByAdmin.some(
+            (r) => r.id === updated.id
+          );
           if (!exists) state.rejectedByAdmin.push(updated);
         } else {
           state.rejectedByAdmin = state.rejectedByAdmin.filter(
             (r) => r.id !== updated.id
           );
         }
-        
+
         syncCategorizedLists(state);
       })
       .addCase(superAdminReview.rejected, (state, action) => {
@@ -684,9 +720,9 @@ const indicatorSlice = createSlice({
   },
 });
 
-export const { 
-  clearIndicatorError, 
-  clearSelectedIndicator, 
-  refreshCategorizedLists 
+export const {
+  clearIndicatorError,
+  clearSelectedIndicator,
+  refreshCategorizedLists,
 } = indicatorSlice.actions;
 export default indicatorSlice.reducer;

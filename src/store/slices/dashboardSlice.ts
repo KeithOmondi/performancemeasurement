@@ -1,70 +1,90 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
-import { apiPrivate } from "../../api/axios";
+import { api } from "../../api/axios";
 
-/* ─── TYPES ────────────────────────────────────────────────────────── */
+/* ─── TYPES ─────────────────────────────────────────────────────────────── */
 
-interface IDashboardStats {
-  general: {
-    total: number;
-    users: number;
-    awaitingReview: number;
-    approved: number;
-    rejected: number;
-    overdue: number;
-    assigned: number;
-  };
-  perspectiveStats: Array<{
-    name: string;
-    val: number;
-    count: number;
-  }>;
+export interface IDashboardStats {
+  total:                 number;
+  assigned:              number;
+  unassigned:            number;
+  overdue:               number;
+  pendingReview:         number;
+  approved:              number;
+  rejected:              number;
+  returnedForCorrection: number;
+}
+
+export interface IPerspectiveStat {
+  name:                 string;
+  totalActivities:      number;
+  assignedActivities:   number;
+  completionPercentage: number;
+}
+
+export interface IRecentSubmission {
+  submissionId:   string;
+  indicatorTitle: string;
+  submittedBy:    string;
+  submittedOn:    string;
+  quarter:        number;
+  achievedValue:  number;
+  reviewStatus:   string;
+  documentsCount: number;
+}
+
+export interface IDashboardData {
+  stats:             IDashboardStats;
+  perspectives:      IPerspectiveStat[];
+  recentSubmissions: IRecentSubmission[];
 }
 
 interface DashboardState {
-  stats: IDashboardStats | null;
+  data:    IDashboardData | null;
   loading: boolean;
-  error: string | null;
+  error:   string | null;
 }
 
-interface KnownError {
-  response?: {
-    data?: {
-      message?: string;
-    };
-  };
-  message?: string;
-}
-
-/* ─── INITIAL STATE ────────────────────────────────────────────────── */
+/* ─── INITIAL STATE ──────────────────────────────────────────────────────── */
 
 const initialState: DashboardState = {
-  stats: null,
+  data:    null,
   loading: false,
-  error: null,
+  error:   null,
 };
 
-/* ─── THUNKS ───────────────────────────────────────────────────────── */
+/* ─── THUNK ──────────────────────────────────────────────────────────────── */
 
 export const fetchDashboardStats = createAsyncThunk<
-  IDashboardStats,
+  IDashboardData,
   void,
   { rejectValue: string }
 >(
   "dashboard/fetchStats",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await apiPrivate.get<{ data: IDashboardStats }>("/indicators/dashboard-stats");
-      return response.data.data;
-    } catch (error) {
-      const err = error as KnownError;
-      return rejectWithValue(
-        err.response?.data?.message || err.message || "Failed to load dashboard stats"
+      const response = await api.get<{ success: boolean; data: IDashboardData }>(
+        "/dashboard/stats"
       );
+      return response.data.data;
+    } catch (err) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "response" in err
+      ) {
+        const axiosErr = err as { response?: { data?: { message?: string } }; message?: string };
+        return rejectWithValue(
+          axiosErr.response?.data?.message ??
+          axiosErr.message ??
+          "Failed to load dashboard"
+        );
+      }
+      return rejectWithValue("Failed to load dashboard");
     }
   }
 );
 
-/* ─── SLICE ────────────────────────────────────────────────────────── */
+/* ─── SLICE ──────────────────────────────────────────────────────────────── */
 
 const dashboardSlice = createSlice({
   name: "dashboard",
@@ -78,18 +98,18 @@ const dashboardSlice = createSlice({
     builder
       .addCase(fetchDashboardStats.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(
         fetchDashboardStats.fulfilled,
-        (state, action: PayloadAction<IDashboardStats>) => {
+        (state, action: PayloadAction<IDashboardData>) => {
           state.loading = false;
-          state.stats = action.payload;
+          state.data    = action.payload;
         }
       )
       .addCase(fetchDashboardStats.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload ?? "An unexpected error occurred";
+        state.error   = action.payload ?? "An unexpected error occurred";
       });
   },
 });
