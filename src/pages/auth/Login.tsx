@@ -5,10 +5,11 @@ import { toast } from "react-hot-toast";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { login, requestOTP, reset } from "../../store/slices/auth/authSlice";
 
+/* ─── ROUTE PARAMETERS ───────────────────────────────────────────────────── */
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
   admin: "/admin/dashboard",
-  examiner: "/admin/dashboard",
+  examiner: "/examiner/dashboard", // Updated route link reference
   user: "/user/dashboard",
 };
 

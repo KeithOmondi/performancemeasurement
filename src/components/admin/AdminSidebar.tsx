@@ -1,5 +1,6 @@
 import React from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
 import {
   LayoutDashboard,
   FileCheck,
@@ -11,6 +12,8 @@ import {
   CheckCircle,
   AlertCircle,
 } from "lucide-react";
+import type { AppDispatch } from "../../store/store";
+import { logout } from "../../store/slices/auth/authSlice";
 
 type MenuLabel = {
   type: "label";
@@ -63,10 +66,20 @@ const menuItems: MenuItem[] = [
 
 const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
   const { pathname } = useLocation();
+  const dispatch = useDispatch<AppDispatch>();
+  const navigate = useNavigate();
 
-  const handleLogout = () => {
-    // Implement your logout logic here
-    console.log("Logout clicked");
+  const handleLogout = async () => {
+    try {
+      // Dispatches the Redux async thunk to hit backend logout and clear localStorage
+      await dispatch(logout()).unwrap();
+      // Closes mobile sidebar if open
+      setIsOpen(false);
+      // Redirects user to the login screen
+      navigate("/login"); 
+    } catch (error) {
+      console.error("Failed to logout safely:", error);
+    }
   };
 
   return (
@@ -148,10 +161,10 @@ const AdminSidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         <div className="sticky bottom-0 bg-[#1a3a32] p-4 border-t border-white/5 shrink-0">
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl text-xs font-bold transition-all"
+            className="flex items-center uppercase font-serif gap-3 w-full px-4 py-3 text-red-400 hover:bg-red-500/10 rounded-xl text-xs font-bold transition-all"
           >
             <LogOut size={18} />
-            Logout System
+            End session
           </button>
         </div>
       </aside>

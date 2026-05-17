@@ -2,22 +2,13 @@ import { Link, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import {
   LayoutDashboard,
-  UserCheck,
-  BarChart3,
-  ListTodo,
+  ClipboardCheck,
   FileText,
-  Users,
-  Settings,
   X,
-  Book,
-  Folder,
-  CheckCircle2,
-  Sheet,
-  Archive,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
+import { useSelector } from "react-redux";
+import type { RootState } from "../../store/store";
 
 type MenuLabel = { type: "label"; title: string };
 type MenuLink = {
@@ -34,116 +25,55 @@ interface SidebarProps {
   setIsOpen: (open: boolean) => void;
 }
 
-const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
+const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
   const { pathname } = useLocation();
-  const dispatch = useAppDispatch();
-  const { plans } = useAppSelector((state) => state.strategicPlan);
 
-  useEffect(() => {
-    if (plans.length === 0) dispatch(getAllStrategicPlans());
-  }, [dispatch, plans.length]);
+  // Pull current examiner user from auth state for the footer
+  const { user } = useSelector((state: RootState) => state.auth);
 
+  // Close sidebar on route change (mobile)
   useEffect(() => {
     if (typeof setIsOpen === "function") {
       setIsOpen(false);
     }
   }, [pathname, setIsOpen]);
 
-  
+  const initials = user?.name
+    ? user.name
+        .split(" ")
+        .map((n: string) => n[0])
+        .join("")
+        .substring(0, 2)
+        .toUpperCase()
+    : "EX";
 
   const menuItems: MenuItem[] = [
     { type: "label", title: "NAVIGATION" },
     {
       type: "link",
       name: "Dashboard",
-      path: "/superadmin/dashboard",
+      path: "/examiner/dashboard",
       icon: <LayoutDashboard size={18} />,
     },
     {
       type: "link",
-      name: "Reviewer Dashboard",
-      path: "/superadmin/reviewer",
-      icon: <UserCheck size={18} />,
+      name: "Assigned Folders",
+      path: "/examiner/assigned",
+      icon: <ClipboardCheck size={18} />,
     },
-    {
-      type: "link",
-      name: "PMMU Indicators",
-      path: "/superadmin/indicators",
-      icon: <BarChart3 size={18} />,
-    },
-    {
-      type: "link",
-      name: "Submissions Queue",
-      path: "/superadmin/submissions",
-      icon: <ListTodo size={18} />,
-    },
-    {
-      type: "link",
-      name: "Awaiting Approval",
-      path: "/superadmin/approvals",
-      icon: <CheckCircle2 size={18} />,
-    },
-    {
-      type: "link",
-      name: "Rejected Submissions",
-      path: "/superadmin/rejections",
-      icon: <ListTodo size={18} />,
-    },
+    
+    { type: "label", title: "RECORDS" },
     {
       type: "link",
       name: "Reports",
-      path: "/superadmin/reports",
+      path: "/examiner/reports",
       icon: <FileText size={18} />,
-    },
-    { type: "label", title: "ADMINISTRATION" },
-    {
-      type: "link",
-      name: "Team Members",
-      path: "/superadmin/team",
-      icon: <Users size={18} />,
-    },
-    {
-      type: "link",
-      name: "Settings",
-      path: "/superadmin/settings",
-      icon: <Settings size={18} />,
-    },
-    {
-      type: "link",
-      name: "Examiners",
-      path: "/superadmin/examiner",
-      icon: <Book size={18} />,
-    },
-    {
-      type: "link",
-      name: "Examiner Management",
-      path: "/superadmin/management",
-      icon: <Sheet size={18} />,
-    },
-    {
-      type: "link",
-      name: "Teams",
-      path: "/superadmin/teams",
-      icon: <Book size={18} />,
-    },
-    {
-      type: "link",
-      name: "PMMU Registry",
-      path: "/superadmin/registry",
-      icon: <Folder size={18} />,
-    },
-
-    {
-      type: "link",
-      name: "Archives",
-      path: "/superadmin/archives",
-      icon: <Archive size={18} />,
     },
   ];
 
   return (
     <>
-      {/* Mobile Overlay - Static background blur when sidebar is open */}
+      {/* Mobile Overlay */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-[100] lg:hidden backdrop-blur-sm"
@@ -151,15 +81,17 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
         />
       )}
 
-      {/* Main Sidebar Container */}
+      {/* Sidebar */}
       <aside
         className={`
-        fixed inset-y-0 left-0 z-[101] w-64 bg-[#1a2c2c] text-slate-300 transition-transform duration-300 ease-in-out transform
-        lg:sticky lg:top-0 lg:translate-x-0 lg:flex lg:flex-col lg:h-screen border-r border-slate-700
-        ${isOpen ? "translate-x-0" : "-translate-x-full"}
-      `}
+          fixed inset-y-0 left-0 z-[101] w-64 bg-[#1a2c2c] text-slate-300
+          transition-transform duration-300 ease-in-out transform
+          lg:sticky lg:top-0 lg:translate-x-0 lg:flex lg:flex-col lg:h-screen
+          border-r border-slate-700
+          ${isOpen ? "translate-x-0" : "-translate-x-full"}
+        `}
       >
-        {/* Branding Section - Stays at the top */}
+        {/* Branding */}
         <div className="pt-8 pb-6 px-4 flex flex-col items-center border-b border-slate-700/40 relative shrink-0">
           <button
             onClick={() => setIsOpen(false)}
@@ -177,14 +109,19 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
               />
             </div>
           </div>
+
           <div className="text-center">
             <h1 className="text-[10px] font-black text-white leading-tight uppercase tracking-wide px-2">
               Office of the Registrar High Court
             </h1>
+            {/* Examiner role badge */}
+            <span className="mt-2 inline-block text-[8px] font-black uppercase tracking-widest bg-yellow-400/10 text-yellow-400 border border-yellow-400/20 px-2 py-0.5 rounded-full">
+              Examiner Portal
+            </span>
           </div>
         </div>
 
-        {/* Navigation Section - This portion scrolls if content is too long */}
+        {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
           {menuItems.map((item, idx) => {
             if (item.type === "label") {
@@ -197,6 +134,7 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
                 </p>
               );
             }
+
             const isActive = pathname === item.path;
             return (
               <Link
@@ -236,18 +174,18 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
           })}
         </nav>
 
-        {/* User Footer - Stays at the bottom */}
+        {/* User Footer */}
         <div className="p-4 bg-black/20 border-t border-slate-700/50 shrink-0">
-          <div className="flex items-center space-x-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-[10px] font-bold text-white shadow-lg">
-              CO
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded-full bg-yellow-500 flex items-center justify-center text-[10px] font-bold text-black shadow-lg">
+              {initials}
             </div>
             <div className="overflow-hidden">
               <p className="text-[11px] font-bold text-white truncate">
-                C. Otieno-Omondi
+                {user?.name || "Examiner"}
               </p>
               <p className="text-[9px] opacity-60 uppercase tracking-tighter">
-                Registrar - Admin
+                Examiner
               </p>
             </div>
           </div>
@@ -257,4 +195,4 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
   );
 };
 
-export default SuperAdminSidebar;
+export default ExaminerSidebar;

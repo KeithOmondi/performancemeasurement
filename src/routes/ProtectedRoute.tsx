@@ -20,11 +20,11 @@ const ProtectedRoute = ({ allowedRoles }: Props) => {
   if (allowedRoles && !allowedRoles.includes(user.role as AllowedRole)) {
     // Redirect to their own home instead of /unauthorized
     const homeRoutes: Record<string, string> = {
-      superadmin: "/superadmin/dashboard",
-      admin: "/admin/dashboard",
-      examiner: "/admin/dashboard",
-      user: "/user/dashboard",
-    };
+  superadmin: "/superadmin/dashboard",
+  admin:      "/admin/dashboard",
+  examiner:   "/examiner/dashboard",  // ✅ fix
+  user:       "/user/dashboard",
+};
     return <Navigate to={homeRoutes[user.role] || "/login"} replace />;
   }
 

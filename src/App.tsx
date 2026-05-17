@@ -47,14 +47,18 @@ import AdminIndicatorReview from "./pages/admin/AdminIndicatorReview";
 import SuperAdminRejected from "./pages/superadmin/SuperAdminRejected";
 import SuperAdminApprovals from "./pages/superadmin/SuperAdminApprovals";
 import SuperAdminIndicatorDetail from "./pages/superadmin/SuperAdminIndicatorDetail";
+import ExaminerLayout from "./components/examiner/ExaminerLayout";
+import ExaminerDashboard from "./pages/examiner/ExaminerDashboard";
+import ExaminerManagement from "./pages/superadmin/ExaminerManagement";
+import ExaminerAssignments from "./pages/examiner/ExaminerAssignments";
+import SuperAdminArchives from "./pages/superadmin/SuperAdminArchives";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
-  admin: "/admin/dashboard",
-  examiner: "/admin/dashboard",
-  user: "/user/dashboard",
+  admin:      "/admin/dashboard",
+  examiner:   "/examiner/dashboard",  // ✅ was pointing to /admin/dashboard
+  user:       "/user/dashboard",
 };
-
 const App = () => {
   const dispatch = useAppDispatch();
   const { user, isCheckingAuth } = useAppSelector((state) => state.auth);
@@ -132,6 +136,8 @@ const App = () => {
             <Route path="/superadmin/teams" element={<SuperAdminTeams />} />
             <Route path="/superadmin/rejections" element={<SuperAdminRejected />} />
             <Route path="/superadmin/approvals" element={<SuperAdminApprovals />} />
+            <Route path="/superadmin/management" element={<ExaminerManagement />} />
+            <Route path="/superadmin/archives" element={<SuperAdminArchives />} />
           </Route>
         </Route>
 
@@ -158,6 +164,14 @@ const App = () => {
             <Route path="/user/rejects" element={<UserRejections />} />
             <Route path="/user/history" element={<UserHistory />} />
             <Route path="/user/approvals" element={<UserApprovals />} />
+          </Route>
+        </Route>
+
+        {/* ── Examiner ────────────────────────────────────────────────────── */}
+        <Route element={<ProtectedRoute allowedRoles={["examiner"]} />}>
+          <Route element={<ExaminerLayout />}>
+            <Route path="/examiner/dashboard" element={<ExaminerDashboard />} />
+            <Route path="/examiner/assigned" element={<ExaminerAssignments />} />
           </Route>
         </Route>
 
