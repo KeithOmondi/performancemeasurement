@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -22,11 +22,11 @@ import {
   type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type FilterType = "all" | "quarterly" | "annual" | "resubmitted";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const flattenSubmissions = (submissions: ISubmissionsByPeriod | undefined) =>
   Object.values(submissions ?? {}).flat();
@@ -41,17 +41,36 @@ const getLatestSubmission = (indicator: IAdminIndicator) => {
   return submissions.length > 0 ? submissions[0] : null;
 };
 
+/**
+ * Count documents only from Pending submissions — those are what the admin
+ * is actually reviewing right now. Rejected/Verified rows may carry old docs.
+ */
 const getDocumentCount = (indicator: IAdminIndicator): number => {
   const submissions = flattenSubmissions(indicator.submissions);
-  return submissions.reduce((total, sub) => total + sub.documents.length, 0);
+  return submissions
+    .filter((s) => s.reviewStatus === "Pending")
+    .reduce((total, sub) => total + (sub.documents?.length ?? 0), 0);
 };
 
 const getDocumentNames = (indicator: IAdminIndicator): string[] => {
   const submissions = flattenSubmissions(indicator.submissions);
-  return submissions.flatMap(sub => sub.documents.map(doc => doc.fileName));
+  return submissions
+    .filter((s) => s.reviewStatus === "Pending")
+    .flatMap((sub) => (sub.documents ?? []).map((doc) => doc.fileName));
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
+/**
+ * An indicator qualifies for the audit queue only when at least one
+ * of its Pending submissions has one or more attached documents.
+ */
+const hasPendingDocuments = (indicator: IAdminIndicator): boolean => {
+  const submissions = flattenSubmissions(indicator.submissions);
+  return submissions
+    .filter((s) => s.reviewStatus === "Pending")
+    .some((s) => (s.documents?.length ?? 0) > 0);
+};
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 const AdminPendingReviews = () => {
   const dispatch = useAppDispatch();
@@ -76,48 +95,51 @@ const AdminPendingReviews = () => {
     [navigate]
   );
 
-  // Apply filters
-  const filteredRecords = pendingAdminReview.filter((ind) => {
-    // First apply search filter
-    const matchesSearch =
-      !searchTerm ||
-      ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ind.perspective?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
+  /**
+   * Base pool: only indicators that have at least one document on a Pending
+   * submission. Indicators with 0 documents are intentionally excluded.
+   */
+  const withDocuments = useMemo(
+    () => pendingAdminReview.filter(hasPendingDocuments),
+    [pendingAdminReview]
+  );
 
-    if (!matchesSearch) return false;
+  // Counts derived from the already-filtered pool
+  const counts = useMemo(
+    () => ({
+      all: withDocuments.length,
+      quarterly: withDocuments.filter((ind) => ind.reportingCycle === "Quarterly").length,
+      annual: withDocuments.filter((ind) => ind.reportingCycle === "Annual").length,
+      resubmitted: withDocuments.filter(hasResubmission).length,
+    }),
+    [withDocuments]
+  );
 
-    // Apply toggle filters
-    if (activeFilter === "all") return true;
-    
-    if (activeFilter === "quarterly") {
-      return ind.reportingCycle === "Quarterly";
-    }
-    
-    if (activeFilter === "annual") {
-      return ind.reportingCycle === "Annual";
-    }
-    
-    if (activeFilter === "resubmitted") {
-      return hasResubmission(ind);
-    }
-    
-    return true;
-  });
+  const filteredRecords = useMemo(() => {
+    return withDocuments.filter((ind) => {
+      const matchesSearch =
+        !searchTerm ||
+        ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ind.perspective?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
 
-  // Get counts for each filter
-  const counts = {
-    all: pendingAdminReview.length,
-    quarterly: pendingAdminReview.filter(ind => ind.reportingCycle === "Quarterly").length,
-    annual: pendingAdminReview.filter(ind => ind.reportingCycle === "Annual").length,
-    resubmitted: pendingAdminReview.filter(ind => hasResubmission(ind)).length,
-  };
+      if (!matchesSearch) return false;
+
+      if (activeFilter === "quarterly") return ind.reportingCycle === "Quarterly";
+      if (activeFilter === "annual") return ind.reportingCycle === "Annual";
+      if (activeFilter === "resubmitted") return hasResubmission(ind);
+
+      return true;
+    });
+  }, [withDocuments, searchTerm, activeFilter]);
 
   const clearFilters = () => {
     setSearchTerm("");
     setActiveFilter("all");
   };
+
+  // ── Loading ─────────────────────────────────────────────────────────────
 
   if (isLoading && pendingAdminReview.length === 0) {
     return (
@@ -136,8 +158,11 @@ const AdminPendingReviews = () => {
     );
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────
+
   return (
     <div className="p-4 md:p-8 bg-[#fdfcfc] min-h-screen font-sans">
+
       {/* HEADER */}
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
@@ -179,8 +204,7 @@ const AdminPendingReviews = () => {
               Filter:
             </span>
           </div>
-          
-          {/* All button */}
+
           <button
             onClick={() => setActiveFilter("all")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
@@ -192,7 +216,6 @@ const AdminPendingReviews = () => {
             All ({counts.all})
           </button>
 
-          {/* Quarterly button */}
           <button
             onClick={() => setActiveFilter("quarterly")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
@@ -205,7 +228,6 @@ const AdminPendingReviews = () => {
             Quarterly ({counts.quarterly})
           </button>
 
-          {/* Annual button */}
           <button
             onClick={() => setActiveFilter("annual")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
@@ -218,7 +240,6 @@ const AdminPendingReviews = () => {
             Annual ({counts.annual})
           </button>
 
-          {/* Resubmitted button */}
           <button
             onClick={() => setActiveFilter("resubmitted")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
@@ -232,7 +253,6 @@ const AdminPendingReviews = () => {
           </button>
         </div>
 
-        {/* Clear filters button - only shows when filters are active */}
         {(activeFilter !== "all" || searchTerm) && (
           <button
             onClick={clearFilters}
@@ -244,16 +264,26 @@ const AdminPendingReviews = () => {
         )}
       </div>
 
-      {/* Active filter indicator */}
+      {/* Active filter pill */}
       {activeFilter !== "all" && (
         <div className="mb-4 flex items-center gap-2">
-          <div className={`w-1.5 h-1.5 rounded-full ${
-            activeFilter === "quarterly" ? "bg-blue-500" :
-            activeFilter === "annual" ? "bg-amber-500" :
-            "bg-amber-500"
-          }`} />
+          <div
+            className={`w-1.5 h-1.5 rounded-full ${
+              activeFilter === "quarterly"
+                ? "bg-blue-500"
+                : activeFilter === "annual"
+                ? "bg-amber-500"
+                : "bg-amber-500"
+            }`}
+          />
           <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">
-            Showing {activeFilter === "quarterly" ? "Quarterly" : activeFilter === "annual" ? "Annual" : "Resubmitted"} submissions only
+            Showing{" "}
+            {activeFilter === "quarterly"
+              ? "Quarterly"
+              : activeFilter === "annual"
+              ? "Annual"
+              : "Resubmitted"}{" "}
+            submissions only
           </span>
         </div>
       )}
@@ -282,8 +312,9 @@ const AdminPendingReviews = () => {
                 <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-right">
                   Action
                 </th>
-               </tr>
+              </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-50">
               {filteredRecords.length === 0 ? (
                 <tr>
@@ -291,7 +322,7 @@ const AdminPendingReviews = () => {
                     <div className="flex flex-col items-center">
                       <CheckCircle2 size={48} className="text-emerald-100 mb-4" />
                       <p className="text-sm font-black text-[#1a3a32] uppercase tracking-widest">
-                        {activeFilter !== "all" 
+                        {activeFilter !== "all"
                           ? `No ${activeFilter} submissions pending review`
                           : "Registry Queue Clear"}
                       </p>
@@ -314,13 +345,14 @@ const AdminPendingReviews = () => {
                   const latestSubmission = getLatestSubmission(indicator);
                   const documentCount = getDocumentCount(indicator);
                   const documentNames = getDocumentNames(indicator);
-                  const latestDocuments = latestSubmission?.documents || [];
+                  const latestDocuments = latestSubmission?.documents ?? [];
 
                   return (
                     <tr
                       key={indicator.id}
                       className="group hover:bg-slate-50/80 transition-all"
                     >
+                      {/* Submission Details */}
                       <td className="px-8 py-6">
                         <div className="flex flex-col gap-2">
                           <span className="w-fit text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200">
@@ -330,7 +362,10 @@ const AdminPendingReviews = () => {
                             {indicator.objective?.title || "Untitled Objective"}
                           </h3>
                           <div className="flex items-start gap-2 max-w-md">
-                            <FileText size={12} className="text-slate-300 mt-0.5 shrink-0" />
+                            <FileText
+                              size={12}
+                              className="text-slate-300 mt-0.5 shrink-0"
+                            />
                             <p className="text-[11px] font-medium text-slate-500 leading-snug">
                               {indicator.activity?.description || "No description."}
                             </p>
@@ -344,6 +379,7 @@ const AdminPendingReviews = () => {
                         </div>
                       </td>
 
+                      {/* Cycle Type */}
                       <td className="px-6 py-6 text-center">
                         <div className="flex flex-col items-center justify-center">
                           {isAnnual ? (
@@ -368,30 +404,37 @@ const AdminPendingReviews = () => {
                         </div>
                       </td>
 
+                      {/* Performance */}
                       <td className="px-6 py-6">
                         <div className="space-y-2">
                           <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-black text-[#1a3a32]">{indicator.progress}%</span>
+                            <span className="text-[10px] font-black text-[#1a3a32]">
+                              {indicator.progress}%
+                            </span>
                             <span className="text-[9px] font-bold text-slate-400 uppercase">
                               Target: {indicator.target} {indicator.unit}
                             </span>
                           </div>
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
-                              className={`h-full transition-all duration-1000 ${isResub ? "bg-amber-500" : "bg-[#1a3a32]"}`}
+                              className={`h-full transition-all duration-1000 ${
+                                isResub ? "bg-amber-500" : "bg-[#1a3a32]"
+                              }`}
                               style={{ width: `${indicator.progress}%` }}
                             />
                           </div>
                           {latestSubmission && (
                             <div className="mt-2 pt-2 border-t border-slate-100">
                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                Reported: {latestSubmission.achievedValue} {indicator.unit}
+                                Reported: {latestSubmission.achievedValue}{" "}
+                                {indicator.unit}
                               </p>
                             </div>
                           )}
                         </div>
                       </td>
 
+                      {/* Documents */}
                       <td className="px-6 py-6">
                         <div className="flex flex-col gap-1.5">
                           <div className="flex items-center gap-1.5">
@@ -408,7 +451,9 @@ const AdminPendingReviews = () => {
                                   className="text-[8px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 truncate max-w-[80px]"
                                   title={name}
                                 >
-                                  {name.length > 15 ? name.substring(0, 12) + "..." : name}
+                                  {name.length > 15
+                                    ? name.substring(0, 12) + "..."
+                                    : name}
                                 </span>
                               ))}
                               {documentNames.length > 2 && (
@@ -418,16 +463,23 @@ const AdminPendingReviews = () => {
                               )}
                             </div>
                           )}
-                          {latestDocuments.length > 0 && latestDocuments[0].description && (
-                            <div className="mt-1 p-1.5 bg-slate-50 rounded border border-slate-100">
-                              <p className="text-[8px] italic text-slate-500 line-clamp-2">
-                                "{latestDocuments[0].description.substring(0, 80)}"
-                              </p>
-                            </div>
-                          )}
+                          {latestDocuments.length > 0 &&
+                            latestDocuments[0].description && (
+                              <div className="mt-1 p-1.5 bg-slate-50 rounded border border-slate-100">
+                                <p className="text-[8px] italic text-slate-500 line-clamp-2">
+                                  "
+                                  {latestDocuments[0].description.substring(
+                                    0,
+                                    80
+                                  )}
+                                  "
+                                </p>
+                              </div>
+                            )}
                         </div>
                       </td>
 
+                      {/* Status */}
                       <td className="px-6 py-6">
                         {isResub ? (
                           <div className="flex items-center gap-2 text-amber-600 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
@@ -446,6 +498,7 @@ const AdminPendingReviews = () => {
                         )}
                       </td>
 
+                      {/* Action */}
                       <td className="px-8 py-6 text-right">
                         <button
                           onClick={() => handleOpenDossier(indicator.id)}
@@ -461,7 +514,10 @@ const AdminPendingReviews = () => {
                           ) : (
                             <>
                               <span className="relative z-10">Review Dossier</span>
-                              <ArrowRight size={14} className="relative z-10 group-hover/btn:translate-x-1 transition-transform" />
+                              <ArrowRight
+                                size={14}
+                                className="relative z-10 group-hover/btn:translate-x-1 transition-transform"
+                              />
                             </>
                           )}
                         </button>

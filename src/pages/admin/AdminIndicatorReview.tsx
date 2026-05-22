@@ -11,30 +11,22 @@ import {
   CheckCircle2,
   Paperclip,
   Info,
+  RotateCcw,
+  User,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   processAdminReview,
   getIndicatorByIdAdmin,
+  getSubmitterName,
   type ISubmission,
+  type IDocument,
   type ISubmissionReviewUpdate,
   type IDocumentReviewUpdate,
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
-interface IDocument {
-  id: string;
-  fileName?: string;
-  evidenceUrl: string;
-  description?: string;
-  fileDescription?: string;
-  file_type?: string;
-  status?: string;
-  rejectionReason?: string;
-  uploadedAt?: string;
-}
 
 interface Toast {
   type: "success" | "error";
@@ -45,7 +37,6 @@ interface Toast {
 
 function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
   if (!docs || !Array.isArray(docs) || docs.length === 0) return [];
-
   const seen = new Map<string, IDocument>();
   for (const doc of docs) {
     if (!doc || !doc.id) continue;
@@ -60,7 +51,7 @@ function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
 function getSafeDocuments(sub: ISubmission): IDocument[] {
   const docs = sub.documents;
   if (!docs || !Array.isArray(docs)) return [];
-  return docs as IDocument[];
+  return docs;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -73,12 +64,10 @@ const AdminIndicatorReview: React.FC = () => {
   const { selectedIndicator: indicator, isReviewing, isLoading } =
     useAppSelector((state) => state.adminIndicators);
 
-  // Fetch on mount
   useEffect(() => {
     if (indicatorId) dispatch(getIndicatorByIdAdmin(indicatorId));
   }, [dispatch, indicatorId]);
 
-  // Flat submission arrays
   const allSubmissions = useMemo<ISubmission[]>(() => {
     if (!indicator?.submissions) return [];
     return Object.values(indicator.submissions).flat();
@@ -99,7 +88,6 @@ const AdminIndicatorReview: React.FC = () => {
     [pendingSubmissions]
   );
 
-  // State
   const [docReviews, setDocReviews] = useState<ISubmissionReviewUpdate[]>([]);
   const [documentUpdates, setDocumentUpdates] = useState<IDocumentReviewUpdate[]>([]);
   const [overallComment, setOverallComment] = useState("");
@@ -112,7 +100,6 @@ const AdminIndicatorReview: React.FC = () => {
     setDocReviews(initialReviews);
   }, [initialReviews]);
 
-  // Auto-toggle rejection mode from document rejections
   useEffect(() => {
     if (documentUpdates.length > 0 && !rejectionMode) setRejectionMode(true);
     if (documentUpdates.length === 0 && rejectionMode) setRejectionMode(false);
@@ -128,7 +115,10 @@ const AdminIndicatorReview: React.FC = () => {
       setDocumentUpdates((prev) => {
         const exists = prev.find((d) => d.documentId === documentId);
         if (exists) return prev.filter((d) => d.documentId !== documentId);
-        return [...prev, { documentId, status: "Rejected", reason: `File [${fileName}] rejected.` }];
+        return [
+          ...prev,
+          { documentId, status: "Rejected", reason: `File [${fileName}] rejected.` },
+        ];
       });
     },
     []
@@ -175,9 +165,7 @@ const AdminIndicatorReview: React.FC = () => {
             ? "Submission approved and forwarded to Super Admin."
             : "Submission returned for correction."
         );
-        // Refresh indicator data in place
         dispatch(getIndicatorByIdAdmin(indicator.id));
-        // Reset review form
         setOverallComment("");
         setDocumentUpdates([]);
         setRejectionMode(false);
@@ -191,7 +179,7 @@ const AdminIndicatorReview: React.FC = () => {
     [dispatch, docReviews, documentUpdates, indicator, overallComment, showToast]
   );
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  // ── Loading ───────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -204,7 +192,7 @@ const AdminIndicatorReview: React.FC = () => {
     );
   }
 
-  // ── Not found ────────────────────────────────────────────────────────────
+  // ── Not found ─────────────────────────────────────────────────────────────
 
   if (!indicator) {
     return (
@@ -223,7 +211,7 @@ const AdminIndicatorReview: React.FC = () => {
 
   const hasPending = pendingSubmissions.length > 0;
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col min-h-screen bg-[#fcfdfb]">
@@ -366,6 +354,7 @@ const AdminIndicatorReview: React.FC = () => {
               Object.entries(indicator.submissions).map(
                 ([quarterKey, submissions]) => (
                   <div key={quarterKey} className="space-y-4">
+
                     {/* Period divider */}
                     <div className="flex items-center gap-4 px-2">
                       <div className="h-[1px] flex-1 bg-slate-100" />
@@ -378,42 +367,95 @@ const AdminIndicatorReview: React.FC = () => {
                     {submissions.map((sub: ISubmission) => {
                       const documents = getSafeDocuments(sub);
                       const uniqueDocs = deduplicateDocs(documents);
+                      const isResubmission = sub.resubmissionCount > 0;
+                      const submitterName = getSubmitterName(sub);
 
                       return (
                         <div
                           key={sub.id}
-                          className="bg-white border border-slate-200/60 rounded-[2rem] p-8 shadow-sm"
+                          className={`bg-white border rounded-[2rem] p-8 shadow-sm ${
+                            isResubmission
+                              ? "border-amber-200/60"
+                              : "border-slate-200/60"
+                          }`}
                         >
                           <div className="flex flex-col md:flex-row justify-between gap-8">
                             <div className="flex-1 space-y-6">
 
                               {/* Submission header */}
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                    <FileText size={20} />
+                              <div className="flex items-center justify-between flex-wrap gap-4">
+                                <div className="flex items-center gap-4">
+
+                                  {/* Reported value */}
+                                  <div className="flex items-center gap-3">
+                                    <div
+                                      className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                        isResubmission
+                                          ? "bg-amber-50 text-amber-600"
+                                          : "bg-emerald-50 text-emerald-600"
+                                      }`}
+                                    >
+                                      <FileText size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                        Reported Value
+                                      </p>
+                                      <p className="text-lg font-black text-slate-900">
+                                        {sub.achievedValue || 0}{" "}
+                                        {indicator.unit || "%"}
+                                      </p>
+                                    </div>
                                   </div>
+
+                                  {/* Divider */}
+                                  <div className="w-px h-8 bg-slate-100" />
+
+                                  {/* Submitted by */}
                                   <div>
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                      Reported Value
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">
+                                      Submitted By
                                     </p>
-                                    <p className="text-lg font-black text-slate-900">
-                                      {sub.achievedValue || 0} {indicator.unit || "%"}
-                                    </p>
+                                    {submitterName ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
+                                          <User size={10} className="text-emerald-700" />
+                                        </div>
+                                        <span className="text-[12px] font-black text-slate-800">
+                                          {submitterName}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[11px] font-medium text-slate-400 italic">
+                                        Unknown submitter
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
-                                <span
-                                  className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                    sub.reviewStatus === "Verified" ||
-                                    sub.reviewStatus === "Accepted"
-                                      ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                      : sub.reviewStatus === "Rejected"
-                                      ? "bg-rose-50 text-rose-600 border-rose-100"
-                                      : "bg-orange-50 text-orange-600 border-orange-100"
-                                  }`}
-                                >
-                                  {sub.reviewStatus || "Pending"}
-                                </span>
+
+                                {/* Right-side badges */}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {isResubmission && (
+                                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
+                                      <RotateCcw size={10} />
+                                      <span className="text-[8px] font-black uppercase tracking-widest">
+                                        Resubmission #{sub.resubmissionCount}
+                                      </span>
+                                    </div>
+                                  )}
+                                  <span
+                                    className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                      sub.reviewStatus === "Verified" ||
+                                      sub.reviewStatus === "Accepted"
+                                        ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                        : sub.reviewStatus === "Rejected"
+                                        ? "bg-rose-50 text-rose-600 border-rose-100"
+                                        : "bg-orange-50 text-orange-600 border-orange-100"
+                                    }`}
+                                  >
+                                    {sub.reviewStatus || "Pending"}
+                                  </span>
+                                </div>
                               </div>
 
                               {/* Notes */}
@@ -450,10 +492,15 @@ const AdminIndicatorReview: React.FC = () => {
                                       );
                                       const isExpanded = expandedDocId === doc.id;
                                       const docDescription =
-                                        doc.description || doc.fileDescription || null;
+                                        doc.description ||
+                                        doc.fileDescription ||
+                                        null;
 
                                       return (
-                                        <div key={doc.id} className="group relative">
+                                        <div
+                                          key={doc.id}
+                                          className="group relative"
+                                        >
                                           <div
                                             className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
                                               isRejected
@@ -461,6 +508,7 @@ const AdminIndicatorReview: React.FC = () => {
                                                 : "border-slate-100 bg-white shadow-sm"
                                             }`}
                                           >
+                                            {/* File name + preview trigger */}
                                             <button
                                               onClick={() =>
                                                 setPreviewFile({
@@ -489,6 +537,15 @@ const AdminIndicatorReview: React.FC = () => {
                                               </span>
                                             </button>
 
+                                            {/* Per-document resubmission badge */}
+                                            {isResubmission && (
+                                              <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
+                                                <RotateCcw size={9} />
+                                                Resubmitted
+                                              </span>
+                                            )}
+
+                                            {/* Info toggle */}
                                             {docDescription && (
                                               <button
                                                 onClick={() =>
@@ -507,6 +564,7 @@ const AdminIndicatorReview: React.FC = () => {
                                               </button>
                                             )}
 
+                                            {/* Reject toggle — Pending only */}
                                             {sub.reviewStatus === "Pending" && (
                                               <button
                                                 onClick={() =>
@@ -535,6 +593,7 @@ const AdminIndicatorReview: React.FC = () => {
                                             )}
                                           </div>
 
+                                          {/* Description expansion */}
                                           {docDescription && isExpanded && (
                                             <div className="mt-1.5 ml-4 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl">
                                               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
@@ -569,10 +628,7 @@ const AdminIndicatorReview: React.FC = () => {
             {(!indicator.submissions ||
               Object.keys(indicator.submissions).length === 0) && (
               <div className="text-center py-12 bg-white rounded-[2rem] border border-slate-100">
-                <FileText
-                  size={48}
-                  className="mx-auto text-slate-200 mb-3"
-                />
+                <FileText size={48} className="mx-auto text-slate-200 mb-3" />
                 <p className="text-[11px] text-slate-400 font-medium">
                   No submissions found for this indicator.
                 </p>
@@ -591,7 +647,7 @@ const AdminIndicatorReview: React.FC = () => {
         />
       )}
 
-      {/* ── Toast Notification ── */}
+      {/* ── Toast ── */}
       {toast && (
         <div
           className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl text-white text-[11px] font-black uppercase tracking-widest transition-all ${

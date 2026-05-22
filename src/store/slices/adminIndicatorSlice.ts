@@ -14,8 +14,8 @@ export interface IDocument {
   evidencePublicId?: string;
   fileType: string;
   fileName: string;
-  description?: string;           // ✅ Added document description
-  fileDescription?: string;       // ✅ Alias for description
+  description?: string;
+  fileDescription?: string;
   status?: "Accepted" | "Rejected" | "Pending";
   rejectionReason?: string;
   uploadedAt: string;
@@ -24,7 +24,7 @@ export interface IDocument {
 export interface ISubmission {
   id: string;
   indicatorId: string;
-  quarter: string | number;       // Can be "Q1", "Q2", or 0 for annual
+  quarter: number;
   year: number;
   documents: IDocument[];
   notes: string;
@@ -34,12 +34,15 @@ export interface ISubmission {
   submittedAt: string;
   resubmissionCount: number;
   isReviewed: boolean;
+  // Submitter identity — populated by the backend via LEFT JOIN users su
+  submittedById?: string;
+  submittedByName?: string;
 }
 
 /**
- * Submissions are now grouped by quarter key (e.g. "Q1_2025" or "Annual_2025").
- * Each key maps to an array of that quarter's submissions sorted newest-first,
- * so index 0 is always the latest (re)submission.
+ * Submissions grouped by period key (e.g. "Q1_2025" or "Annual_2025").
+ * Each key maps to an array sorted newest-first, so index 0 is always
+ * the latest (re)submission for that period.
  */
 export type ISubmissionsByPeriod = Record<string, ISubmission[]>;
 
@@ -92,7 +95,7 @@ export interface IAdminIndicator {
   reportingCycle: "Quarterly" | "Annual";
   activeQuarter: number;
   deadline: string;
-  submissions: ISubmissionsByPeriod;  // Changed from ISubmissionsByQuarter to ISubmissionsByPeriod
+  submissions: ISubmissionsByPeriod;
   reviewHistory?: IReviewHistoryEntry[];
   updatedAt: string;
   adminOverallComments?: string;
@@ -123,38 +126,94 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers (internal) ───────────────────────────────────────────────────────
 
-/** Flatten all submissions by period into a single array for filtering logic. */
-const allSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
+/** Flatten all period arrays into a single submission array. */
+const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
 
-/** Helper to safely get document description */
-export const getDocumentDescription = (doc: IDocument): string => {
-  return doc.description || doc.fileDescription || "";
-};
+// ─── Exported Helpers ─────────────────────────────────────────────────────────
 
-/** Helper to check if a submission has any rejected documents */
-export const hasRejectedDocuments = (submission: ISubmission): boolean => {
-  return submission.documents.some(doc => doc.status === "Rejected");
-};
+/** Safe document description, falling back to fileDescription alias. */
+export const getDocumentDescription = (doc: IDocument): string =>
+  doc.description || doc.fileDescription || "";
 
-/** Helper to get only accepted documents */
-export const getAcceptedDocuments = (submission: ISubmission): IDocument[] => {
-  return submission.documents.filter(doc => doc.status !== "Rejected");
-};
+/** True if the submission has at least one rejected document. */
+export const hasRejectedDocuments = (submission: ISubmission): boolean =>
+  submission.documents.some((doc) => doc.status === "Rejected");
+
+/** Documents that have not been rejected. */
+export const getAcceptedDocuments = (submission: ISubmission): IDocument[] =>
+  submission.documents.filter((doc) => doc.status !== "Rejected");
+
+/**
+ * Resolve the display name of whoever submitted this row.
+ * Returns null when the backend hasn't populated the field yet
+ * (e.g. rows inserted before the submitted_by migration).
+ */
+export const getSubmitterName = (submission: ISubmission): string | null =>
+  submission.submittedByName ?? null;
+
+/**
+ * True if ANY submission row for this indicator carries reviewStatus "Rejected".
+ * Works correctly after the backend change to INSERT instead of UPDATE on
+ * resubmission, because old rejected rows are preserved.
+ */
+export const hasEverBeenRejected = (indicator: IAdminIndicator): boolean =>
+  flattenSubmissions(indicator).some((s) => s.reviewStatus === "Rejected");
+
+/**
+ * All rejected submission rows across all periods, newest-first.
+ */
+export const getRejectedSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
+  flattenSubmissions(indicator)
+    .filter((s) => s.reviewStatus === "Rejected")
+    .sort(
+      (a, b) =>
+        new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+    );
+
+/** The single most-recent rejected submission, or undefined. */
+export const getLatestRejectedSubmission = (
+  indicator: IAdminIndicator
+): ISubmission | undefined => getRejectedSubmissions(indicator)[0];
+
+/**
+ * Total number of rejection rows across all periods.
+ * Equals the number of times this indicator has been sent back.
+ */
+export const getRejectionCount = (indicator: IAdminIndicator): number =>
+  getRejectedSubmissions(indicator).length;
+
+/**
+ * Highest resubmission_count value seen across all rows.
+ * Equals the number of times the assignee has resubmitted.
+ */
+export const getMaxResubmissionCount = (indicator: IAdminIndicator): number =>
+  flattenSubmissions(indicator).reduce(
+    (max, s) => Math.max(max, s.resubmissionCount),
+    0
+  );
+
+// ─── Queue Refresh ────────────────────────────────────────────────────────────
 
 const refreshQueues = (state: IAdminIndicatorState) => {
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) => ind.status === "Awaiting Admin Approval"
   );
 
+  // An indicator is "resubmitted work" when any period has a Pending row
+  // with resubmissionCount > 0, meaning it was rejected at least once before.
   state.resubmittedWork = state.allAssignments.filter((ind) =>
-    allSubmissions(ind).some(
-      (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+    Object.values(ind.submissions ?? {}).some((periodRows) =>
+      periodRows.some(
+        (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+      )
     )
   );
 };
+
+// ─── Upsert Helper ────────────────────────────────────────────────────────────
 
 const upsertIntoAssignments = (
   state: IAdminIndicatorState,
@@ -168,7 +227,18 @@ const upsertIntoAssignments = (
   }
 };
 
-// ─── Thunks ───────────────────────────────────────────────────────────────────
+const upsertAndRefresh = (
+  state: IAdminIndicatorState,
+  updated: IAdminIndicator
+) => {
+  upsertIntoAssignments(state, updated);
+  if (state.selectedIndicator?.id === updated.id) {
+    state.selectedIndicator = updated;
+  }
+  refreshQueues(state);
+};
+
+// ─── Error Extraction ─────────────────────────────────────────────────────────
 
 interface KnownError {
   response?: { data?: { message?: string } };
@@ -179,6 +249,8 @@ const extractError = (error: unknown, fallback: string): string => {
   const err = error as KnownError;
   return err.response?.data?.message ?? err.message ?? fallback;
 };
+
+// ─── Thunks ───────────────────────────────────────────────────────────────────
 
 export const fetchAllAdminIndicators = createAsyncThunk<
   IAdminIndicator[],
@@ -232,17 +304,19 @@ export const processAdminReview = createAsyncThunk<
   IAdminIndicator,
   { id: string; reviewData: IAdminReviewPayload },
   { rejectValue: string }
->("adminIndicators/processReview", async ({ id, reviewData }, { rejectWithValue }) => {
-  try {
-    await apiPrivate.patch(`/admin/${id}/review`, reviewData);
-
-    // Re-fetch to get updated document statuses, submissions, and review history
-    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
-    return res.data?.data;
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Review submission failed"));
+>(
+  "adminIndicators/processReview",
+  async ({ id, reviewData }, { rejectWithValue }) => {
+    try {
+      await apiPrivate.patch(`/admin/${id}/review`, reviewData);
+      // Re-fetch to get updated submission rows, document statuses, and review history
+      const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+      return res.data?.data;
+    } catch (error) {
+      return rejectWithValue(extractError(error, "Review submission failed"));
+    }
   }
-});
+);
 
 export const reopenIndicator = createAsyncThunk<
   IAdminIndicator,
@@ -278,75 +352,69 @@ const adminIndicatorSlice = createSlice({
     resetAdminState: () => initialState,
   },
   extraReducers: (builder) => {
-    const pending =
+    const setPending =
       (key: "isLoading" | "isReviewing" | "isReopening") =>
       (state: IAdminIndicatorState) => {
         state[key] = true;
         state.error = null;
       };
 
-    const rejected =
+    const setRejected =
       (key: "isLoading" | "isReviewing" | "isReopening") =>
-      (state: IAdminIndicatorState, action: PayloadAction<string | undefined>) => {
+      (
+        state: IAdminIndicatorState,
+        action: PayloadAction<string | undefined>
+      ) => {
         state[key] = false;
         state.error = action.payload ?? "An unexpected error occurred";
       };
 
-    const upsertAndRefresh = (
-      state: IAdminIndicatorState,
-      updated: IAdminIndicator
-    ) => {
-      upsertIntoAssignments(state, updated);
-      if (state.selectedIndicator?.id === updated.id) {
-        state.selectedIndicator = updated;
-      }
-      refreshQueues(state);
-    };
-
     builder
-      // fetchAllAdminIndicators
-      .addCase(fetchAllAdminIndicators.pending, pending("isLoading"))
+      // ── fetchAllAdminIndicators ──────────────────────────────────────────
+      .addCase(fetchAllAdminIndicators.pending, setPending("isLoading"))
       .addCase(fetchAllAdminIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
         state.allAssignments = action.payload;
         refreshQueues(state);
       })
-      .addCase(fetchAllAdminIndicators.rejected, rejected("isLoading"))
+      .addCase(fetchAllAdminIndicators.rejected, setRejected("isLoading"))
 
-      // fetchResubmittedIndicators
-      .addCase(fetchResubmittedIndicators.pending, pending("isLoading"))
+      // ── fetchResubmittedIndicators ───────────────────────────────────────
+      .addCase(fetchResubmittedIndicators.pending, setPending("isLoading"))
       .addCase(fetchResubmittedIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
-        action.payload.forEach((updated) => upsertIntoAssignments(state, updated));
+        action.payload.forEach((updated) =>
+          upsertIntoAssignments(state, updated)
+        );
         refreshQueues(state);
       })
-      .addCase(fetchResubmittedIndicators.rejected, rejected("isLoading"))
+      .addCase(fetchResubmittedIndicators.rejected, setRejected("isLoading"))
 
-      // getIndicatorByIdAdmin
-      .addCase(getIndicatorByIdAdmin.pending, pending("isLoading"))
+      // ── getIndicatorByIdAdmin ────────────────────────────────────────────
+      .addCase(getIndicatorByIdAdmin.pending, setPending("isLoading"))
       .addCase(getIndicatorByIdAdmin.fulfilled, (state, action) => {
         state.isLoading = false;
         state.selectedIndicator = action.payload;
         upsertIntoAssignments(state, action.payload);
         refreshQueues(state);
       })
-      .addCase(getIndicatorByIdAdmin.rejected, rejected("isLoading"))
+      .addCase(getIndicatorByIdAdmin.rejected, setRejected("isLoading"))
 
-      // processAdminReview
-      .addCase(processAdminReview.pending, pending("isReviewing"))
+      // ── processAdminReview ───────────────────────────────────────────────
+      .addCase(processAdminReview.pending, setPending("isReviewing"))
       .addCase(processAdminReview.fulfilled, (state, action) => {
         state.isReviewing = false;
         upsertAndRefresh(state, action.payload);
       })
-      .addCase(processAdminReview.rejected, rejected("isReviewing"))
+      .addCase(processAdminReview.rejected, setRejected("isReviewing"))
 
-      // reopenIndicator
-      .addCase(reopenIndicator.pending, pending("isReopening"))
+      // ── reopenIndicator ──────────────────────────────────────────────────
+      .addCase(reopenIndicator.pending, setPending("isReopening"))
       .addCase(reopenIndicator.fulfilled, (state, action) => {
         state.isReopening = false;
         upsertAndRefresh(state, action.payload);
       })
-      .addCase(reopenIndicator.rejected, rejected("isReopening"));
+      .addCase(reopenIndicator.rejected, setRejected("isReopening"));
   },
 });
 
