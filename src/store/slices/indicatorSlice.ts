@@ -621,18 +621,46 @@ const indicatorSlice = createSlice({
       });
 
     // ── UPDATE ─────────────────────────────────────────────────────────
-    builder
-      .addCase(updateIndicator.pending, (state) => {
-        state.actionLoading = true;
-      })
-      .addCase(updateIndicator.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        upsertIndicator(state, action.payload);
-      })
-      .addCase(updateIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
+    // ── UPDATE ─────────────────────────────────────────────────────────
+builder
+  .addCase(updateIndicator.pending, (state) => {
+    state.actionLoading = true;
+  })
+  .addCase(updateIndicator.fulfilled, (state, action) => {
+    state.actionLoading = false;
+    const updated = action.payload;
+
+    // If the server wiped submissions (cycle change), reflect that
+    // in selectedIndicator too — upsertIndicator only replaces top-level
+    // fields; submissions/reviewHistory come from fetchById normally.
+    if (
+      state.selectedIndicator &&
+      String(state.selectedIndicator.id) === String(updated.id)
+    ) {
+      state.selectedIndicator = {
+        ...state.selectedIndicator,
+        ...updated,
+        // Server returns the indicator without submissions on a plain update,
+        // so preserve existing ones UNLESS the cycle changed (progress reset
+        // to 0 is the signal the server wiped them).
+        submissions:
+          updated.progress === 0 && updated.currentTotalAchieved === 0
+            ? []
+            : state.selectedIndicator.submissions,
+        reviewHistory:
+          updated.progress === 0 && updated.currentTotalAchieved === 0
+            ? []
+            : state.selectedIndicator.reviewHistory,
+      };
+    }
+
+    upsertIndicator(state, updated);
+    syncCategorizedLists(state);
+  })
+  .addCase(updateIndicator.rejected, (state, action) => {
+    state.actionLoading = false;
+    state.error = action.payload as string;
+  });
 
     // ── DELETE ─────────────────────────────────────────────────────────
     builder

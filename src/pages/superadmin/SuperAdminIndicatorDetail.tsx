@@ -1,4 +1,3 @@
-// SuperAdminIndicatorDetail.tsx
 import { useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
@@ -7,16 +6,17 @@ import { Loader2 } from "lucide-react";
 import IndicatorsPageIdModal from "../IndicatorsPageIdModal";
 
 const SuperAdminIndicatorDetail = () => {
-  const { id } = useParams<{ id: string }>();
+  const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { selectedIndicator, detailLoading } = useAppSelector((state) => state.indicators);
+
+  const { selectedIndicator, detailLoading } = useAppSelector(
+    (state) => state.indicators
+  );
   const { users } = useAppSelector((state) => state.users);
 
   useEffect(() => {
-    if (id) {
-      dispatch(fetchIndicatorById(id));
-    }
+    if (id) dispatch(fetchIndicatorById(id));
   }, [id, dispatch]);
 
   if (detailLoading && !selectedIndicator) {
@@ -36,11 +36,13 @@ const SuperAdminIndicatorDetail = () => {
   }
 
   return (
-    <IndicatorsPageIdModal
-      indicator={selectedIndicator}
-      allStaff={users}
-      onClose={() => navigate("/super-admin/approvals")}
-    />
+    <div className="h-full min-h-screen">
+      <IndicatorsPageIdModal
+        indicator={selectedIndicator}
+        allStaff={users}
+        onClose={() => navigate("/superadmin/indicators")}
+      />
+    </div>
   );
 };
 

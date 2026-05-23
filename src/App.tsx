@@ -112,8 +112,8 @@ const App = () => {
               element={<SuperAdminSubmissions />}
             />
 
-            <Route
-  path="/super-admin/indicators/:id"
+  <Route
+  path="/superadmin/indicators/:id"
   element={<SuperAdminIndicatorDetail />}
 />
             <Route path="/superadmin/reports" element={<SuperAdminReports />} />

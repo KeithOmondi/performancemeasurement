@@ -524,11 +524,15 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       {previewFile && <FilePreviewModal url={previewFile.url} fileName={previewFile.name} onClose={() => setPreviewFile(null)} />}
 
       {isEditModalOpen && (
-        <SuperAdminEditIndicator
-          indicator={ind}
-          onClose={() => setIsEditModalOpen(false)}
-        />
-      )}
+  <SuperAdminEditIndicator
+    indicator={ind}
+    onClose={() => {
+      setIsEditModalOpen(false);
+      // Re-fetch so the updated cycle appears immediately in the detail view
+      if (ind?.id) dispatch(fetchIndicatorById(ind.id));
+    }}
+  />
+)}
 
       {(isProcessing || isReopening) && (
         <div className="absolute inset-0 z-[100] bg-[#1d3331]/95 backdrop-blur-xl flex flex-col items-center justify-center gap-8">
