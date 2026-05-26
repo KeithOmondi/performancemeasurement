@@ -1,10 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { useNavigate } from "react-router-dom";
-import {
-  fetchMyAssignments,
-  normaliseQuarter,
-} from "../../store/slices/userIndicatorSlice";
+import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
 import { fetchTeams } from "../../store/slices/teamSlice";
 import {
   ArrowUpRight, AlertCircle, CheckCircle2, PlayCircle,
@@ -13,23 +10,37 @@ import {
 } from "lucide-react";
 import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
 
+// Extended type to include active_quarter which comes from backend
+interface IIndicatorWithActiveQuarter extends IIndicatorUI {
+  active_quarter?: number;
+}
+
 /* ─── HELPERS ────────────────────────────────────────────────────────── */
 
+/** Map quarter number (1-4) to "Q1".."Q4", return "Annual" for reporting_cycle = Annual */
+const getQuarterPrefix = (
+  reportingCycle: string | undefined,
+  quarterNum: number | undefined
+): string => {
+  if (reportingCycle === "Annual") return "Annual";
+  const q = quarterNum ?? new Date().getMonth() / 3 + 1;
+  return `Q${Math.floor(q)}`;
+};
+
 /**
- * Finds the latest submission for the indicator's active quarter by
- * building the quarter key the same way the backend does, then taking
- * index 0 (most recent) from that bucket.
- *
- * active_quarter is a raw DB integer (1-4) or "Annual" — normaliseQuarter
- * converts it to "Q1"…"Q4" | "Annual" before we look up the bucket.
+ * Finds the latest submission for the indicator's active quarter.
+ * Backend stores submissions keyed as "Q1_2025", "Annual_2025", etc.
+ * We match the key that starts with the prefix (e.g. "Q1") and
+ * take the first (most recent) submission from that bucket.
  */
-const getActiveQuarterSub = (indicator: IIndicatorUI): ISubmissionUI | undefined => {
+const getActiveQuarterSub = (indicator: IIndicatorWithActiveQuarter): ISubmissionUI | undefined => {
   if (!indicator.submissions) return undefined;
-  const normQ = normaliseQuarter(indicator.active_quarter);
-  // Quarter keys are stored as "Q1_2025", "Annual_2025", etc.
-  // Find the bucket whose key starts with the normalised quarter prefix.
+  const prefix = getQuarterPrefix(
+    indicator.reporting_cycle,
+    indicator.active_quarter ?? indicator.currentQuarter
+  );
   const matchingKey = Object.keys(indicator.submissions).find((k) =>
-    k.startsWith(normQ)
+    k.startsWith(prefix)
   );
   return matchingKey ? indicator.submissions[matchingKey][0] : undefined;
 };
@@ -203,45 +214,44 @@ const UserTasks = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filteredTasks.map((item: IIndicatorUI) => {
-                    // Use the helper — resolves the active quarter bucket correctly
-                    const currentQuarterSub = getActiveQuarterSub(item);
-
-                    // camelCase: achievedValue
+                  {filteredTasks.map((item) => {
+                    // Cast to extended type to safely access active_quarter
+                    const indicator = item as IIndicatorWithActiveQuarter;
+                    const currentQuarterSub = getActiveQuarterSub(indicator);
                     const achieved = currentQuarterSub?.achievedValue ?? 0;
                     const calculatedProgress =
-                      item.target > 0
-                        ? (achieved / item.target) * 100
+                      indicator.target && indicator.target > 0
+                        ? (achieved / indicator.target) * 100
                         : 0;
 
                     const lifecycle = getLifecycleConfig(
-                      item.status || "Pending",
-                      item.active_quarter,
-                      item.reporting_cycle,
+                      indicator.status || "Pending",
+                      indicator.active_quarter ?? 1,
+                      indicator.reporting_cycle as "Quarterly" | "Annual",
                     );
-                    const isFlagged = item.status?.includes("Rejected");
+                    const isFlagged = indicator.status?.includes("Rejected");
                     const isUnderReview =
-                      item.status?.startsWith("Awaiting") ||
-                      item.status === "Partially Approved";
+                      indicator.status?.startsWith("Awaiting") ||
+                      indicator.status === "Partially Approved";
 
                     return (
                       <tr
-                        key={item.id}
+                        key={indicator.id}
                         className="group hover:bg-emerald-50/30 transition-all cursor-pointer"
                         onClick={() =>
-                          navigate(`/user/assignments/${item.id}`)
+                          navigate(`/user/assignments/${indicator.id}`)
                         }
                       >
                         <td className="px-10 py-7">
                           <div className="max-w-md">
                             <p className="text-[9px] font-black text-[#c2a336] uppercase tracking-[0.2em] mb-1">
-                              {item.perspective}
+                              {indicator.perspective}
                             </p>
                             <p className="text-sm font-bold leading-tight">
-                              {item.objective?.title || "Strategic Objective"}
+                              {indicator.objective?.title || "Strategic Objective"}
                             </p>
 
-                            {/* Document preview — camelCase: fileName, evidenceUrl */}
+                            {/* Document preview */}
                             <div className="flex flex-wrap gap-2 mt-3">
                               {currentQuarterSub?.documents
                                 ?.slice(0, 2)
@@ -250,26 +260,17 @@ const UserTasks = () => {
                                     key={idx}
                                     className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-2 py-1 rounded-md"
                                   >
-                                    <FileText
-                                      size={10}
-                                      className="text-gray-400"
-                                    />
+                                    <FileText size={10} className="text-gray-400" />
                                     <span className="text-[8px] font-bold text-gray-500 truncate max-w-[120px]">
                                       {doc.fileName ||
-                                        doc.evidenceUrl
-                                          ?.split("/")
-                                          .pop() ||
+                                        doc.evidenceUrl?.split("/").pop() ||
                                         "UNTITLED_EVIDENCE"}
                                     </span>
                                   </div>
                                 ))}
-                              {(currentQuarterSub?.documents?.length ?? 0) >
-                                2 && (
+                              {(currentQuarterSub?.documents?.length ?? 0) > 2 && (
                                 <span className="text-[8px] font-black text-[#c2a336] self-center">
-                                  +
-                                  {(currentQuarterSub?.documents?.length ??
-                                    0) - 2}{" "}
-                                  MORE
+                                  +{(currentQuarterSub?.documents?.length ?? 0) - 2} MORE
                                 </span>
                               )}
                             </div>
@@ -277,7 +278,7 @@ const UserTasks = () => {
                             <div className="flex items-center gap-3 mt-3">
                               <div className="flex items-center gap-1 opacity-40 text-[9px] font-black uppercase">
                                 <Hash size={10} /> ID:{" "}
-                                {String(item.id).split("-")[0]}
+                                {String(indicator.id).split("-")[0]}
                               </div>
                               {isFlagged && (
                                 <div className="flex items-center gap-1 text-rose-600 bg-rose-50 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-rose-100">
@@ -291,18 +292,18 @@ const UserTasks = () => {
                         <td className="px-6 py-7">
                           <div
                             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider ${
-                              item.assignee_model === "Team"
+                              indicator.assignee_model === "Team"
                                 ? "bg-violet-50 text-violet-700 border border-violet-100"
                                 : "bg-slate-50 text-slate-500 border border-slate-200"
                             }`}
                           >
-                            {item.assignee_model === "Team" ? (
+                            {indicator.assignee_model === "Team" ? (
                               <Users size={10} />
                             ) : (
                               <User size={10} />
                             )}
-                            {item.assignee_model === "Team"
-                              ? getTeamName(item.assignee_id)
+                            {indicator.assignee_model === "Team"
+                              ? getTeamName(indicator.assignee_id as string)
                               : "Personal"}
                           </div>
                         </td>
@@ -310,12 +311,12 @@ const UserTasks = () => {
                         <td className="px-6 py-7">
                           <span
                             className={`text-[9px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest border ${
-                              item.reporting_cycle === "Annual"
+                              indicator.reporting_cycle === "Annual"
                                 ? "bg-blue-50 text-blue-600 border-blue-100"
                                 : "bg-gray-100 text-gray-500 border-gray-200"
                             }`}
                           >
-                            {item.reporting_cycle}
+                            {indicator.reporting_cycle}
                           </span>
                         </td>
 
@@ -344,7 +345,7 @@ const UserTasks = () => {
                                 {Math.round(calculatedProgress)}%
                               </span>
                               <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tighter">
-                                {achieved}/{item.target} {item.unit}
+                                {achieved}/{indicator.target} {indicator.unit}
                               </span>
                             </div>
                           </div>
@@ -354,7 +355,7 @@ const UserTasks = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              navigate(`/user/assignments/${item.id}`);
+                              navigate(`/user/assignments/${indicator.id}`);
                             }}
                             className="bg-white text-[#1a3a32] border border-gray-200 p-3 rounded-xl transition-all inline-flex items-center gap-3 hover:bg-[#1a3a32] hover:text-white hover:border-[#1a3a32]"
                           >

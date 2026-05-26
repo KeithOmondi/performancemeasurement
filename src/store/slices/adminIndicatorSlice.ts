@@ -34,16 +34,11 @@ export interface ISubmission {
   submittedAt: string;
   resubmissionCount: number;
   isReviewed: boolean;
-  // Submitter identity — populated by the backend via LEFT JOIN users su
   submittedById?: string;
   submittedByName?: string;
+  previousRejectionReason?: string | null;
 }
 
-/**
- * Submissions grouped by period key (e.g. "Q1_2025" or "Annual_2025").
- * Each key maps to an array sorted newest-first, so index 0 is always
- * the latest (re)submission for that period.
- */
 export type ISubmissionsByPeriod = Record<string, ISubmission[]>;
 
 export interface IDocumentReviewUpdate {
@@ -54,12 +49,17 @@ export interface IDocumentReviewUpdate {
 
 export interface ISubmissionReviewUpdate {
   submissionId: string;
-  reviewStatus?: "Verified" | "Rejected" | "Pending";
   adminComment?: string;
 }
 
-export interface IAdminReviewPayload {
-  decision: "Verified" | "Rejected";
+// ── Separate payloads for the two actions ─────────────────────────────────────
+
+export interface IApprovePayload {
+  submissionUpdates?: ISubmissionReviewUpdate[];
+  adminOverallComments?: string;
+}
+
+export interface IRejectPayload {
   adminOverallComments: string;
   submissionUpdates?: ISubmissionReviewUpdate[];
   documentUpdates?: IDocumentReviewUpdate[];
@@ -128,43 +128,30 @@ const initialState: IAdminIndicatorState = {
 
 // ─── Helpers (internal) ───────────────────────────────────────────────────────
 
-/** Flatten all period arrays into a single submission array. */
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
 
 // ─── Exported Helpers ─────────────────────────────────────────────────────────
 
-/** Safe document description, falling back to fileDescription alias. */
 export const getDocumentDescription = (doc: IDocument): string =>
   doc.description || doc.fileDescription || "";
 
-/** True if the submission has at least one rejected document. */
 export const hasRejectedDocuments = (submission: ISubmission): boolean =>
   submission.documents.some((doc) => doc.status === "Rejected");
 
-/** Documents that have not been rejected. */
 export const getAcceptedDocuments = (submission: ISubmission): IDocument[] =>
   submission.documents.filter((doc) => doc.status !== "Rejected");
 
-/**
- * Resolve the display name of whoever submitted this row.
- * Returns null when the backend hasn't populated the field yet
- * (e.g. rows inserted before the submitted_by migration).
- */
 export const getSubmitterName = (submission: ISubmission): string | null =>
   submission.submittedByName ?? null;
 
-/**
- * True if ANY submission row for this indicator carries reviewStatus "Rejected".
- * Works correctly after the backend change to INSERT instead of UPDATE on
- * resubmission, because old rejected rows are preserved.
- */
+export const getPreviousRejectionReason = (
+  submission: ISubmission
+): string | null => submission.previousRejectionReason ?? null;
+
 export const hasEverBeenRejected = (indicator: IAdminIndicator): boolean =>
   flattenSubmissions(indicator).some((s) => s.reviewStatus === "Rejected");
 
-/**
- * All rejected submission rows across all periods, newest-first.
- */
 export const getRejectedSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   flattenSubmissions(indicator)
     .filter((s) => s.reviewStatus === "Rejected")
@@ -173,22 +160,13 @@ export const getRejectedSubmissions = (indicator: IAdminIndicator): ISubmission[
         new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
     );
 
-/** The single most-recent rejected submission, or undefined. */
 export const getLatestRejectedSubmission = (
   indicator: IAdminIndicator
 ): ISubmission | undefined => getRejectedSubmissions(indicator)[0];
 
-/**
- * Total number of rejection rows across all periods.
- * Equals the number of times this indicator has been sent back.
- */
 export const getRejectionCount = (indicator: IAdminIndicator): number =>
   getRejectedSubmissions(indicator).length;
 
-/**
- * Highest resubmission_count value seen across all rows.
- * Equals the number of times the assignee has resubmitted.
- */
 export const getMaxResubmissionCount = (indicator: IAdminIndicator): number =>
   flattenSubmissions(indicator).reduce(
     (max, s) => Math.max(max, s.resubmissionCount),
@@ -202,8 +180,6 @@ const refreshQueues = (state: IAdminIndicatorState) => {
     (ind) => ind.status === "Awaiting Admin Approval"
   );
 
-  // An indicator is "resubmitted work" when any period has a Pending row
-  // with resubmissionCount > 0, meaning it was rejected at least once before.
   state.resubmittedWork = state.allAssignments.filter((ind) =>
     Object.values(ind.submissions ?? {}).some((periodRows) =>
       periodRows.some(
@@ -252,7 +228,7 @@ const extractError = (error: unknown, fallback: string): string => {
 
 // ─── Thunks ───────────────────────────────────────────────────────────────────
 
-export const fetchAllAdminIndicators = createAsyncThunk<
+export const fetchAllAdminIndicators = createAsyncThunk <
   IAdminIndicator[],
   { status?: string; search?: string } | undefined,
   { rejectValue: string }
@@ -272,7 +248,7 @@ export const fetchAllAdminIndicators = createAsyncThunk<
   }
 });
 
-export const fetchResubmittedIndicators = createAsyncThunk<
+export const fetchResubmittedIndicators = createAsyncThunk <
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -287,7 +263,7 @@ export const fetchResubmittedIndicators = createAsyncThunk<
   }
 });
 
-export const getIndicatorByIdAdmin = createAsyncThunk<
+export const getIndicatorByIdAdmin = createAsyncThunk <
   IAdminIndicator,
   string,
   { rejectValue: string }
@@ -300,25 +276,35 @@ export const getIndicatorByIdAdmin = createAsyncThunk<
   }
 });
 
-export const processAdminReview = createAsyncThunk<
+export const approveSubmission = createAsyncThunk <
   IAdminIndicator,
-  { id: string; reviewData: IAdminReviewPayload },
+  { id: string; payload: IApprovePayload },
   { rejectValue: string }
->(
-  "adminIndicators/processReview",
-  async ({ id, reviewData }, { rejectWithValue }) => {
-    try {
-      await apiPrivate.patch(`/admin/${id}/review`, reviewData);
-      // Re-fetch to get updated submission rows, document statuses, and review history
-      const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
-      return res.data?.data;
-    } catch (error) {
-      return rejectWithValue(extractError(error, "Review submission failed"));
-    }
+>("adminIndicators/approve", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/approve`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Approval failed"));
   }
-);
+});
 
-export const reopenIndicator = createAsyncThunk<
+export const rejectSubmission = createAsyncThunk <
+  IAdminIndicator,
+  { id: string; payload: IRejectPayload },
+  { rejectValue: string }
+>("adminIndicators/reject", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/reject`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Rejection failed"));
+  }
+});
+
+export const reopenIndicator = createAsyncThunk <
   IAdminIndicator,
   { id: string; payload: IReopenPayload },
   { rejectValue: string }
@@ -400,13 +386,21 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(getIndicatorByIdAdmin.rejected, setRejected("isLoading"))
 
-      // ── processAdminReview ───────────────────────────────────────────────
-      .addCase(processAdminReview.pending, setPending("isReviewing"))
-      .addCase(processAdminReview.fulfilled, (state, action) => {
+      // ── approveSubmission ────────────────────────────────────────────────
+      .addCase(approveSubmission.pending, setPending("isReviewing"))
+      .addCase(approveSubmission.fulfilled, (state, action) => {
         state.isReviewing = false;
         upsertAndRefresh(state, action.payload);
       })
-      .addCase(processAdminReview.rejected, setRejected("isReviewing"))
+      .addCase(approveSubmission.rejected, setRejected("isReviewing"))
+
+      // ── rejectSubmission ─────────────────────────────────────────────────
+      .addCase(rejectSubmission.pending, setPending("isReviewing"))
+      .addCase(rejectSubmission.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(rejectSubmission.rejected, setRejected("isReviewing"))
 
       // ── reopenIndicator ──────────────────────────────────────────────────
       .addCase(reopenIndicator.pending, setPending("isReopening"))

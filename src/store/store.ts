@@ -12,6 +12,7 @@ import streamFileReducer from "./slices/streamSlice"
 import teamsReducer from "./slices/teamSlice"
 import examinerReducer from "./slices/examinerSlice"
 import archiveReducer from "./slices/archiveslice"
+import notificationsReducer from "./slices/notificationslice"
 
 export const store = configureStore({
   reducer: {
@@ -27,7 +28,8 @@ export const store = configureStore({
     streamFile: streamFileReducer,
     teams: teamsReducer,
     examiner: examinerReducer,
-    archive: archiveReducer
+    archive: archiveReducer,
+    notifications: notificationsReducer
     // Add other features (e.g., products, cart) here later
   },
   // DevTools is enabled by default in development mode

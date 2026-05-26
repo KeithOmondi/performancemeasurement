@@ -2,6 +2,7 @@ import React, { useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchMyAssignments,
+  type IIndicatorUI,
   type IDocumentUI,
   type ISubmissionUI,
 } from "../../store/slices/userIndicatorSlice";
@@ -27,7 +28,7 @@ interface ITimelineEvent {
   docs?: IDocumentUI[];
   notes?: string;
   action?: string;
-  reason?: string;             // populated from adminComment, not notes
+  reason?: string;             // populated from adminComment
   reviewer?: string;
 }
 
@@ -53,68 +54,51 @@ const UserHistory: React.FC = () => {
   const unifiedHistory = useMemo(() => {
     const events: ITimelineEvent[] = [];
 
-    myIndicators.forEach((indicator) => {
-      /**
-       * submissions is now Record<"Q1_2025" | "Annual_2025" | …, ISubmissionUI[]>.
-       * We iterate entries so we have the quarter key available for display,
-       * then iterate the submissions array within each folder.
-       *
-       * flattenSubmissions() is available for cases where quarter context
-       * isn't needed, but here we want the label so we use Object.entries().
-       */
-      Object.entries(indicator.submissions ?? {}).forEach(
-        ([quarterKey, quarterSubmissions]) => {
-          const quarterLabel = formatQuarterKey(quarterKey);
+    myIndicators.forEach((indicator: IIndicatorUI) => {
+  Object.entries(indicator.submissions ?? {}).forEach(
+    ([quarterKey, quarterSubmissions]) => {
+      const quarterLabel = formatQuarterKey(quarterKey);
 
-          quarterSubmissions.forEach((sub: ISubmissionUI) => {
-            // Safe date parse — guard against invalid ISO strings
-            const rawDate = new Date(sub.submittedAt);   // camelCase
-            const validDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
+      quarterSubmissions.forEach((sub: ISubmissionUI) => {
+        // ✅ Handle undefined submittedAt
+        const rawDate = sub.submittedAt ? new Date(sub.submittedAt) : new Date();
+        const validDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
 
-            // ── Submission event ─────────────────────────────────────────────
-            events.push({
-              type:         "SUBMISSION",
-              date:         validDate,
-              title:        indicator.activity?.description ?? "Indicator Update",
-              objective:    indicator.objective?.title,
-              quarterLabel,
-              status:       sub.reviewStatus,             // camelCase
-              value:        sub.achievedValue,            // camelCase
-              docs:         sub.documents,
-              notes:        sub.notes,
-            });
+        events.push({
+          type: "SUBMISSION",
+          date: validDate,
+          title: indicator.activity?.description ?? "Indicator Update",
+          objective: indicator.objective?.title,
+          quarterLabel,
+          status: sub.reviewStatus,
+          value: sub.achievedValue,
+          docs: sub.documents,
+          notes: sub.notes,
+        });
 
-            // ── Review action event ──────────────────────────────────────────
-            // Only emit when there is a concrete admin decision to display.
-            // Use adminComment as the reason — it's the field the backend
-            // populates with admin feedback, not `notes` (which is user input).
-            if (
-              sub.reviewStatus === "Rejected" ||          // camelCase
-              sub.reviewStatus === "Accepted" ||
-              sub.reviewStatus === "Verified"
-            ) {
-              events.push({
-                type:         "REVIEW_ACTION",
-                date:         validDate,
-                title:        indicator.activity?.description ?? "Indicator Review",
-                objective:    indicator.objective?.title,
-                quarterLabel,
-                action:       sub.reviewStatus,           // camelCase
-                reason:       sub.adminComment            // camelCase — admin's feedback
-                               ?? "Registry verification processed.",
-                reviewer:     "Registry Audit",
-              });
-            }
+        if (
+          sub.reviewStatus === "Rejected" ||
+          sub.reviewStatus === "Accepted" ||
+          sub.reviewStatus === "Verified"
+        ) {
+          events.push({
+            type: "REVIEW_ACTION",
+            date: validDate,
+            title: indicator.activity?.description ?? "Indicator Review",
+            objective: indicator.objective?.title,
+            quarterLabel,
+            action: sub.reviewStatus,
+            reason: sub.adminComment ?? "Registry verification processed.",
+            reviewer: "Registry Audit",
           });
         }
-      );
-    });
+      });
+    }
+  );
+});
 
-    // Most recent events first
     return events.sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [myIndicators]);
-
-  /* ── Loading state ──────────────────────────────────────────────────────── */
 
   if (loading && myIndicators.length === 0) {
     return (
@@ -126,8 +110,6 @@ const UserHistory: React.FC = () => {
       </div>
     );
   }
-
-  /* ── Render ─────────────────────────────────────────────────────────────── */
 
   return (
     <div className="min-h-screen bg-[#fdfcfc] p-6 md:p-12 font-sans">
@@ -221,7 +203,7 @@ const UserHistory: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Document list — fileName (camelCase) with fallback */}
+                    {/* Document list */}
                     {event.docs && event.docs.length > 0 && (
                       <div className="space-y-1 pt-1">
                         {event.docs.map((doc) => (

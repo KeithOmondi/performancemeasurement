@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchMyAssignments, setLocalSelectedIndicator } from "../../store/slices/userIndicatorSlice";
+import type { IIndicatorUI } from "../../store/slices/userIndicatorSlice";
 
 const UserApprovals = () => {
   const dispatch = useAppDispatch();
@@ -24,13 +25,11 @@ const UserApprovals = () => {
   const approvedAssignments = useMemo(() => {
     return myIndicators
       .filter((ind) => {
-        // Logic: Only show records that have reached the terminal 'Approved' or 'Completed' state
-        // and have been fully certified (progress 100%)
-        const isFinalized = ind.status === "Approved" || ind.status === "Completed";
+        const isFinalized = ind.status === "Completed";
         const isCertified = (ind.progress ?? 0) >= 100;
         return isFinalized && isCertified;
       })
-      .filter(ind => 
+      .filter((ind) => 
         (ind.activity?.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
         (ind.objective?.title || "").toLowerCase().includes(searchTerm.toLowerCase())
       );
@@ -96,79 +95,75 @@ const UserApprovals = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {approvedAssignments.map((indicator) => (
-                  <tr key={indicator.id} className="hover:bg-emerald-50/30 transition-colors group">
-                    <td className="px-6 py-5">
-                      <div className="max-w-[300px]">
-                        <p className="text-xs font-bold text-[#1a3a32] leading-tight mb-1">
-                          {indicator.activity?.description}
-                        </p>
-                        <p className="text-[9px] font-black text-emerald-600/60 uppercase tracking-tight">
-                          REF: {indicator.id.split('-')[0].toUpperCase()}
-                        </p>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-5 text-center">
-                      <span className="inline-block px-3 py-1 rounded-lg bg-slate-100 text-[#1a3a32] text-[9px] font-black uppercase tracking-tighter border border-slate-200">
-                        {indicator.perspective}
-                      </span>
-                    </td>
-
-                    <td className="px-4 py-5 text-center">
-                      <div className="flex flex-col items-center">
-                        <Scale size={12} className="text-slate-300 mb-1" />
-                        <span className="text-xs font-black text-slate-700">{indicator.weight}</span>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-5 text-center">
-                      <span className="text-[10px] font-bold text-slate-500 italic">
-                        {indicator.unit}
-                      </span>
-                    </td>
-
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-[#1a3a32] border border-emerald-200">
-                          <User size={14} />
+                {approvedAssignments.map((indicator: IIndicatorUI) => {
+                  const weightValue = indicator.weight ? String(indicator.weight) : "—";
+                  return (
+                    <tr key={indicator.id} className="hover:bg-emerald-50/30 transition-colors group">
+                      <td className="px-6 py-5">
+                        <div className="max-w-[300px]">
+                          <p className="text-xs font-bold text-[#1a3a32] leading-tight mb-1">
+                            {indicator.activity?.description}
+                          </p>
+                          <p className="text-[9px] font-black text-emerald-600/60 uppercase tracking-tight">
+                            REF: {indicator.id.split('-')[0].toUpperCase()}
+                          </p>
                         </div>
-                        <div className="flex flex-col">
-                          <span className="text-[11px] font-black text-[#1a3a32] uppercase tracking-tighter">
-                            {indicator.assigneeName || "System Assigned"}
+                      </td>
+                      <td className="px-4 py-5 text-center">
+                        <span className="inline-block px-3 py-1 rounded-lg bg-slate-100 text-[#1a3a32] text-[9px] font-black uppercase tracking-tighter border border-slate-200">
+                          {indicator.perspective}
+                        </span>
+                      </td>
+                      <td className="px-4 py-5 text-center">
+                        <div className="flex flex-col items-center">
+                          <Scale size={12} className="text-slate-300 mb-1" />
+                          <span className="text-xs font-black text-slate-700">{weightValue}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-5 text-center">
+                        <span className="text-[10px] font-bold text-slate-500 italic">
+                          {indicator.unit}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-[#1a3a32] border border-emerald-200">
+                            <User size={14} />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[11px] font-black text-[#1a3a32] uppercase tracking-tighter">
+                              {indicator.assigneeName || "System Assigned"}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-[10px] font-black text-emerald-600">{indicator.progress}%</span>
+                          <div className="w-16 h-1 bg-emerald-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-500 w-full" />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <ShieldCheck size={16} className="text-emerald-500" />
+                          <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest leading-none">
+                            {indicator.status}
                           </span>
                         </div>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-5">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="text-[10px] font-black text-emerald-600">{indicator.progress}%</span>
-                        <div className="w-16 h-1 bg-emerald-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500 w-full" />
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-5 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <ShieldCheck size={16} className="text-emerald-500" />
-                        <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest leading-none">
-                          {indicator.status}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-5 text-right">
-                      <button 
-                        onClick={() => dispatch(setLocalSelectedIndicator(indicator.id))}
-                        className="p-2.5 bg-[#1a3a32] text-white rounded-lg hover:bg-emerald-900 transition-all shadow-md group-hover:scale-110"
-                      >
-                        <FileText size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                        <button 
+                          onClick={() => dispatch(setLocalSelectedIndicator(indicator.id))}
+                          className="p-2.5 bg-[#1a3a32] text-white rounded-lg hover:bg-emerald-900 transition-all shadow-md group-hover:scale-110"
+                        >
+                          <FileText size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

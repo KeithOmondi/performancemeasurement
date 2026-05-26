@@ -111,11 +111,11 @@ export interface IQueueItem {
   documents: IDocument[];
 }
 
+// ── TYPE ──────────────────────────────────────────────────────────────
 export interface ISuperAdminReviewPayload {
   decision: "Approved" | "Rejected";
   reason?: string;
-  progressOverride?: number;
-  nextDeadline?: string;
+  progressOverride: number; // required — no longer optional
 }
 
 /* ─── NEW: COUNTS TYPE (from /dashboard-stats/full) ──────────────────── */
@@ -709,38 +709,32 @@ builder
         state.error = null;
       })
       .addCase(superAdminReview.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        const updated = action.payload;
+  state.actionLoading = false;
+  const updated = action.payload;
 
-        if (
-          updated.status !== "Rejected by Super Admin" &&
-          updated.status !== "Rejected by Admin"
-        ) {
-          updated.status = "Pending";
-        }
+  // Trust the status the server returns — it correctly sets:
+  // "Pending"    → approved, more quarters remain
+  // "Completed"  → approved, all quarters done (or Annual)
+  // "Rejected by Super Admin" → rejected
+  upsertIndicator(state, updated);
 
-        upsertIndicator(state, updated);
+  // Remove from review queue regardless of outcome
+  state.queue = state.queue.filter(
+    (q) => String(q.indicatorId) !== String(updated.id)
+  );
 
-        state.queue = state.queue.filter(
-          (q) => String(q.indicatorId) !== String(updated.id)
-        );
+  // Sync rejected list
+  if (updated.status === "Rejected by Super Admin") {
+    const exists = state.rejectedByAdmin.some((r) => r.id === updated.id);
+    if (!exists) state.rejectedByAdmin.push(updated);
+  } else {
+    state.rejectedByAdmin = state.rejectedByAdmin.filter(
+      (r) => r.id !== updated.id
+    );
+  }
 
-        if (
-          updated.status === "Rejected by Super Admin" ||
-          updated.status === "Rejected by Admin"
-        ) {
-          const exists = state.rejectedByAdmin.some(
-            (r) => r.id === updated.id
-          );
-          if (!exists) state.rejectedByAdmin.push(updated);
-        } else {
-          state.rejectedByAdmin = state.rejectedByAdmin.filter(
-            (r) => r.id !== updated.id
-          );
-        }
-
-        syncCategorizedLists(state);
-      })
+  syncCategorizedLists(state);
+})
       .addCase(superAdminReview.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload as string;

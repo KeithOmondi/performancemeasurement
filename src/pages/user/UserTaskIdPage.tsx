@@ -10,16 +10,18 @@ import {
   fetchIndicatorDetails,
   clearIndicatorError,
   flattenSubmissions,
-  getActiveQuarterDisplay,
-  hasSubmissionForCurrentQuarter,
-  getCurrentQuarterReviewStatus,
   clearLastSubmissionId,
   updateDocumentDescription,
   optimisticUpdateDocumentDescription,
+  getActiveQuarterDisplay,
+  hasSubmissionForCurrentQuarter,
+  getCurrentQuarterReviewStatus,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
+
+/* ─── Component ───────────────────────────────────────────────────────────── */
 
 const UserTaskIdPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -50,7 +52,7 @@ const UserTaskIdPage = () => {
     };
   }, [id, dispatch]);
 
-  // Success toast — deferred to avoid cascading renders
+  // Success toast
   useEffect(() => {
     if (
       lastSubmissionId &&
@@ -59,17 +61,14 @@ const UserTaskIdPage = () => {
       lastSubmissionIdRef.current !== lastSubmissionId
     ) {
       lastSubmissionIdRef.current = lastSubmissionId;
-
       const showTimer = setTimeout(() => {
         setSuccessMessage("Filing submitted successfully! Awaiting admin review.");
         setShowSuccessToast(true);
       }, 0);
-
       const hideTimer = setTimeout(() => {
         setShowSuccessToast(false);
         setSuccessMessage("");
       }, 5000);
-
       return () => {
         clearTimeout(showTimer);
         clearTimeout(hideTimer);
@@ -77,18 +76,17 @@ const UserTaskIdPage = () => {
     }
   }, [lastSubmissionId, uploading, error]);
 
-  // Reset toast ref on page/indicator change
   useEffect(() => {
     lastSubmissionIdRef.current = null;
   }, [id]);
 
+  // Use slice helpers
   const isAnnual = currentIndicator?.reporting_cycle === "Annual";
   const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
   const currentQuarterStatus = currentIndicator ? getCurrentQuarterReviewStatus(currentIndicator) : null;
   const hasSubmission = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
 
-  // ── Derived data ──────────────────────────────────────────────────────────
-
+  // Derived data
   const allSubmissions = useMemo<ISubmissionUI[]>(
     () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
     [currentIndicator]
@@ -96,19 +94,19 @@ const UserTaskIdPage = () => {
 
   const activeSub = useMemo<ISubmissionUI | undefined>(() => {
     if (!currentIndicator?.submissions) return undefined;
-    const targetKey = isAnnual ? "Annual" : activeQuarterDisplay;
-    const quarterKey = `${targetKey}_${new Date().getFullYear()}`;
-    const submissions = currentIndicator.submissions[quarterKey];
+    const year = currentIndicator.currentYear ?? new Date().getFullYear();
+    const key = `${activeQuarterDisplay}_${year}`;
+    const submissions = currentIndicator.submissions[key];
     if (!submissions || submissions.length === 0) return undefined;
     return submissions[0];
-  }, [currentIndicator, isAnnual, activeQuarterDisplay]);
+  }, [currentIndicator, activeQuarterDisplay]);
 
   const submissionHistory = useMemo(() => {
     if (!currentIndicator?.submissions) return [];
-    const targetKey = isAnnual ? "Annual" : activeQuarterDisplay;
-    const quarterKey = `${targetKey}_${new Date().getFullYear()}`;
-    return currentIndicator.submissions[quarterKey] || [];
-  }, [currentIndicator, isAnnual, activeQuarterDisplay]);
+    const year = currentIndicator.currentYear ?? new Date().getFullYear();
+    const key = `${activeQuarterDisplay}_${year}`;
+    return currentIndicator.submissions[key] || [];
+  }, [currentIndicator, activeQuarterDisplay]);
 
   const rejectedDocs = useMemo(() => {
     return allSubmissions.flatMap((sub) =>
@@ -135,8 +133,7 @@ const UserTaskIdPage = () => {
     );
   }, [allSubmissions]);
 
-  // ── Document description handlers ─────────────────────────────────────────
-
+  // Document description handlers
   const handleStartEditDescription = (doc: IDocumentUI) => {
     setEditingDocId(doc.id);
     setEditingDescription(doc.description || "");
@@ -150,10 +147,8 @@ const UserTaskIdPage = () => {
 
   const handleSaveDescription = async (docId: string) => {
     if (updatingDescription) return;
-
     setUpdatingDescription(true);
 
-    // Optimistic update
     dispatch(optimisticUpdateDocumentDescription({
       docId,
       description: editingDescription,
@@ -166,7 +161,6 @@ const UserTaskIdPage = () => {
         idempotencyKey: crypto.randomUUID(),
       })).unwrap();
 
-      // Show success toast
       setSuccessMessage("Document description updated successfully!");
       setShowSuccessToast(true);
       setTimeout(() => {
@@ -174,12 +168,7 @@ const UserTaskIdPage = () => {
         setSuccessMessage("");
       }, 3000);
 
-      // Refresh indicator data
-      if (id) {
-        await dispatch(fetchIndicatorDetails(id));
-      }
-
-      // Clear editing state
+      if (id) await dispatch(fetchIndicatorDetails(id));
       setEditingDocId(null);
       setEditingDescription("");
     } catch (err) {
@@ -190,18 +179,13 @@ const UserTaskIdPage = () => {
         setShowSuccessToast(false);
         setSuccessMessage("");
       }, 3000);
-      
-      // Revert optimistic update by refreshing data
-      if (id) {
-        await dispatch(fetchIndicatorDetails(id));
-      }
+      if (id) await dispatch(fetchIndicatorDetails(id));
     } finally {
       setUpdatingDescription(false);
     }
   };
 
-  // ── Status badge ──────────────────────────────────────────────────────────
-
+  // Status badge
   const getStatusBadge = useCallback(() => {
     if (!currentQuarterStatus && !hasSubmission) {
       return {
@@ -246,8 +230,6 @@ const UserTaskIdPage = () => {
   const statusBadge = getStatusBadge();
   const StatusIcon = statusBadge.icon;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
   const handleModalClose = useCallback(() => {
     setIsModalOpen(false);
     if (id) dispatch(fetchIndicatorDetails(id));
@@ -264,7 +246,6 @@ const UserTaskIdPage = () => {
     });
   };
 
-  // Submit button label
   const submitButtonLabel = isAnnual
     ? hasSubmission && currentQuarterStatus === "Rejected"
       ? "Resubmit Annual Filing"
@@ -277,17 +258,12 @@ const UserTaskIdPage = () => {
     ? `Update ${activeQuarterDisplay} Filing`
     : `Submit ${activeQuarterDisplay} Filing`;
 
-  // Check if user can edit document descriptions
-  const canEditDescription = (docStatus: string, submissionReviewStatus?: string) => {
-    // Can't edit if document is accepted
+  // FIX: allow docStatus to be undefined
+  const canEditDescription = (docStatus: string | undefined, submissionReviewStatus?: string): boolean => {
     if (docStatus === "Accepted") return false;
-    // Can't edit if submission is accepted
     if (submissionReviewStatus === "Accepted") return false;
-    // Can edit for pending or rejected documents
     return true;
   };
-
-  // ── Loading / empty states ────────────────────────────────────────────────
 
   if (loading && !currentIndicator) {
     return (
@@ -301,8 +277,6 @@ const UserTaskIdPage = () => {
   }
 
   if (!currentIndicator) return null;
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] p-6 lg:p-12 font-sans">
@@ -333,7 +307,6 @@ const UserTaskIdPage = () => {
           </button>
 
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Cycle badge */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-gray-100 shadow-sm">
               <Calendar size={12} className="text-[#c2a336]" />
               <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
@@ -341,7 +314,6 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {/* Status badge */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${statusBadge.color}`}>
               <StatusIcon size={12} className={statusBadge.iconColor} />
               <span className="text-[9px] font-black uppercase tracking-widest">
@@ -349,7 +321,6 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {/* Submit button */}
             <button
               onClick={() => setIsModalOpen(true)}
               disabled={

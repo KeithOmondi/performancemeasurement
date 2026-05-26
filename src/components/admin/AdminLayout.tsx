@@ -1,10 +1,24 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import AdminSidebar from "./AdminSidebar";
 import AdminHeader from "./AdminHeader";
+import { fetchNotifications } from "../../store/slices/notificationslice";
+import { useAppDispatch } from "../../store/hooks";
+import { useNotificationSSE } from "../../api/usenotificationsse";
 
 const AdminLayout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const dispatch = useAppDispatch();
+
+  // Opens the SSE connection — stays alive for the entire admin session.
+  // Automatically closes on logout (when user becomes null in Redux).
+  useNotificationSSE();
+
+  // Load existing notifications from DB immediately on mount,
+  // so the panel isn't empty before the first SSE event fires.
+  useEffect(() => {
+    dispatch(fetchNotifications());
+  }, [dispatch]);
 
   return (
     <div className="flex min-h-screen bg-[#f8fafc]">

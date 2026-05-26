@@ -448,8 +448,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const { actionLoading } = useAppSelector((s) => s.indicators);
 
   const isAnnual = indicator.reportingCycle === "Annual";
-
-  /* ── KEY FIX: buttons visible for all statuses except Completed ── */
   const isCompleted = indicator.status === "Completed";
   const canReview = !isCompleted;
 
@@ -457,11 +455,11 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     "overview" | "evidence" | "history" | "team"
   >("overview");
 
-  const [reviewAction, setReviewAction] = useState<"approve" | "reject" | null>(
-    null
-  );
+  const [reviewAction, setReviewAction] = useState<"approve" | "reject" | null>(null);
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
+  const [progressValue, setProgressValue] = useState<string>("");
+  const [progressError, setProgressError] = useState("");
 
   const submissions: ISubmission[] = indicator.submissions ?? [];
   const history: IReviewHistory[] = indicator.reviewHistory ?? [];
@@ -475,30 +473,49 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   /* ── handlers ── */
 
   const handleReview = async () => {
+    let hasError = false;
+
     if (reviewAction === "reject" && !comment.trim()) {
       setCommentError("A reason is required when rejecting.");
-      return;
+      hasError = true;
     }
-    setCommentError("");
 
-    await dispatch(
-      superAdminReview({
-        id: indicator.id,
-        reviewData: {
-          decision: reviewAction === "approve" ? "Approved" : "Rejected",
-          reason: comment.trim() || "Approved by Super Admin",
-        },
-      })
-    );
+    if (reviewAction === "approve") {
+      const parsed = parseFloat(progressValue);
+      if (progressValue.trim() === "" || isNaN(parsed) || parsed < 0) {
+        setProgressError("A valid achieved value is required.");
+        hasError = true;
+      }
+    }
+
+    if (hasError) return;
+
+    setCommentError("");
+    setProgressError("");
+
+   await dispatch(
+  superAdminReview({
+    id: indicator.id,
+    reviewData: {
+      decision: reviewAction === "approve" ? "Approved" : "Rejected",
+      reason: comment.trim() || undefined,
+      progressOverride:
+        reviewAction === "approve" ? parseFloat(progressValue) : 0,
+    },
+  })
+);
 
     setReviewAction(null);
     setComment("");
+    setProgressValue("");
   };
 
   const cancelReview = () => {
     setReviewAction(null);
     setComment("");
+    setProgressValue("");
     setCommentError("");
+    setProgressError("");
   };
 
   /* ── tabs ── */
@@ -923,6 +940,38 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
               </div>
             ) : (
               <div className="space-y-3">
+
+                {/* Achieved value input — approve only */}
+                {reviewAction === "approve" && (
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
+                      Achieved Value *{" "}
+                      <span className="normal-case font-medium text-slate-300">
+                        ({indicator.unit})
+                      </span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={progressValue}
+                      onChange={(e) => {
+                        setProgressValue(e.target.value);
+                        if (progressError) setProgressError("");
+                      }}
+                      placeholder={`e.g. ${indicator.target}`}
+                      className={`w-full rounded-xl border text-[12px] font-medium text-slate-700 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#1d3331]/20 transition-all placeholder:text-slate-300 bg-[#fcfcf7] ${
+                        progressError ? "border-rose-300" : "border-slate-200"
+                      }`}
+                    />
+                    {progressError && (
+                      <p className="text-[10px] text-rose-500 font-bold mt-1">
+                        {progressError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Comment / reason textarea */}
                 <div>
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
                     {reviewAction === "approve"
@@ -951,6 +1000,8 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
                     </p>
                   )}
                 </div>
+
+                {/* Action buttons */}
                 <div className="flex gap-2">
                   <button
                     onClick={handleReview}

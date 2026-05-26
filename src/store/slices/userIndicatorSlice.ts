@@ -2,733 +2,451 @@ import {
   createSlice,
   createAsyncThunk,
   type PayloadAction,
-  type AnyAction,
 } from "@reduxjs/toolkit";
-import { apiPrivate } from "../../api/axios";
+import { api } from "../../api/axios";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────────────*/
+/* ─── Types ──────────────────────────────────────────────────────────────── */
 
 export interface IDocumentUI {
   id: string;
-  submissionId: string;
-  evidenceUrl: string;
-  evidencePublicId?: string;
-  fileType: "image" | "video" | "raw";
   fileName?: string;
-  description?: string;
-  status: "Pending" | "Rejected" | "Accepted";
+  evidenceUrl: string;
+  status?: string;
   rejectionReason?: string;
+  description?: string;
   uploadedAt?: string;
-  updatedAt?: string;
 }
 
 export interface ISubmissionUI {
   id: string;
-  indicatorId?: string;
-  quarter: number; // Changed from string to number to match backend (0=Annual, 1-4=Q1-Q4)
+  quarter: number;         // 0 = Annual, 1-4 = Q1-Q4
   year: number;
-  notes: string;
-  achievedValue: number;
-  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected";
+  achievedValue?: number;
+  notes?: string;
+  reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected"
   adminComment?: string;
-  submittedAt: string;
+  submittedAt?: string;
   resubmissionCount: number;
-  isReviewed: boolean;
   documents: IDocumentUI[];
 }
 
-/**
- * Submissions are grouped by quarter key, e.g.:
- *   { "Q1_2025": [ISubmissionUI, ...], "Annual_2025": [...] }
- */
-export type ISubmissionsByQuarter = Record<string, ISubmissionUI[]>;
-
-export interface IReviewLog {
-  action: string;
-  reviewerName: string;
-  at: string;
-  reason: string;
-}
+/** Keyed as `"Q1_2024"` | `"Q2_2024"` | `"Annual_2024"` etc. */
+export type SubmissionBuckets = Record<string, ISubmissionUI[]>;
 
 export interface IIndicatorUI {
   id: string;
-  strategic_plan_id: string;
-  objective_id: string;
-  activity_id: string;
-  perspective: string;
-  reporting_cycle: "Quarterly" | "Annual";
-  assignee_id: string;
-  assignee_model: "User" | "Team";
-  assigneeName: string;
-  assignedByName: string;
-  status: string;
-  target: number;
-  unit: string;
-  weight: number;
-  deadline: string;
-  instructions?: string;
-  active_quarter: number; // 1-4 for quarterly, ignored for annual
-  objective: { title: string };
-  activity: { description: string };
-  submissions: ISubmissionsByQuarter;
-  updated_at: string;
-  review_history?: IReviewLog[];
+  name?: string;
+  perspective?: string;
+  assignee_model?: string;
+  assigneeName?: string;
+  reporting_cycle?: string;
+  reportingCycle?: string;
+  target?: number;
+  unit?: string;
+  deadline?: string;
   progress?: number;
-  admin_overall_comments?: string;
-}
-
-export interface IRejectedIndicatorUI extends IIndicatorUI {
-  rejectedQuarters: string[]; // e.g. ["Q1_2025", "Annual_2025"]
+  status?: string;
+  submissions: SubmissionBuckets;
+  objective?: { title?: string };
+  activity?: { description?: string };
+  currentQuarter?: number;
+  currentYear?: number;
+  [key: string]: unknown;
 }
 
 interface UserIndicatorState {
+  indicators: IIndicatorUI[];
   myIndicators: IIndicatorUI[];
-  rejectedIndicators: IRejectedIndicatorUI[];
+  rejectedIndicators: IIndicatorUI[];
+  selectedIndicator: IIndicatorUI | null;
   currentIndicator: IIndicatorUI | null;
   loading: boolean;
+  actionLoading: boolean;
   uploading: boolean;
   error: string | null;
-  lastSubmissionId: string | null; // Track last successful submission
+  lastSubmissionId: string | null;
 }
-
-interface KnownError {
-  response?: { data?: { message?: string } };
-  message?: string;
-}
-
-/* ─── HELPERS ────────────────────────────────────────────────────────────────*/
-
-/**
- * Normalises any quarter value to the consistent string used as a folder-key
- * prefix. Mirrors normaliseQuarter() in the backend controller.
- *
- *   0 | "0" | "annual" | "Annual" → "Annual"
- *   1 | "1" | "Q1" | "q1" → "Q1"
- *   2 | "2" | "Q2" → "Q2"
- *   3 | "3" | "Q3" → "Q3"
- *   4 | "4" | "Q4" → "Q4"
- */
-export function normaliseQuarter(raw: string | number): string {
-  if (raw === 0 || raw === "0" || String(raw).toLowerCase() === "annual") {
-    return "Annual";
-  }
-  const s = String(raw).replace(/^Q/i, "");
-  const num = parseInt(s, 10);
-  if (isNaN(num) || num < 1 || num > 4) return String(raw).toUpperCase();
-  return `Q${num}`;
-}
-
-/**
- * Converts a display quarter string back to the integer format expected by the backend.
- * Useful for API calls that need the integer value.
- *
- *   "Annual" → 0
- *   "Q1" → 1
- *   "Q2" → 2
- *   "Q3" → 3
- *   "Q4" → 4
- */
-export function quarterToInt(quarterStr: string): number {
-  if (quarterStr.toLowerCase() === "annual") return 0;
-  const match = quarterStr.match(/Q(\d)/i);
-  if (!match) return 1;
-  return parseInt(match[1], 10);
-}
-
-/**
- * Gets the current active quarter display string for an indicator
- */
-export function getActiveQuarterDisplay(indicator: IIndicatorUI): string {
-  if (indicator.reporting_cycle === "Annual") return "Annual";
-  return normaliseQuarter(indicator.active_quarter);
-}
-
-/**
- * Flatten all quarterly submissions into a single array.
- * Useful for filtering / searching across quarters.
- */
-export const flattenSubmissions = (indicator: IIndicatorUI): ISubmissionUI[] =>
-  Object.values(indicator.submissions ?? {}).flat();
-
-/**
- * Get the latest submission for a specific quarter
- */
-export const getLatestSubmissionForQuarter = (
-  indicator: IIndicatorUI,
-  quarterDisplay: string,
-  year?: number,
-): ISubmissionUI | null => {
-  const submissions =
-    indicator.submissions?.[
-      `${quarterDisplay}_${year || new Date().getFullYear()}`
-    ];
-  if (!submissions || submissions.length === 0) return null;
-  // Submissions are ordered with latest first (by submitted_at DESC)
-  return submissions[0];
-};
-
-/**
- * Check if a submission exists for the current quarter
- */
-export const hasSubmissionForCurrentQuarter = (
-  indicator: IIndicatorUI,
-): boolean => {
-  const activeDisplay = getActiveQuarterDisplay(indicator);
-  const currentYear = new Date().getFullYear();
-  const submissions =
-    indicator.submissions?.[`${activeDisplay}_${currentYear}`];
-  return submissions && submissions.length > 0;
-};
-
-/**
- * Get the review status for the current quarter's submission
- */
-export const getCurrentQuarterReviewStatus = (
-  indicator: IIndicatorUI,
-): string | null => {
-  const latest = getLatestSubmissionForQuarter(
-    indicator,
-    getActiveQuarterDisplay(indicator),
-  );
-  return latest?.reviewStatus || null;
-};
-
-/**
- * Check if the user can submit/resubmit for the current quarter
- */
-export const canSubmitForCurrentQuarter = (
-  indicator: IIndicatorUI,
-): boolean => {
-  const status = getCurrentQuarterReviewStatus(indicator);
-  const lockedStatuses = [
-    "Awaiting Admin Approval",
-    "Awaiting Super Admin",
-    "Completed",
-  ];
-
-  if (lockedStatuses.includes(indicator.status)) return false;
-  if (!status) return true; // No submission exists
-  return status === "Rejected"; // Can only resubmit if rejected
-};
-
-/* ─── INITIAL STATE ──────────────────────────────────────────────────────────*/
 
 const initialState: UserIndicatorState = {
+  indicators: [],
   myIndicators: [],
   rejectedIndicators: [],
+  selectedIndicator: null,
   currentIndicator: null,
   loading: false,
+  actionLoading: false,
   uploading: false,
   error: null,
   lastSubmissionId: null,
 };
 
-/* ─── UPSERT HELPER ──────────────────────────────────────────────────────────*/
+/* ─── Bucket helpers (exported) ──────────────────────────────────────────── */
 
-const upsertIndicator = (
-  state: UserIndicatorState,
+export const getPendingSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  bucket.find((s) => s.reviewStatus === "Pending");
+
+export const getRejectedSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  bucket
+    .filter((s) => s.reviewStatus === "Rejected")
+    .sort(
+      (a, b) =>
+        new Date(b.submittedAt ?? 0).getTime() -
+        new Date(a.submittedAt ?? 0).getTime(),
+    )[0];
+
+export const getActiveSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  getPendingSubmission(bucket) ??
+  bucket.find((s) => s.reviewStatus === "Accepted") ??
+  getRejectedSubmission(bucket);
+
+export const getCurrentQuarterReviewStatus = (
   indicator: IIndicatorUI,
-) => {
-  if (!indicator?.id) return;
+): string | null => {
+  const key = _activeKey(indicator);
+  if (!key) return null;
+  const bucket = indicator.submissions?.[key] ?? [];
+  return getActiveSubmission(bucket)?.reviewStatus ?? null;
+};
 
-  // Sync into myIndicators
-  const index = state.myIndicators.findIndex((i) => i.id === indicator.id);
-  if (index !== -1) {
-    state.myIndicators[index] = indicator;
-  } else {
-    state.myIndicators.unshift(indicator);
-  }
-
-  // Sync into rejectedIndicators (preserve rejectedQuarters if already present)
-  const rejIndex = state.rejectedIndicators.findIndex(
-    (i) => i.id === indicator.id,
+export const canSubmitForCurrentQuarter = (indicator: IIndicatorUI): boolean => {
+  const key = _activeKey(indicator);
+  if (!key) return true;
+  const bucket = indicator.submissions?.[key] ?? [];
+  return bucket.every(
+    (s) => s.reviewStatus === "Rejected" || s.reviewStatus == null,
   );
-  if (rejIndex !== -1) {
-    state.rejectedIndicators[rejIndex] = {
-      ...indicator,
-      rejectedQuarters:
-        (indicator as IRejectedIndicatorUI).rejectedQuarters ??
-        state.rejectedIndicators[rejIndex].rejectedQuarters ??
-        [],
-    };
-  }
-
-  // Sync currentIndicator
-  if (state.currentIndicator?.id === indicator.id) {
-    state.currentIndicator = indicator;
-  }
 };
 
-/* ─── THUNK ARG TYPES ────────────────────────────────────────────────────────*/
-
-interface SubmissionPayload {
-  id: string;
-  formData: FormData;
-  idempotencyKey?: string;
-}
-
-interface AddDocumentsPayload {
-  id: string;
-  quarter: string | number;
-  formData: FormData;
-  idempotencyKey?: string;
-}
-
-interface AddDocumentsResult {
-  documents: IDocumentUI[];
-  message: string;
-  submissionId?: string;
-}
-
-interface SubmissionResult {
-  message: string;
-  submissionId: string;
-  idempotent?: boolean;
-}
-
-interface UpdateDocumentDescriptionsPayload {
-  submissionId: string;
-  documents: Array<{ documentId: string; description: string }>;
-  idempotencyKey?: string;
-}
-
-interface UpdateDocumentDescriptionPayload {
-  docId: string;
-  description: string;
-  idempotencyKey?: string;
-}
-
-interface UpdateDocumentDescriptionsResult {
-  submissionId: string;
-  updatedDocuments: IDocumentUI[];
-  message: string;
-}
-
-interface UpdateDocumentDescriptionResult {
-  document: IDocumentUI;
-  previousDescription: string;
-  message: string;
-}
-
-/* ─── THUNKS ─────────────────────────────────────────────────────────────────*/
-
-const extractError = (error: unknown, fallback: string): string => {
-  const err = error as KnownError;
-  return err.response?.data?.message ?? err.message ?? fallback;
+export const hasSubmissionForCurrentQuarter = (
+  indicator: IIndicatorUI,
+): boolean => {
+  const key = _activeKey(indicator);
+  if (!key) return false;
+  return (indicator.submissions?.[key]?.length ?? 0) > 0;
 };
 
-// Add idempotency key to FormData if not present
-const addIdempotencyKey = (formData: FormData): string => {
-  if (!formData.has("idempotencyKey")) {
-    const key = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-    formData.append("idempotencyKey", key);
-    return key;
-  }
-  return formData.get("idempotencyKey") as string;
+export const flattenSubmissions = (indicator: IIndicatorUI): ISubmissionUI[] =>
+  Object.values(indicator.submissions ?? {})
+    .flat()
+    .sort(
+      (a, b) =>
+        new Date(b.submittedAt ?? 0).getTime() -
+        new Date(a.submittedAt ?? 0).getTime(),
+    );
+
+export const getActiveQuarterDisplay = (indicator: IIndicatorUI): string => {
+  if (
+    indicator.reporting_cycle === "Annual" ||
+    indicator.reportingCycle === "Annual"
+  )
+    return "Annual";
+  const q = indicator.currentQuarter ?? _currentQuarter();
+  return `Q${q}`;
 };
 
-export const fetchMyAssignments = createAsyncThunk<
-  IIndicatorUI[],
-  void,
-  { rejectValue: string }
->("userIndicators/fetchAll", async (_, { rejectWithValue }) => {
-  try {
-    const response = await apiPrivate.get<{ data: IIndicatorUI[] }>(
-      "/user-indicators/my-assignments",
-    );
-    return response.data.data;
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Failed to load assignments"));
-  }
-});
+/* ─── Private helpers ────────────────────────────────────────────────────── */
 
-export const fetchRejectedSubmissions = createAsyncThunk<
-  IRejectedIndicatorUI[],
-  void,
-  { rejectValue: string }
->("userIndicators/fetchRejects", async (_, { rejectWithValue }) => {
-  try {
-    const response = await apiPrivate.get<{ data: IRejectedIndicatorUI[] }>(
-      "/user-indicators/rejects",
-    );
-    return response.data.data;
-  } catch (error) {
-    return rejectWithValue(
-      extractError(error, "Failed to load rejected filings"),
-    );
-  }
-});
+const _currentQuarter = (): number => Math.ceil((new Date().getMonth() + 1) / 3);
 
-export const fetchIndicatorDetails = createAsyncThunk<
-  IIndicatorUI,
-  string,
-  { rejectValue: string }
->("userIndicators/fetchDetails", async (id, { rejectWithValue }) => {
-  try {
-    const response = await apiPrivate.get<{ data: IIndicatorUI }>(
-      `/user-indicators/${id}`,
-    );
-    return response.data.data;
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Failed to load details"));
-  }
-});
+const _activeKey = (indicator: IIndicatorUI): string | null => {
+  const year = indicator.currentYear ?? new Date().getFullYear();
+  if (
+    indicator.reporting_cycle === "Annual" ||
+    indicator.reportingCycle === "Annual"
+  )
+    return `Annual_${year}`;
+  const q = indicator.currentQuarter ?? _currentQuarter();
+  return `Q${q}_${year}`;
+};
 
-export const submitIndicatorProgress = createAsyncThunk<
-  SubmissionResult,
-  SubmissionPayload,
-  { rejectValue: string }
->("userIndicators/submit", async (arg, { dispatch, rejectWithValue }) => {
-  try {
-    addIdempotencyKey(arg.formData);
-    const response = await apiPrivate.post<{
-      success: boolean;
-      message: string;
-      submissionId: string;
-      idempotent?: boolean;
-    }>(`/user-indicators/${arg.id}/submit`, arg.formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+/* ─── Thunks (corrected endpoints) ──────────────────────────────────────── */
 
-    // Refresh the indicator data
-    await dispatch(fetchIndicatorDetails(arg.id));
-
-    return {
-      message: response.data.message,
-      submissionId: response.data.submissionId,
-      idempotent: response.data.idempotent,
-    };
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Submission failed"));
-  }
-});
-
-export const resubmitIndicatorProgress = createAsyncThunk<
-  SubmissionResult,
-  SubmissionPayload,
-  { rejectValue: string }
->("userIndicators/resubmit", async (arg, { dispatch, rejectWithValue }) => {
-  try {
-    addIdempotencyKey(arg.formData);
-    const response = await apiPrivate.post<{
-      success: boolean;
-      message: string;
-      submissionId: string;
-      idempotent?: boolean;
-    }>(`/user-indicators/${arg.id}/resubmit`, arg.formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-
-    await dispatch(fetchIndicatorDetails(arg.id));
-
-    return {
-      message: response.data.message,
-      submissionId: response.data.submissionId,
-      idempotent: response.data.idempotent,
-    };
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Resubmission failed"));
-  }
-});
-
-export const addIndicatorDocuments = createAsyncThunk<
-  AddDocumentsResult,
-  AddDocumentsPayload,
-  { rejectValue: string }
->("userIndicators/addDocuments", async (arg, { dispatch, rejectWithValue }) => {
-  try {
-    addIdempotencyKey(arg.formData);
-
-    // Normalise the quarter before sending
-    const normalisedQ = normaliseQuarter(arg.quarter);
-    if (!arg.formData.has("quarter")) {
-      arg.formData.append("quarter", normalisedQ);
-    }
-
-    const response = await apiPrivate.post<{
-      success: boolean;
-      message: string;
-      documents: IDocumentUI[];
-      submissionId?: string;
-    }>(`/user-indicators/${arg.id}/add-documents`, arg.formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-
-    await dispatch(fetchIndicatorDetails(arg.id));
-
-    return {
-      documents: response.data.documents,
-      message: response.data.message,
-      submissionId: response.data.submissionId,
-    };
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Upload failed"));
-  }
-});
-
-export const deleteRejectedDocument = createAsyncThunk<
-  void,
-  { docId: string; indicatorId: string },
-  { rejectValue: string }
->(
-  "userIndicators/deleteDocument",
-  async ({ docId, indicatorId }, { dispatch, rejectWithValue }) => {
+/** GET /user-indicators/my-assignments */
+export const fetchMyIndicators = createAsyncThunk(
+  "userIndicators/fetchMyIndicators",
+  async (_, { rejectWithValue }) => {
     try {
-      await apiPrivate.delete(`/user-indicators/documents/${docId}`);
-      await dispatch(fetchIndicatorDetails(indicatorId));
-    } catch (error) {
-      return rejectWithValue(extractError(error, "Delete failed"));
+      const { data } = await api.get("/user-indicators/my-assignments");
+      return (data.data ?? []) as IIndicatorUI[];
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to fetch indicators",
+      );
     }
   },
 );
 
-export const updateRejectedSubmission = createAsyncThunk<
-  SubmissionResult,
-  SubmissionPayload,
-  { rejectValue: string }
->(
-  "userIndicators/updateSubmission",
-  async (arg, { dispatch, rejectWithValue }) => {
+/** GET /user-indicators/rejects */
+export const fetchRejectedSubmissions = createAsyncThunk(
+  "userIndicators/fetchRejectedSubmissions",
+  async (_, { rejectWithValue }) => {
     try {
-      addIdempotencyKey(arg.formData);
-      const response = await apiPrivate.patch<{
-        success: boolean;
-        message: string;
-        submissionId: string;
-        idempotent?: boolean;
-      }>(`/user-indicators/${arg.id}/update-submission`, arg.formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      await dispatch(fetchIndicatorDetails(arg.id));
-
-      return {
-        message: response.data.message,
-        submissionId: response.data.submissionId,
-        idempotent: response.data.idempotent,
-      };
-    } catch (error) {
-      return rejectWithValue(extractError(error, "Update failed"));
+      const { data } = await api.get("/user-indicators/rejects");
+      return (data.data ?? []) as IIndicatorUI[];
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to fetch rejected submissions",
+      );
     }
   },
 );
 
-// NEW: Update multiple document descriptions for a submission
-export const updateDocumentDescriptions = createAsyncThunk<
-  UpdateDocumentDescriptionsResult,
-  UpdateDocumentDescriptionsPayload,
-  { rejectValue: string }
->(
+/** GET /user-indicators/:id */
+export const fetchIndicatorDetails = createAsyncThunk(
+  "userIndicators/fetchIndicatorDetails",
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get(`/user-indicators/${id}`);
+      return data.data as IIndicatorUI;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to fetch indicator details",
+      );
+    }
+  },
+);
+
+/** POST /user-indicators/:id/submit */
+export const submitProgress = createAsyncThunk(
+  "userIndicators/submitProgress",
+  async (
+    { id, formData }: { id: string; formData: FormData },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.post(
+        `/user-indicators/${id}/submit`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      return data.data as { submissionId: string };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to submit progress",
+      );
+    }
+  },
+);
+
+/** POST /user-indicators/:id/resubmit */
+export const resubmitProgress = createAsyncThunk(
+  "userIndicators/resubmitProgress",
+  async (
+    { id, formData }: { id: string; formData: FormData },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.post(
+        `/user-indicators/${id}/resubmit`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      return data as { submissionId: string };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to resubmit progress",
+      );
+    }
+  },
+);
+
+/** POST /user-indicators/:id/add-documents */
+export const addDocuments = createAsyncThunk(
+  "userIndicators/addDocuments",
+  async (
+    {
+      id,
+      formData,
+      quarter,
+      idempotencyKey,
+    }: { id: string; formData: FormData; quarter?: number; idempotencyKey?: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      if (quarter !== undefined) formData.append("quarter", String(quarter));
+      const config: Record<string, string> = {};
+      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      const { data } = await api.post(
+        `/user-indicators/${id}/add-documents`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data", ...config } },
+      );
+      return data;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to add documents",
+      );
+    }
+  },
+);
+
+/** PATCH /user-indicators/:id/update-submission */
+export const updateRejectedSubmission = createAsyncThunk(
+  "userIndicators/updateRejectedSubmission",
+  async (
+    { id, formData, idempotencyKey }: { id: string; formData: FormData; idempotencyKey?: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      const config: Record<string, string> = {};
+      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      const { data } = await api.patch(
+        `/user-indicators/${id}/update-submission`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data", ...config } },
+      );
+      return data;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to update submission",
+      );
+    }
+  },
+);
+
+/** PATCH /user-indicators/submissions/:submissionId/documents/descriptions */
+export const updateDocumentDescriptions = createAsyncThunk(
   "userIndicators/updateDocumentDescriptions",
-  async (arg, {  rejectWithValue }) => {
+  async (
+    {
+      submissionId,
+      documents,
+      idempotencyKey,
+    }: { submissionId: string; documents: Array<{ documentId: string; description: string }>; idempotencyKey?: string },
+    { rejectWithValue },
+  ) => {
     try {
-      const response = await apiPrivate.patch<{
-        success: boolean;
-        message: string;
-        data: {
-          submissionId: string;
-          updatedDocuments: IDocumentUI[];
-        };
-        idempotent?: boolean;
-      }>(`/user-indicators/submissions/${arg.submissionId}/documents/descriptions`, 
-        {
-          documents: arg.documents,
-          idempotencyKey: arg.idempotencyKey,
-        }
+      const config: Record<string, string> = {};
+      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      const { data } = await api.patch(
+        `/user-indicators/submissions/${submissionId}/documents/descriptions`,
+        { documents },
+        { headers: config },
       );
-
-      // Refresh the indicator data to get the updated documents
-      // We need the indicator ID - you might want to pass it in the payload
-      // For now, we'll note that the parent component should refresh
-      
-      return {
-        submissionId: response.data.data.submissionId,
-        updatedDocuments: response.data.data.updatedDocuments,
-        message: response.data.message,
-      };
-    } catch (error) {
-      return rejectWithValue(extractError(error, "Failed to update document descriptions"));
+      return data;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to update document descriptions",
+      );
     }
   },
 );
 
-// NEW: Update single document description
-export const updateDocumentDescription = createAsyncThunk<
-  UpdateDocumentDescriptionResult,
-  UpdateDocumentDescriptionPayload,
-  { rejectValue: string }
->(
+/** PATCH /user-indicators/documents/:docId/description */
+export const updateDocumentDescription = createAsyncThunk(
   "userIndicators/updateDocumentDescription",
-  async (arg, { rejectWithValue }) => {
+  async (
+    {
+      docId,
+      description,
+      idempotencyKey,
+    }: { docId: string; description: string; idempotencyKey?: string },
+    { rejectWithValue },
+  ) => {
     try {
-      const response = await apiPrivate.patch<{
-        success: boolean;
-        message: string;
-        data: {
-          document: IDocumentUI;
-          previousDescription: string;
-        };
-        idempotent?: boolean;
-      }>(`/user-indicators/documents/${arg.docId}/description`, 
-        {
-          description: arg.description,
-          idempotencyKey: arg.idempotencyKey,
-        }
+      const config: Record<string, string> = {};
+      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      const { data } = await api.patch(
+        `/user-indicators/documents/${docId}/description`,
+        { description },
+        { headers: config },
       );
-
-      return {
-        document: response.data.data.document,
-        previousDescription: response.data.data.previousDescription,
-        message: response.data.message,
-      };
-    } catch (error) {
-      return rejectWithValue(extractError(error, "Failed to update document description"));
+      return data;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to update document description",
+      );
     }
   },
 );
 
-/* ─── SLICE ──────────────────────────────────────────────────────────────────*/
+/** DELETE /user-indicators/documents/:docId */
+export const deleteDocument = createAsyncThunk(
+  "userIndicators/deleteDocument",
+  async (docId: string, { rejectWithValue }) => {
+    try {
+      const { data } = await api.delete(`/user-indicators/documents/${docId}`);
+      return { docId, data };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to delete document",
+      );
+    }
+  },
+);
 
-const WRITE_ACTIONS = {
-  pending: [
-    submitIndicatorProgress.pending.type,
-    resubmitIndicatorProgress.pending.type,
-    addIndicatorDocuments.pending.type,
-    deleteRejectedDocument.pending.type,
-    updateRejectedSubmission.pending.type,
-    updateDocumentDescriptions.pending.type,
-    updateDocumentDescription.pending.type,
-  ],
-  fulfilled: [
-    submitIndicatorProgress.fulfilled.type,
-    resubmitIndicatorProgress.fulfilled.type,
-    addIndicatorDocuments.fulfilled.type,
-    deleteRejectedDocument.fulfilled.type,
-    updateRejectedSubmission.fulfilled.type,
-    updateDocumentDescriptions.fulfilled.type,
-    updateDocumentDescription.fulfilled.type,
-  ],
-  rejected: [
-    submitIndicatorProgress.rejected.type,
-    resubmitIndicatorProgress.rejected.type,
-    addIndicatorDocuments.rejected.type,
-    deleteRejectedDocument.rejected.type,
-    updateRejectedSubmission.rejected.type,
-    updateDocumentDescriptions.rejected.type,
-    updateDocumentDescription.rejected.type,
-  ],
-};
+/* ─── Slice ──────────────────────────────────────────────────────────────── */
 
 const userIndicatorSlice = createSlice({
   name: "userIndicators",
   initialState,
   reducers: {
-    clearIndicatorError: (state) => {
+    clearIndicatorError(state) {
       state.error = null;
     },
-    resetUserIndicatorState: () => initialState,
-    clearLastSubmissionId: (state) => {
+    clearLastSubmissionId(state) {
       state.lastSubmissionId = null;
     },
-
-    /**
-     * Selects an indicator from either list by ID.
-     * Falls back to null if not found in either list.
-     */
-    setLocalSelectedIndicator: (
-      state,
-      action: PayloadAction<string | null>,
-    ) => {
-      const source = [
-        ...state.myIndicators,
-        ...state.rejectedIndicators,
-      ] as IIndicatorUI[];
-      state.currentIndicator = action.payload
-        ? (source.find((i) => i.id === action.payload) ?? null)
-        : null;
+    setLocalSelectedIndicator(state, action: PayloadAction<string>) {
+      const found =
+        state.myIndicators.find((i) => i.id === action.payload) ??
+        state.indicators.find((i) => i.id === action.payload) ??
+        null;
+      state.selectedIndicator = found;
     },
-
-    /**
-     * Optimistically update a document's status in the local state
-     */
-    optimisticUpdateDocumentStatus: (
+    optimisticUpdateDocumentDescription(
       state,
-      action: PayloadAction<{
-        docId: string;
-        status: IDocumentUI["status"];
-        rejectionReason?: string;
-      }>,
-    ) => {
-      const { docId, status, rejectionReason } = action.payload;
-
-      const updateDocInIndicator = (indicator: IIndicatorUI) => {
-        Object.values(indicator.submissions).forEach((submissions) => {
-          submissions.forEach((submission) => {
-            const doc = submission.documents.find((d) => d.id === docId);
-            if (doc) {
-              doc.status = status;
-              if (rejectionReason) doc.rejectionReason = rejectionReason;
-            }
-          });
-        });
-      };
-
-      if (state.currentIndicator) {
-        updateDocInIndicator(state.currentIndicator);
-      }
-
-      state.myIndicators.forEach(updateDocInIndicator);
-      state.rejectedIndicators.forEach(updateDocInIndicator);
-    },
-
-    /**
-     * Optimistically update a document's description in the local state
-     */
-    optimisticUpdateDocumentDescription: (
-      state,
-      action: PayloadAction<{
-        docId: string;
-        description: string;
-      }>,
-    ) => {
+      action: PayloadAction<{ docId: string; description: string }>,
+    ) {
       const { docId, description } = action.payload;
-
-      const updateDocInIndicator = (indicator: IIndicatorUI) => {
-        Object.values(indicator.submissions).forEach((submissions) => {
-          submissions.forEach((submission) => {
-            const doc = submission.documents.find((d) => d.id === docId);
-            if (doc) {
-              doc.description = description;
-            }
-          });
-        });
+      const patch = (indicator: IIndicatorUI | null) => {
+        if (!indicator?.submissions) return;
+        for (const bucket of Object.values(indicator.submissions)) {
+          for (const sub of bucket) {
+            const doc = sub.documents?.find((d) => d.id === docId);
+            if (doc) doc.description = description;
+          }
+        }
       };
-
-      if (state.currentIndicator) {
-        updateDocInIndicator(state.currentIndicator);
-      }
-
-      state.myIndicators.forEach(updateDocInIndicator);
-      state.rejectedIndicators.forEach(updateDocInIndicator);
+      patch(state.currentIndicator);
+      patch(state.selectedIndicator);
     },
   },
   extraReducers: (builder) => {
+    // fetchMyIndicators
     builder
-      /* ── fetchMyAssignments ─────────────────────────────────────────── */
-      .addCase(fetchMyAssignments.pending, (state) => {
+      .addCase(fetchMyIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchMyAssignments.fulfilled, (state, action) => {
+      .addCase(fetchMyIndicators.fulfilled, (state, action) => {
         state.loading = false;
+        state.indicators = action.payload;
         state.myIndicators = action.payload;
       })
-      .addCase(fetchMyAssignments.rejected, (state, action) => {
+      .addCase(fetchMyIndicators.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload ?? "Error loading assignments";
-      })
+        state.error = (action.payload as string) ?? "Failed to fetch indicators";
+      });
 
-      /* ── fetchRejectedSubmissions ───────────────────────────────────── */
+    // fetchRejectedSubmissions
+    builder
       .addCase(fetchRejectedSubmissions.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -739,93 +457,178 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(fetchRejectedSubmissions.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload ?? "Error loading rejections";
-      })
+        state.error = (action.payload as string) ?? "Failed to fetch rejected submissions";
+      });
 
-      /* ── fetchIndicatorDetails ──────────────────────────────────────── */
+    // fetchIndicatorDetails
+    builder
       .addCase(fetchIndicatorDetails.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(fetchIndicatorDetails.fulfilled, (state, action) => {
         state.loading = false;
+        state.selectedIndicator = action.payload;
         state.currentIndicator = action.payload;
-        upsertIndicator(state, action.payload);
       })
       .addCase(fetchIndicatorDetails.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload ?? "Error loading indicator details";
-      })
+        state.error =
+          (action.payload as string) ?? "Failed to fetch indicator details";
+      });
 
-      /* ── Submit Progress ───────────────────────────────────────────── */
-      .addCase(submitIndicatorProgress.fulfilled, (state, action) => {
+    // submitProgress
+    builder
+      .addCase(submitProgress.pending, (state) => {
+        state.uploading = true;
+        state.error = null;
+      })
+      .addCase(submitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload.submissionId;
-        if (action.payload.idempotent) {
-          console.log("Duplicate submission ignored:", action.payload.message);
-        }
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
       })
-
-      /* ── Resubmit Progress ─────────────────────────────────────────── */
-      .addCase(resubmitIndicatorProgress.fulfilled, (state, action) => {
+      .addCase(submitProgress.rejected, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload.submissionId;
-      })
+        state.error = (action.payload as string) ?? "Failed to submit progress";
+      });
 
-      /* ── Update Submission ─────────────────────────────────────────── */
-      .addCase(updateRejectedSubmission.fulfilled, (state, action) => {
+    // resubmitProgress
+    builder
+      .addCase(resubmitProgress.pending, (state) => {
+        state.uploading = true;
+        state.error = null;
+      })
+      .addCase(resubmitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload.submissionId;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
       })
+      .addCase(resubmitProgress.rejected, (state, action) => {
+        state.uploading = false;
+        state.error =
+          (action.payload as string) ?? "Failed to resubmit progress";
+      });
 
-      /* ── Update Document Descriptions ───────────────────────────────── */
+    // addDocuments
+    builder
+      .addCase(addDocuments.pending, (state) => {
+        state.uploading = true;
+        state.error = null;
+      })
+      .addCase(addDocuments.fulfilled, (state) => {
+        state.uploading = false;
+      })
+      .addCase(addDocuments.rejected, (state, action) => {
+        state.uploading = false;
+        state.error = (action.payload as string) ?? "Failed to add documents";
+      });
+
+    // updateRejectedSubmission
+    builder
+      .addCase(updateRejectedSubmission.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(updateRejectedSubmission.fulfilled, (state) => {
+        state.actionLoading = false;
+      })
+      .addCase(updateRejectedSubmission.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error =
+          (action.payload as string) ?? "Failed to update submission";
+      });
+
+    // updateDocumentDescriptions
+    builder
+      .addCase(updateDocumentDescriptions.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
       .addCase(updateDocumentDescriptions.fulfilled, (state) => {
-        state.uploading = false;
-        // Optionally update the documents in the local state
-        // The parent component should refresh the indicator data
+        state.actionLoading = false;
       })
+      .addCase(updateDocumentDescriptions.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error =
+          (action.payload as string) ?? "Failed to update document descriptions";
+      });
 
-      /* ── Update Document Description ────────────────────────────────── */
+    // updateDocumentDescription
+    builder
+      .addCase(updateDocumentDescription.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
       .addCase(updateDocumentDescription.fulfilled, (state) => {
-        state.uploading = false;
-        // Optionally update the document in the local state
-        // The parent component should refresh the indicator data
+        state.actionLoading = false;
       })
+      .addCase(updateDocumentDescription.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error =
+          (action.payload as string) ?? "Failed to update document description";
+      });
 
-      /* ── Write operations (submit / resubmit / add docs / delete / update) */
-      .addMatcher(
-        (action): action is AnyAction =>
-          WRITE_ACTIONS.pending.includes(action.type),
-        (state) => {
-          state.uploading = true;
-          state.error = null;
-        },
-      )
-      .addMatcher(
-        (action): action is AnyAction =>
-          WRITE_ACTIONS.fulfilled.includes(action.type),
-        (state) => {
-          state.uploading = false;
-        },
-      )
-      .addMatcher(
-        (action): action is AnyAction =>
-          WRITE_ACTIONS.rejected.includes(action.type),
-        (state, action) => {
-          state.uploading = false;
-          state.error = (action.payload as string) ?? "Operation failed";
-        },
-      );
+    // deleteDocument
+    builder
+      .addCase(deleteDocument.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteDocument.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        const docId = action.payload.docId;
+        const removeFromIndicator = (indicator: IIndicatorUI | null) => {
+          if (!indicator?.submissions) return;
+          for (const bucket of Object.values(indicator.submissions)) {
+            for (const sub of bucket) {
+              const idx = sub.documents?.findIndex((d) => d.id === docId);
+              if (idx !== undefined && idx !== -1 && sub.documents) {
+                sub.documents.splice(idx, 1);
+              }
+            }
+          }
+        };
+        removeFromIndicator(state.currentIndicator);
+        removeFromIndicator(state.selectedIndicator);
+      })
+      .addCase(deleteDocument.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = (action.payload as string) ?? "Failed to delete document";
+      });
+
+    // Generic rejected matcher
+    builder.addMatcher(
+      (action): action is PayloadAction<string | undefined> =>
+        typeof action.type === "string" &&
+        action.type.startsWith("userIndicators/") &&
+        action.type.endsWith("/rejected"),
+      (state, action) => {
+        state.loading = false;
+        state.actionLoading = false;
+        state.uploading = false;
+        if (!state.error) {
+          state.error =
+            (action.payload as string) ?? "An unexpected error occurred";
+        }
+      },
+    );
   },
 });
 
+/* ─── Actions ────────────────────────────────────────────────────────────── */
+
 export const {
   clearIndicatorError,
-  resetUserIndicatorState,
-  setLocalSelectedIndicator,
   clearLastSubmissionId,
-  optimisticUpdateDocumentStatus,
+  setLocalSelectedIndicator,
   optimisticUpdateDocumentDescription,
 } = userIndicatorSlice.actions;
+
+/* ─── Aliases ─────────────────────────────────────────────────────────────── */
+
+export const fetchMyAssignments = fetchMyIndicators;
+export const submitIndicatorProgress = submitProgress;
+export const resubmitIndicatorProgress = resubmitProgress;
+export const addIndicatorDocuments = addDocuments;
+export const updateSubmission = updateRejectedSubmission;
 
 export default userIndicatorSlice.reducer;

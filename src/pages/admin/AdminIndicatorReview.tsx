@@ -13,27 +13,28 @@ import {
   Info,
   RotateCcw,
   User,
+  MessageSquareWarning,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
-  processAdminReview,
+  approveSubmission,
+  rejectSubmission,
   getIndicatorByIdAdmin,
   getSubmitterName,
   type ISubmission,
   type IDocument,
-  type ISubmissionReviewUpdate,
   type IDocumentReviewUpdate,
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Toast {
   type: "success" | "error";
   message: string;
 }
 
-// ─── Deduplication helper ────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
   if (!docs || !Array.isArray(docs) || docs.length === 0) return [];
@@ -46,12 +47,30 @@ function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
   return Array.from(seen.values());
 }
 
-// ─── Safe document extractor ─────────────────────────────────────────────────
-
 function getSafeDocuments(sub: ISubmission): IDocument[] {
   const docs = sub.documents;
   if (!docs || !Array.isArray(docs)) return [];
   return docs;
+}
+
+function getPrecedingRejection(
+  sub: ISubmission,
+  periodSubmissions: ISubmission[]
+): ISubmission | null {
+  const currentIdx = periodSubmissions.findIndex((s) => s.id === sub.id);
+  if (currentIdx !== -1) {
+    for (let i = currentIdx + 1; i < periodSubmissions.length; i++) {
+      if (periodSubmissions[i].reviewStatus === "Rejected") {
+        return periodSubmissions[i];
+      }
+    }
+  }
+
+  if (sub.previousRejectionReason) {
+    return { adminComment: sub.previousRejectionReason } as ISubmission;
+  }
+
+  return null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -64,8 +83,20 @@ const AdminIndicatorReview: React.FC = () => {
   const { selectedIndicator: indicator, isReviewing, isLoading } =
     useAppSelector((state) => state.adminIndicators);
 
+  // Core local states
+  const [individualComments, setIndividualComments] = useState<Record<string, string>>({});
+  const [documentUpdates, setDocumentUpdates] = useState<IDocumentReviewUpdate[]>([]);
+  const [overallComment, setOverallComment] = useState("");
+  const [explicitRejectionToggle, setExplicitRejectionToggle] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+
+  // Fetch data on mount
   useEffect(() => {
-    if (indicatorId) dispatch(getIndicatorByIdAdmin(indicatorId));
+    if (indicatorId) {
+      dispatch(getIndicatorByIdAdmin(indicatorId));
+    }
   }, [dispatch, indicatorId]);
 
   const allSubmissions = useMemo<ISubmission[]>(() => {
@@ -78,32 +109,10 @@ const AdminIndicatorReview: React.FC = () => {
     [allSubmissions]
   );
 
-  const initialReviews = useMemo<ISubmissionReviewUpdate[]>(
-    () =>
-      pendingSubmissions.map((s) => ({
-        submissionId: s.id,
-        reviewStatus: "Pending" as const,
-        adminComment: s.adminComment ?? "",
-      })),
-    [pendingSubmissions]
-  );
-
-  const [docReviews, setDocReviews] = useState<ISubmissionReviewUpdate[]>([]);
-  const [documentUpdates, setDocumentUpdates] = useState<IDocumentReviewUpdate[]>([]);
-  const [overallComment, setOverallComment] = useState("");
-  const [rejectionMode, setRejectionMode] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
-  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
-  const [toast, setToast] = useState<Toast | null>(null);
-
-  useEffect(() => {
-    setDocReviews(initialReviews);
-  }, [initialReviews]);
-
-  useEffect(() => {
-    if (documentUpdates.length > 0 && !rejectionMode) setRejectionMode(true);
-    if (documentUpdates.length === 0 && rejectionMode) setRejectionMode(false);
-  }, [documentUpdates.length, rejectionMode]);
+  // Clean, derived render computation instead of executing a synchronizing useEffect
+  const rejectionMode = useMemo(() => {
+    return explicitRejectionToggle || documentUpdates.length > 0;
+  }, [explicitRejectionToggle, documentUpdates.length]);
 
   const showToast = useCallback((type: Toast["type"], message: string) => {
     setToast({ type, message });
@@ -124,60 +133,77 @@ const AdminIndicatorReview: React.FC = () => {
     []
   );
 
-  const handleFinalAction = useCallback(
-    async (decision: "Verified" | "Rejected") => {
-      if (!indicator) return;
+  const resetReviewState = useCallback(() => {
+    setOverallComment("");
+    setIndividualComments({});
+    setDocumentUpdates([]);
+    setExplicitRejectionToggle(false);
+  }, []);
 
-      const finalDecision = documentUpdates.length > 0 ? "Rejected" : decision;
+  // ── Approve ───────────────────────────────────────────────────────────────
 
-      if (finalDecision === "Rejected" && !overallComment.trim()) {
-        alert("Please provide an overall justification for rejection.");
-        return;
-      }
+  const handleApprove = useCallback(async () => {
+    if (!indicator) return;
 
-      const finalSubmissionUpdates = docReviews.map((r) => ({
-        submissionId: r.submissionId,
-        reviewStatus:
-          finalDecision === "Verified" ? ("Verified" as const) : r.reviewStatus,
-        adminComment: r.adminComment?.trim() || overallComment.trim(),
-      }));
+    // Dynamically compile payloads on event execution path rather than pulling from state structures
+    const submissionUpdates = pendingSubmissions.map((s) => ({
+      submissionId: s.id,
+      adminComment: individualComments[s.id]?.trim() || overallComment.trim() || "Approved.",
+    }));
 
-      const result = await dispatch(
-        processAdminReview({
-          id: indicator.id,
-          reviewData: {
-            decision: finalDecision,
-            adminOverallComments:
-              overallComment.trim() ||
-              (finalDecision === "Verified"
-                ? "Verified and approved."
-                : "Returned for corrections."),
-            submissionUpdates: finalSubmissionUpdates,
-            documentUpdates,
-          },
-        })
-      );
+    const result = await dispatch(
+      approveSubmission({
+        id: indicator.id,
+        payload: {
+          submissionUpdates,
+          adminOverallComments: overallComment.trim() || undefined,
+        },
+      })
+    );
 
-      if (processAdminReview.fulfilled.match(result)) {
-        showToast(
-          "success",
-          finalDecision === "Verified"
-            ? "Submission approved and forwarded to Super Admin."
-            : "Submission returned for correction."
-        );
-        dispatch(getIndicatorByIdAdmin(indicator.id));
-        setOverallComment("");
-        setDocumentUpdates([]);
-        setRejectionMode(false);
-      } else if (processAdminReview.rejected.match(result)) {
-        showToast(
-          "error",
-          (result.payload as string) || "Something went wrong. Please try again."
-        );
-      }
-    },
-    [dispatch, docReviews, documentUpdates, indicator, overallComment, showToast]
-  );
+    if (approveSubmission.fulfilled.match(result)) {
+      showToast("success", "Submission approved and forwarded to Super Admin.");
+      dispatch(getIndicatorByIdAdmin(indicator.id));
+      resetReviewState();
+    } else if (approveSubmission.rejected.match(result)) {
+      showToast("error", (result.payload as string) || "Approval failed. Please try again.");
+    }
+  }, [dispatch, indicator, individualComments, overallComment, pendingSubmissions, resetReviewState, showToast]);
+
+  // ── Reject ────────────────────────────────────────────────────────────────
+
+  const handleReject = useCallback(async () => {
+    if (!indicator) return;
+
+    if (!overallComment.trim()) {
+      alert("Please provide an overall justification for rejection.");
+      return;
+    }
+
+    const submissionUpdates = pendingSubmissions.map((s) => ({
+      submissionId: s.id,
+      adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
+    }));
+
+    const result = await dispatch(
+      rejectSubmission({
+        id: indicator.id,
+        payload: {
+          adminOverallComments: overallComment.trim(),
+          submissionUpdates,
+          documentUpdates,
+        },
+      })
+    );
+
+    if (rejectSubmission.fulfilled.match(result)) {
+      showToast("success", "Submission returned for correction.");
+      dispatch(getIndicatorByIdAdmin(indicator.id));
+      resetReviewState();
+    } else if (rejectSubmission.rejected.match(result)) {
+      showToast("error", (result.payload as string) || "Rejection failed. Please try again.");
+    }
+  }, [dispatch, indicator, individualComments, documentUpdates, overallComment, pendingSubmissions, resetReviewState, showToast]);
 
   // ── Loading ───────────────────────────────────────────────────────────────
 
@@ -211,8 +237,6 @@ const AdminIndicatorReview: React.FC = () => {
 
   const hasPending = pendingSubmissions.length > 0;
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="flex flex-col min-h-screen bg-[#fcfdfb]">
 
@@ -242,7 +266,7 @@ const AdminIndicatorReview: React.FC = () => {
           <div className="flex items-center gap-4">
             {!rejectionMode && (
               <button
-                onClick={() => setRejectionMode(true)}
+                onClick={() => setExplicitRejectionToggle(true)}
                 disabled={isReviewing}
                 className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 text-rose-600 hover:bg-rose-50 transition-all disabled:opacity-50"
               >
@@ -251,9 +275,7 @@ const AdminIndicatorReview: React.FC = () => {
             )}
             <button
               disabled={isReviewing}
-              onClick={() =>
-                handleFinalAction(rejectionMode ? "Rejected" : "Verified")
-              }
+              onClick={rejectionMode ? handleReject : handleApprove}
               className={`px-7 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
                 rejectionMode
                   ? "bg-rose-600 text-white hover:bg-rose-700 shadow-rose-200"
@@ -267,7 +289,7 @@ const AdminIndicatorReview: React.FC = () => {
               ) : (
                 <CheckCircle2 size={14} />
               )}
-              {rejectionMode ? "Confirm Rejection" : "Approve Progress"}
+              {rejectionMode ? "Confirm Rejection" : "Approve Submission"}
             </button>
           </div>
         )}
@@ -321,12 +343,12 @@ const AdminIndicatorReview: React.FC = () => {
                 <div className="flex items-center gap-3 text-rose-600">
                   <AlertOctagon size={20} />
                   <h4 className="text-[11px] font-black uppercase tracking-widest">
-                    Global Correction Note
+                    Rejection Note
                   </h4>
                 </div>
                 <button
                   onClick={() => {
-                    setRejectionMode(false);
+                    setExplicitRejectionToggle(false);
                     setDocumentUpdates([]);
                   }}
                   className="text-[10px] font-black text-slate-400 hover:text-black uppercase"
@@ -355,7 +377,6 @@ const AdminIndicatorReview: React.FC = () => {
                 ([quarterKey, submissions]) => (
                   <div key={quarterKey} className="space-y-4">
 
-                    {/* Period divider */}
                     <div className="flex items-center gap-4 px-2">
                       <div className="h-[1px] flex-1 bg-slate-100" />
                       <span className="text-[10px] font-black text-slate-300 uppercase">
@@ -370,6 +391,11 @@ const AdminIndicatorReview: React.FC = () => {
                       const isResubmission = sub.resubmissionCount > 0;
                       const submitterName = getSubmitterName(sub);
 
+                      const precedingRejection =
+                        sub.reviewStatus === "Pending"
+                          ? getPrecedingRejection(sub, submissions)
+                          : null;
+
                       return (
                         <div
                           key={sub.id}
@@ -382,36 +408,20 @@ const AdminIndicatorReview: React.FC = () => {
                           <div className="flex flex-col md:flex-row justify-between gap-8">
                             <div className="flex-1 space-y-6">
 
-                              {/* Submission header */}
                               <div className="flex items-center justify-between flex-wrap gap-4">
                                 <div className="flex items-center gap-4">
-
-                                  {/* Reported value */}
-                                  <div className="flex items-center gap-3">
-                                    <div
-                                      className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                        isResubmission
-                                          ? "bg-amber-50 text-amber-600"
-                                          : "bg-emerald-50 text-emerald-600"
-                                      }`}
-                                    >
-                                      <FileText size={20} />
-                                    </div>
-                                    <div>
-                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                        Reported Value
-                                      </p>
-                                      <p className="text-lg font-black text-slate-900">
-                                        {sub.achievedValue || 0}{" "}
-                                        {indicator.unit || "%"}
-                                      </p>
-                                    </div>
+                                  <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                      Reported Value
+                                    </p>
+                                    <p className="text-lg font-black text-slate-900">
+                                      {sub.achievedValue || 0}{" "}
+                                      {indicator.unit || "%"}
+                                    </p>
                                   </div>
 
-                                  {/* Divider */}
                                   <div className="w-px h-8 bg-slate-100" />
 
-                                  {/* Submitted by */}
                                   <div>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">
                                       Submitted By
@@ -433,7 +443,6 @@ const AdminIndicatorReview: React.FC = () => {
                                   </div>
                                 </div>
 
-                                {/* Right-side badges */}
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {isResubmission && (
                                     <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
@@ -458,12 +467,49 @@ const AdminIndicatorReview: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* Notes */}
+                              {precedingRejection?.adminComment && (
+                                <div className="flex gap-3 p-5 bg-rose-50/60 border border-rose-200/70 rounded-2xl">
+                                  <div className="shrink-0 mt-0.5">
+                                    <MessageSquareWarning size={15} className="text-rose-500" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mb-1.5">
+                                      Previous Rejection Reason
+                                    </p>
+                                    <p className="text-[12px] text-rose-700 font-semibold leading-relaxed">
+                                      {precedingRejection.adminComment}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+
                               <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                                  User's Commentary
+                                </p>
                                 <p className="text-[13px] text-slate-600 font-medium leading-relaxed italic">
                                   "{sub.notes || "No user commentary provided."}"
                                 </p>
                               </div>
+
+                              {/* Row comment updates input area */}
+                              {sub.reviewStatus === "Pending" && (
+                                <div className="space-y-2">
+                                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                    Reviewer Row Comments (Optional)
+                                  </label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Add notes specific to this value..."
+                                    value={individualComments[sub.id] || ""}
+                                    onChange={(e) => setIndividualComments(prev => ({
+                                      ...prev,
+                                      [sub.id]: e.target.value
+                                    }))}
+                                    className="w-full px-4 py-3 border border-slate-100 bg-slate-50/30 rounded-xl text-[12px] font-medium outline-none focus:border-slate-300 focus:bg-white transition-all"
+                                  />
+                                </div>
+                              )}
 
                               {/* Documents */}
                               <div className="space-y-3">
@@ -476,9 +522,7 @@ const AdminIndicatorReview: React.FC = () => {
                                       <span className="text-[9px] font-bold text-amber-500 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg">
                                         {documents.length - uniqueDocs.length}{" "}
                                         duplicate
-                                        {documents.length - uniqueDocs.length > 1
-                                          ? "s"
-                                          : ""}{" "}
+                                        {documents.length - uniqueDocs.length > 1 ? "s" : ""}{" "}
                                         collapsed · showing latest versions
                                       </span>
                                     )}
@@ -492,15 +536,10 @@ const AdminIndicatorReview: React.FC = () => {
                                       );
                                       const isExpanded = expandedDocId === doc.id;
                                       const docDescription =
-                                        doc.description ||
-                                        doc.fileDescription ||
-                                        null;
+                                        doc.description || doc.fileDescription || null;
 
                                       return (
-                                        <div
-                                          key={doc.id}
-                                          className="group relative"
-                                        >
+                                        <div key={doc.id} className="group relative">
                                           <div
                                             className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
                                               isRejected
@@ -508,8 +547,8 @@ const AdminIndicatorReview: React.FC = () => {
                                                 : "border-slate-100 bg-white shadow-sm"
                                             }`}
                                           >
-                                            {/* File name + preview trigger */}
                                             <button
+                                              type="button"
                                               onClick={() =>
                                                 setPreviewFile({
                                                   url: doc.evidenceUrl,
@@ -528,16 +567,13 @@ const AdminIndicatorReview: React.FC = () => {
                                               />
                                               <span
                                                 className={`text-[11px] font-bold truncate ${
-                                                  isRejected
-                                                    ? "text-rose-600"
-                                                    : "text-slate-700"
+                                                  isRejected ? "text-rose-600" : "text-slate-700"
                                                 }`}
                                               >
                                                 {doc.fileName || "Untitled Document"}
                                               </span>
                                             </button>
 
-                                            {/* Per-document resubmission badge */}
                                             {isResubmission && (
                                               <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
                                                 <RotateCcw size={9} />
@@ -545,15 +581,12 @@ const AdminIndicatorReview: React.FC = () => {
                                               </span>
                                             )}
 
-                                            {/* Info toggle */}
                                             {docDescription && (
                                               <button
+                                                type="button"
                                                 onClick={() =>
-                                                  setExpandedDocId(
-                                                    isExpanded ? null : doc.id
-                                                  )
+                                                  setExpandedDocId(isExpanded ? null : doc.id)
                                                 }
-                                                title="Toggle document description"
                                                 className={`shrink-0 p-1 rounded-lg transition-all ${
                                                   isExpanded
                                                     ? "bg-emerald-100 text-emerald-700"
@@ -564,19 +597,14 @@ const AdminIndicatorReview: React.FC = () => {
                                               </button>
                                             )}
 
-                                            {/* Reject toggle — Pending only */}
                                             {sub.reviewStatus === "Pending" && (
                                               <button
+                                                type="button"
                                                 onClick={() =>
                                                   toggleFileRejection(
                                                     doc.id,
                                                     doc.fileName || "document"
                                                   )
-                                                }
-                                                title={
-                                                  isRejected
-                                                    ? "Un-reject file"
-                                                    : "Reject file"
                                                 }
                                                 className={`shrink-0 p-1 rounded-full shadow-sm transition-all ${
                                                   isRejected
@@ -593,7 +621,6 @@ const AdminIndicatorReview: React.FC = () => {
                                             )}
                                           </div>
 
-                                          {/* Description expansion */}
                                           {docDescription && isExpanded && (
                                             <div className="mt-1.5 ml-4 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl">
                                               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
@@ -661,6 +688,7 @@ const AdminIndicatorReview: React.FC = () => {
           )}
           <span>{toast.message}</span>
           <button
+            type="button"
             onClick={() => setToast(null)}
             className="ml-2 opacity-70 hover:opacity-100 transition-opacity"
           >
