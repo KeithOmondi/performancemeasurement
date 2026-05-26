@@ -166,35 +166,27 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
     }
   };
 
-  const handleCertification = useCallback(async (decision: "Approved" | "Rejected") => {
-    if (!ind?.id) return;
-    if (decision === "Rejected" && !showRejectReason) return setShowRejectReason(true);
-    if (decision === "Rejected" && !decisionReason.trim()) return toast.error("Please provide a reason for rejection.");
+ const handleCertification = useCallback(async (decision: "Approved" | "Rejected") => {
+  if (!ind?.id) return;
+  if (decision === "Rejected" && !showRejectReason) return setShowRejectReason(true);
+  if (decision === "Rejected" && !decisionReason.trim()) return toast.error("Please provide a reason for rejection.");
 
-    const targetQ = ind?.activeQuarter ?? 1;
-    const isLastQuarter = ind?.reportingCycle === "Annual" || targetQ === 4;
-
-    if (decision === "Approved" && ind.reportingCycle === "Quarterly" && !isLastQuarter && !nextDeadline) {
-      return toast.error(`Please set the Q${targetQ + 1} deadline.`);
-    }
-
-    try {
-      await dispatch(superAdminReview({
-        id: ind.id,
-        reviewData: {
-          decision,
-          reason: decision === "Approved" ? "" : decisionReason.trim(),
-          progressOverride,
-          nextDeadline: nextDeadline || undefined,
-        },
-      })).unwrap();
-      toast.success(decision === "Approved" ? "Certified successfully" : "Returned for correction");
-      handleInternalClose();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Certification failed.";
-      toast.error(errorMessage);
-    }
-  }, [dispatch, decisionReason, ind, nextDeadline, handleInternalClose, progressOverride, showRejectReason]);
+  try {
+    await dispatch(superAdminReview({
+      id: ind.id,
+      reviewData: {
+        decision,
+        reason: decision === "Approved" ? "" : decisionReason.trim(),
+        progressOverride,
+      },
+    })).unwrap();
+    toast.success(decision === "Approved" ? "Certified successfully" : "Returned for correction");
+    handleInternalClose();
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : "Certification failed.";
+    toast.error(errorMessage);
+  }
+}, [dispatch, decisionReason, ind, handleInternalClose, progressOverride, showRejectReason]);
 
   const handleReopen = useCallback(async () => {
     if (!ind?.id) return;
