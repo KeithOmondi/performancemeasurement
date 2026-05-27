@@ -3,7 +3,7 @@ import {
   createAsyncThunk,
   type PayloadAction,
 } from "@reduxjs/toolkit";
-import { api } from "../../api/axios";
+import { apiPrivate } from "../../api/axios";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,7 +128,7 @@ export const fetchCalendarEvents = createAsyncThunk<
     if (params?.status)     query.set("status",     params.status);
     if (params?.cycle)      query.set("cycle",      params.cycle);
 
-    const res = await api.get<{ data: ICalendarEvent[] }>(
+    const res = await apiPrivate.get<{ data: ICalendarEvent[] }>(
       `/admin/calendar?${query.toString()}`
     );
     return res.data?.data ?? [];
@@ -143,7 +143,7 @@ export const fetchIndicatorCalendarEvents = createAsyncThunk<
   { rejectValue: string }
 >("calendar/fetchByIndicator", async (indicatorId, { rejectWithValue }) => {
   try {
-    const res = await api.get<{ data: ICalendarEvent[] }>(
+    const res = await apiPrivate.get<{ data: ICalendarEvent[] }>(
       `/admin/calendar/${indicatorId}`
     );
     return { indicatorId, events: res.data?.data ?? [] };
@@ -161,7 +161,7 @@ export const fetchUpcomingDeadlines = createAsyncThunk<
     const query = new URLSearchParams();
     if (params?.days) query.set("days", String(params.days));
 
-    const res = await api.get<{
+    const res = await apiPrivate.get<{
       data: IUpcomingDeadline[];
       windowDays: number;
     }>(`/admin/calendar/upcoming?${query.toString()}`);

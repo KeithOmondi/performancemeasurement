@@ -25,7 +25,7 @@ export const useNotificationSSE = (): void => {
     const connect = () => {
       // withCredentials sends the HttpOnly auth cookie automatically.
       // No token needed in the URL.
-      const url = `${BASE_URL}/api/notifications/stream`;
+      const url = `${BASE_URL}/notifications/stream`;
       const es = new EventSource(url, { withCredentials: true });
       esRef.current = es;
 
