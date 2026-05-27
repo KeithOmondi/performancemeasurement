@@ -52,8 +52,6 @@ export interface ISubmissionReviewUpdate {
   adminComment?: string;
 }
 
-// ── Separate payloads for the two actions ─────────────────────────────────────
-
 export interface IApprovePayload {
   submissionUpdates?: ISubmissionReviewUpdate[];
   adminOverallComments?: string;
@@ -89,6 +87,7 @@ export interface IAdminIndicator {
   weight: number;
   unit: string;
   target: number;
+  // ❌ REMOVED: approvedIndicators: [],   // <-- this was incorrect
   assigneeName: string;
   assigneeEmail: string;
   pjNumber?: string;
@@ -102,10 +101,12 @@ export interface IAdminIndicator {
   instructions?: string;
 }
 
+// ✅ Add approvedIndicators to the STATE interface
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
   pendingAdminReview: IAdminIndicator[];
   resubmittedWork: IAdminIndicator[];
+  approvedIndicators: IAdminIndicator[];   // <-- new
   selectedIndicator: IAdminIndicator | null;
   isLoading: boolean;
   isReviewing: boolean;
@@ -113,12 +114,12 @@ interface IAdminIndicatorState {
   error: string | null;
 }
 
-// ─── Initial State ────────────────────────────────────────────────────────────
-
+// ✅ Update initial state
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
   pendingAdminReview: [],
   resubmittedWork: [],
+  approvedIndicators: [],   // <-- new
   selectedIndicator: null,
   isLoading: false,
   isReviewing: false,
@@ -228,7 +229,7 @@ const extractError = (error: unknown, fallback: string): string => {
 
 // ─── Thunks ───────────────────────────────────────────────────────────────────
 
-export const fetchAllAdminIndicators = createAsyncThunk <
+export const fetchAllAdminIndicators = createAsyncThunk<
   IAdminIndicator[],
   { status?: string; search?: string } | undefined,
   { rejectValue: string }
@@ -248,7 +249,7 @@ export const fetchAllAdminIndicators = createAsyncThunk <
   }
 });
 
-export const fetchResubmittedIndicators = createAsyncThunk <
+export const fetchResubmittedIndicators = createAsyncThunk<
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -263,7 +264,7 @@ export const fetchResubmittedIndicators = createAsyncThunk <
   }
 });
 
-export const getIndicatorByIdAdmin = createAsyncThunk <
+export const getIndicatorByIdAdmin = createAsyncThunk<
   IAdminIndicator,
   string,
   { rejectValue: string }
@@ -276,7 +277,7 @@ export const getIndicatorByIdAdmin = createAsyncThunk <
   }
 });
 
-export const approveSubmission = createAsyncThunk <
+export const approveSubmission = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IApprovePayload },
   { rejectValue: string }
@@ -290,7 +291,7 @@ export const approveSubmission = createAsyncThunk <
   }
 });
 
-export const rejectSubmission = createAsyncThunk <
+export const rejectSubmission = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IRejectPayload },
   { rejectValue: string }
@@ -304,7 +305,7 @@ export const rejectSubmission = createAsyncThunk <
   }
 });
 
-export const reopenIndicator = createAsyncThunk <
+export const reopenIndicator = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IReopenPayload },
   { rejectValue: string }
@@ -317,6 +318,22 @@ export const reopenIndicator = createAsyncThunk <
     return res.data.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Failed to reopen indicator"));
+  }
+});
+
+// ✅ New thunk for admin-approved indicators
+export const fetchAdminApprovedIndicators = createAsyncThunk<
+  IAdminIndicator[],
+  void,
+  { rejectValue: string }
+>("adminIndicators/fetchApproved", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<{ data: IAdminIndicator[] }>(
+      "/admin/approved-by-admin"
+    );
+    return res.data?.data ?? [];
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Failed to load admin-approved indicators"));
   }
 });
 
@@ -385,6 +402,14 @@ const adminIndicatorSlice = createSlice({
         refreshQueues(state);
       })
       .addCase(getIndicatorByIdAdmin.rejected, setRejected("isLoading"))
+
+      // ── fetchAdminApprovedIndicators ─────────────────────────────────────
+      .addCase(fetchAdminApprovedIndicators.pending, setPending("isLoading"))
+      .addCase(fetchAdminApprovedIndicators.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.approvedIndicators = action.payload;
+      })
+      .addCase(fetchAdminApprovedIndicators.rejected, setRejected("isLoading"))
 
       // ── approveSubmission ────────────────────────────────────────────────
       .addCase(approveSubmission.pending, setPending("isReviewing"))

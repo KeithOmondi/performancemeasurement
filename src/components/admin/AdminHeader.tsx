@@ -1,4 +1,4 @@
-import { Search, Bell, Mail, PlusCircle, Menu, X } from "lucide-react";
+import { Search, Bell, Mail, Menu, X } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -234,10 +234,7 @@ const AdminHeader = ({ onMenuClick }: HeaderProps) => {
               {user?.role || "ORHC"}
             </p>
           </div>
-          <button className="flex items-center gap-2 bg-[#eab308] text-black px-3 py-2 rounded-md text-[11px] font-bold uppercase hover:bg-yellow-500 transition-colors shadow-sm">
-            <PlusCircle size={16} />
-            <span className="hidden lg:inline">Assign Indicator</span>
-          </button>
+          
         </div>
       </div>
     </header>

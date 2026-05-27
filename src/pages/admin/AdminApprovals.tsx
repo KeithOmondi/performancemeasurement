@@ -13,34 +13,36 @@ import {
   ArrowRight
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { 
-  fetchAllAdminIndicators, 
-} from "../../store/slices/adminIndicatorSlice";
+import { fetchAdminApprovedIndicators } from "../../store/slices/adminIndicatorSlice";
+import ApprovedIndicatorModal from "./ApprovedIndicatorModal";
 
 const AdminApprovals = () => {
   const dispatch = useAppDispatch();
-  const { allAssignments, isLoading } = useAppSelector((state) => state.adminIndicators);
+  const { approvedIndicators, isLoading } = useAppSelector((state) => state.adminIndicators);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(null);
 
   useEffect(() => {
-    dispatch(fetchAllAdminIndicators({ status: 'all' }));
+    dispatch(fetchAdminApprovedIndicators());
   }, [dispatch]);
 
   const approvedItems = useMemo(() => {
-    const targets = ["Awaiting Super Admin", "Completed", "Verified"];
-    
-    return allAssignments.filter((ind) => {
-      const matchesStatus = targets.includes(ind.status);
+    // No status filtering needed; the endpoint returns only indicators ever approved by admin
+    return approvedIndicators.filter((ind) => {
       const matchesSearch = 
         ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
       
-      return matchesStatus && matchesSearch;
+      return matchesSearch;
     });
-  }, [allAssignments, searchTerm]);
+  }, [approvedIndicators, searchTerm]);
 
-  if (isLoading && allAssignments.length === 0) {
+  const handleRowClick = (indicatorId: string) => {
+    setSelectedIndicatorId(indicatorId);
+  };
+
+  if (isLoading && approvedIndicators.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#fcfdfb]">
         <div className="relative mb-6">
@@ -122,7 +124,11 @@ const AdminApprovals = () => {
                   const superEntry = [...history].reverse().find(h => h.reviewerRole === 'superadmin' && h.action === "Approved");
                   
                   return (
-                    <tr key={indicator.id} className="hover:bg-slate-50/60 transition-all group">
+                    <tr 
+                      key={indicator.id} 
+                      className="hover:bg-slate-50/60 transition-all cursor-pointer group"
+                      onClick={() => handleRowClick(indicator.id)}
+                    >
                       <td className="px-10 py-7">
                         <div className="max-w-md">
                           <h3 className="text-[13px] font-black text-[#1a3a32] tracking-tight mb-3 line-clamp-2 leading-snug">
@@ -199,7 +205,7 @@ const AdminApprovals = () => {
                       </td>
 
                       <td className="px-10 py-7 text-right">
-                        {/* Operations cell is now empty per request */}
+                        {/* Empty intentionally */}
                       </td>
                     </tr>
                   );
@@ -208,6 +214,14 @@ const AdminApprovals = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {/* Modal */}
+      {selectedIndicatorId && (
+        <ApprovedIndicatorModal
+          indicatorId={selectedIndicatorId}
+          onClose={() => setSelectedIndicatorId(null)}
+        />
       )}
     </div>
   );
