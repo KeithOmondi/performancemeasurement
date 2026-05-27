@@ -13,6 +13,7 @@ import teamsReducer from "./slices/teamSlice"
 import examinerReducer from "./slices/examinerSlice"
 import archiveReducer from "./slices/archiveslice"
 import notificationsReducer from "./slices/notificationslice"
+import calendarReducer from "./slices/calendarSlice"
 
 export const store = configureStore({
   reducer: {
@@ -29,7 +30,8 @@ export const store = configureStore({
     teams: teamsReducer,
     examiner: examinerReducer,
     archive: archiveReducer,
-    notifications: notificationsReducer
+    notifications: notificationsReducer,
+    calendar: calendarReducer
     // Add other features (e.g., products, cart) here later
   },
   // DevTools is enabled by default in development mode
