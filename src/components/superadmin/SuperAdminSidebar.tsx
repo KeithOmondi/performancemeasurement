@@ -83,6 +83,13 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
       path: "/superadmin/approvals",
       icon: <CheckCircle2 size={18} />,
     },
+
+    {
+      type: "link",
+      name: "All Approved",
+      path: "/superadmin/approved",
+      icon: <CheckCircle2 size={18} />,
+    },
     {
       type: "link",
       name: "Rejected Submissions",

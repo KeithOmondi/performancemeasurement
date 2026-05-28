@@ -15,12 +15,15 @@ export interface IDocument {
   fileType: "image" | "video" | "raw";
   fileName?: string;
   uploadedAt?: string;
+  description?: string;        // ✅ added
+  status?: "Accepted" | "Rejected" | "Pending";  // ✅ added
 }
 
 export interface ISubmission {
   id: string;
   indicatorId?: string;
   quarter: 1 | 2 | 3 | 4;
+  year: number;                // ✅ added
   documents: IDocument[];
   notes: string;
   adminDescriptionEdit?: string;
@@ -111,14 +114,12 @@ export interface IQueueItem {
   documents: IDocument[];
 }
 
-// ── TYPE ──────────────────────────────────────────────────────────────
 export interface ISuperAdminReviewPayload {
   decision: "Approved" | "Rejected";
   reason?: string;
-  progressOverride: number; // required — no longer optional
+  progressOverride: number;
 }
 
-/* ─── NEW: COUNTS TYPE (from /dashboard-stats/full) ──────────────────── */
 export interface ICounts {
   total: number;
   assigned: number;
@@ -142,8 +143,8 @@ interface IndicatorState {
   detailLoading: boolean;
   actionLoading: boolean;
   error: string | null;
-  /* NEW: dashboard counts */
   counts: ICounts | null;
+  superAdminApprovedIndicators: IIndicator[];
 }
 
 const initialState: IndicatorState = {
@@ -159,6 +160,7 @@ const initialState: IndicatorState = {
   actionLoading: false,
   error: null,
   counts: null,
+  superAdminApprovedIndicators: [],
 };
 
 /* ─── HELPERS ─────────────────────────────────────────────────────────── */
@@ -221,6 +223,7 @@ const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
   replace(state.assignedIndicators);
   replace(state.unassignedIndicators);
   replace(state.reviewIndicators);
+  replace(state.superAdminApprovedIndicators);
 
   if (
     state.selectedIndicator &&
@@ -245,6 +248,9 @@ const removeIndicatorById = (state: IndicatorState, id: string) => {
     (i) => String(i.id) !== id
   );
   state.reviewIndicators = state.reviewIndicators.filter(
+    (i) => String(i.id) !== id
+  );
+  state.superAdminApprovedIndicators = state.superAdminApprovedIndicators.filter(
     (i) => String(i.id) !== id
   );
 
@@ -342,13 +348,24 @@ export const fetchRejectedByAdmin = createAsyncThunk(
   }
 );
 
-/* ─── NEW: FETCH DASHBOARD COUNTS (MISSING getIndicatorCounts) ───────── */
 export const fetchIndicatorCounts = createAsyncThunk(
   "indicators/fetchCounts",
   async (_, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.get("/indicators/dashboard-stats/full");
       return res.data.data as ICounts;
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err));
+    }
+  }
+);
+
+export const fetchSuperAdminApprovedIndicators = createAsyncThunk(
+  "indicators/fetchSuperAdminApproved",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get("/indicators/approved-by-superadmin");
+      return res.data.data as IIndicator[];
     } catch (err) {
       return rejectWithValue(getErrorMessage(err));
     }
@@ -534,18 +551,30 @@ const indicatorSlice = createSlice({
         state.rejectedByAdmin = action.payload;
       });
 
-    /* ── NEW: FETCH COUNTS ───────────────────────────────────────────── */
+    // ── FETCH COUNTS ───────────────────────────────────────────────────
     builder
-      .addCase(fetchIndicatorCounts.pending, () => {
-        // optional: you could set a specific loading flag for counts
-        // state.countsLoading = true;
-      })
+      .addCase(fetchIndicatorCounts.pending, () => {})
       .addCase(fetchIndicatorCounts.fulfilled, (state, action) => {
         state.counts = action.payload;
       })
       .addCase(fetchIndicatorCounts.rejected, (state, action) => {
         console.error("Failed to fetch indicator counts:", action.payload);
         state.counts = null;
+      });
+
+    // ── FETCH SUPER ADMIN APPROVED ─────────────────────────────────────
+    builder
+      .addCase(fetchSuperAdminApprovedIndicators.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchSuperAdminApprovedIndicators.fulfilled, (state, action) => {
+        state.loading = false;
+        state.superAdminApprovedIndicators = action.payload;
+      })
+      .addCase(fetchSuperAdminApprovedIndicators.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       });
 
     // ── CREATE ─────────────────────────────────────────────────────────
@@ -620,8 +649,7 @@ const indicatorSlice = createSlice({
         state.error = action.payload as string;
       });
 
-    // ── UPDATE ─────────────────────────────────────────────────────────
-    // ── UPDATE ─────────────────────────────────────────────────────────
+   // ── UPDATE ─────────────────────────────────────────────────────────
 builder
   .addCase(updateIndicator.pending, (state) => {
     state.actionLoading = true;
@@ -630,9 +658,6 @@ builder
     state.actionLoading = false;
     const updated = action.payload;
 
-    // If the server wiped submissions (cycle change), reflect that
-    // in selectedIndicator too — upsertIndicator only replaces top-level
-    // fields; submissions/reviewHistory come from fetchById normally.
     if (
       state.selectedIndicator &&
       String(state.selectedIndicator.id) === String(updated.id)
@@ -640,17 +665,10 @@ builder
       state.selectedIndicator = {
         ...state.selectedIndicator,
         ...updated,
-        // Server returns the indicator without submissions on a plain update,
-        // so preserve existing ones UNLESS the cycle changed (progress reset
-        // to 0 is the signal the server wiped them).
-        submissions:
-          updated.progress === 0 && updated.currentTotalAchieved === 0
-            ? []
-            : state.selectedIndicator.submissions,
-        reviewHistory:
-          updated.progress === 0 && updated.currentTotalAchieved === 0
-            ? []
-            : state.selectedIndicator.reviewHistory,
+        // Always preserve existing submissions and reviewHistory
+        // Backend no longer deletes them on cycle change
+        submissions: state.selectedIndicator.submissions,
+        reviewHistory: state.selectedIndicator.reviewHistory,
       };
     }
 
@@ -661,7 +679,6 @@ builder
     state.actionLoading = false;
     state.error = action.payload as string;
   });
-
     // ── DELETE ─────────────────────────────────────────────────────────
     builder
       .addCase(deleteIndicator.pending, (state) => {
@@ -709,32 +726,26 @@ builder
         state.error = null;
       })
       .addCase(superAdminReview.fulfilled, (state, action) => {
-  state.actionLoading = false;
-  const updated = action.payload;
+        state.actionLoading = false;
+        const updated = action.payload;
 
-  // Trust the status the server returns — it correctly sets:
-  // "Pending"    → approved, more quarters remain
-  // "Completed"  → approved, all quarters done (or Annual)
-  // "Rejected by Super Admin" → rejected
-  upsertIndicator(state, updated);
+        upsertIndicator(state, updated);
 
-  // Remove from review queue regardless of outcome
-  state.queue = state.queue.filter(
-    (q) => String(q.indicatorId) !== String(updated.id)
-  );
+        state.queue = state.queue.filter(
+          (q) => String(q.indicatorId) !== String(updated.id)
+        );
 
-  // Sync rejected list
-  if (updated.status === "Rejected by Super Admin") {
-    const exists = state.rejectedByAdmin.some((r) => r.id === updated.id);
-    if (!exists) state.rejectedByAdmin.push(updated);
-  } else {
-    state.rejectedByAdmin = state.rejectedByAdmin.filter(
-      (r) => r.id !== updated.id
-    );
-  }
+        if (updated.status === "Rejected by Super Admin") {
+          const exists = state.rejectedByAdmin.some((r) => r.id === updated.id);
+          if (!exists) state.rejectedByAdmin.push(updated);
+        } else {
+          state.rejectedByAdmin = state.rejectedByAdmin.filter(
+            (r) => r.id !== updated.id
+          );
+        }
 
-  syncCategorizedLists(state);
-})
+        syncCategorizedLists(state);
+      })
       .addCase(superAdminReview.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload as string;
