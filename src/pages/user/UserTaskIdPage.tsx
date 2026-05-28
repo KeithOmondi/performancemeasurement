@@ -4,7 +4,7 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
-  AlertTriangle, CheckCircle, XCircle, Edit2, Save, X,
+  AlertTriangle, CheckCircle, XCircle, Edit2, Save, X, Trash2,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -16,177 +16,57 @@ import {
   getActiveQuarterDisplay,
   hasSubmissionForCurrentQuarter,
   getCurrentQuarterReviewStatus,
+  deleteDocument,
+  deletePendingDocument,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
-/* ─── Component ───────────────────────────────────────────────────────────── */
+/* ─── Sub-components ──────────────────────────────────────────────────────── */
 
-const UserTaskIdPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const dispatch = useAppDispatch();
+interface ToastProps {
+  message: string;
+  type: "success" | "error";
+  onDismiss: () => void;
+}
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
-  const [showSuccessToast, setShowSuccessToast] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
-  const [editingDocId, setEditingDocId] = useState<string | null>(null);
-  const [editingDescription, setEditingDescription] = useState("");
-  const [updatingDescription, setUpdatingDescription] = useState(false);
+const Toast = ({ message, type, onDismiss }: ToastProps) => (
+  <div className="fixed top-24 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
+    <div
+      className={`rounded-2xl p-4 shadow-lg flex items-center gap-3 border ${
+        type === "success"
+          ? "bg-emerald-50 border-emerald-200"
+          : "bg-rose-50 border-rose-200"
+      }`}
+    >
+      {type === "success" ? (
+        <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+      ) : (
+        <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
+      )}
+      <p className={`text-sm ${type === "success" ? "text-emerald-700" : "text-rose-700"}`}>
+        {message}
+      </p>
+      <button onClick={onDismiss} className="ml-2 text-gray-400 hover:text-gray-600">
+        <X size={14} />
+      </button>
+    </div>
+  </div>
+);
 
-  const lastSubmissionIdRef = useRef<string | null>(null);
+interface StatusBadgeConfig {
+  icon: React.ElementType;
+  text: string;
+  color: string;
+  iconColor: string;
+}
 
-  const currentIndicator = useAppSelector((s) => s.userIndicators.currentIndicator);
-  const loading = useAppSelector((s) => s.userIndicators.loading);
-  const uploading = useAppSelector((s) => s.userIndicators.uploading);
-  const lastSubmissionId = useAppSelector((s) => s.userIndicators.lastSubmissionId);
-  const error = useAppSelector((s) => s.userIndicators.error);
-
-  useEffect(() => {
-    if (id) dispatch(fetchIndicatorDetails(id));
-    return () => {
-      dispatch(clearIndicatorError());
-      dispatch(clearLastSubmissionId());
-    };
-  }, [id, dispatch]);
-
-  // Success toast
-  useEffect(() => {
-    if (
-      lastSubmissionId &&
-      !uploading &&
-      !error &&
-      lastSubmissionIdRef.current !== lastSubmissionId
-    ) {
-      lastSubmissionIdRef.current = lastSubmissionId;
-      const showTimer = setTimeout(() => {
-        setSuccessMessage("Filing submitted successfully! Awaiting admin review.");
-        setShowSuccessToast(true);
-      }, 0);
-      const hideTimer = setTimeout(() => {
-        setShowSuccessToast(false);
-        setSuccessMessage("");
-      }, 5000);
-      return () => {
-        clearTimeout(showTimer);
-        clearTimeout(hideTimer);
-      };
-    }
-  }, [lastSubmissionId, uploading, error]);
-
-  useEffect(() => {
-    lastSubmissionIdRef.current = null;
-  }, [id]);
-
-  // Use slice helpers
-  const isAnnual = currentIndicator?.reporting_cycle === "Annual";
-  const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
-  const currentQuarterStatus = currentIndicator ? getCurrentQuarterReviewStatus(currentIndicator) : null;
-  const hasSubmission = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
-
-  // Derived data
-  const allSubmissions = useMemo<ISubmissionUI[]>(
-    () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
-    [currentIndicator]
-  );
-
-  const activeSub = useMemo<ISubmissionUI | undefined>(() => {
-    if (!currentIndicator?.submissions) return undefined;
-    const year = currentIndicator.currentYear ?? new Date().getFullYear();
-    const key = `${activeQuarterDisplay}_${year}`;
-    const submissions = currentIndicator.submissions[key];
-    if (!submissions || submissions.length === 0) return undefined;
-    return submissions[0];
-  }, [currentIndicator, activeQuarterDisplay]);
-
-  const submissionHistory = useMemo(() => {
-    if (!currentIndicator?.submissions) return [];
-    const year = currentIndicator.currentYear ?? new Date().getFullYear();
-    const key = `${activeQuarterDisplay}_${year}`;
-    return currentIndicator.submissions[key] || [];
-  }, [currentIndicator, activeQuarterDisplay]);
-
-  const rejectedDocs = useMemo(() => {
-    return allSubmissions.flatMap((sub) =>
-      (sub.documents ?? [])
-        .filter((doc: IDocumentUI) => doc.status === "Rejected")
-        .map((doc) => ({
-          doc,
-          quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
-          year: sub.year,
-          rejectionReason: doc.rejectionReason,
-        }))
-    );
-  }, [allSubmissions]);
-
-  const activeDocs = useMemo(() => {
-    return allSubmissions.flatMap((sub) =>
-      (sub.documents ?? [])
-        .filter((doc: IDocumentUI) => doc.status !== "Rejected")
-        .map((doc) => ({
-          doc,
-          quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
-          year: sub.year,
-        }))
-    );
-  }, [allSubmissions]);
-
-  // Document description handlers
-  const handleStartEditDescription = (doc: IDocumentUI) => {
-    setEditingDocId(doc.id);
-    setEditingDescription(doc.description || "");
-  };
-
-  const handleCancelEditDescription = () => {
-    setEditingDocId(null);
-    setEditingDescription("");
-    setUpdatingDescription(false);
-  };
-
-  const handleSaveDescription = async (docId: string) => {
-    if (updatingDescription) return;
-    setUpdatingDescription(true);
-
-    dispatch(optimisticUpdateDocumentDescription({
-      docId,
-      description: editingDescription,
-    }));
-
-    try {
-      await dispatch(updateDocumentDescription({
-        docId,
-        description: editingDescription,
-        idempotencyKey: crypto.randomUUID(),
-      })).unwrap();
-
-      setSuccessMessage("Document description updated successfully!");
-      setShowSuccessToast(true);
-      setTimeout(() => {
-        setShowSuccessToast(false);
-        setSuccessMessage("");
-      }, 3000);
-
-      if (id) await dispatch(fetchIndicatorDetails(id));
-      setEditingDocId(null);
-      setEditingDescription("");
-    } catch (err) {
-      console.error("Failed to update description:", err);
-      setSuccessMessage("Failed to update description. Please try again.");
-      setShowSuccessToast(true);
-      setTimeout(() => {
-        setShowSuccessToast(false);
-        setSuccessMessage("");
-      }, 3000);
-      if (id) await dispatch(fetchIndicatorDetails(id));
-    } finally {
-      setUpdatingDescription(false);
-    }
-  };
-
-  // Status badge
-  const getStatusBadge = useCallback(() => {
+function useStatusBadge(
+  currentQuarterStatus: string | null,
+  hasSubmission: boolean,
+): StatusBadgeConfig {
+  return useMemo(() => {
     if (!currentQuarterStatus && !hasSubmission) {
       return {
         icon: AlertCircle,
@@ -226,14 +106,49 @@ const UserTaskIdPage = () => {
         };
     }
   }, [currentQuarterStatus, hasSubmission]);
+}
 
-  const statusBadge = getStatusBadge();
-  const StatusIcon = statusBadge.icon;
+/* ─── Component ───────────────────────────────────────────────────────────── */
 
-  const handleModalClose = useCallback(() => {
-    setIsModalOpen(false);
-    if (id) dispatch(fetchIndicatorDetails(id));
-  }, [id, dispatch]);
+const UserTaskIdPage = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+
+  /* ── UI state ── */
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingDescription, setEditingDescription] = useState("");
+  const [updatingDescription, setUpdatingDescription] = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+
+  const lastSubmissionIdRef = useRef<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* ── Store ── */
+  const currentIndicator = useAppSelector((s) => s.userIndicators.currentIndicator);
+  const loading = useAppSelector((s) => s.userIndicators.loading);
+  const uploading = useAppSelector((s) => s.userIndicators.uploading);
+  const lastSubmissionId = useAppSelector((s) => s.userIndicators.lastSubmissionId);
+  const error = useAppSelector((s) => s.userIndicators.error);
+  const actionLoading = useAppSelector((s) => s.userIndicators.actionLoading);
+
+  /* ── Helpers ── */
+  const showToast = useCallback(
+    (message: string, type: "success" | "error", duration = 4000) => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      setToast({ message, type });
+      toastTimerRef.current = setTimeout(() => setToast(null), duration);
+    },
+    [],
+  );
+
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(null);
+  }, []);
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return "N/A";
@@ -245,6 +160,90 @@ const UserTaskIdPage = () => {
       minute: "2-digit",
     });
   };
+
+  /* ── Effects ── */
+  useEffect(() => {
+    if (id) dispatch(fetchIndicatorDetails(id));
+    return () => {
+      dispatch(clearIndicatorError());
+      dispatch(clearLastSubmissionId());
+    };
+  }, [id, dispatch]);
+
+  useEffect(() => {
+    lastSubmissionIdRef.current = null;
+  }, [id]);
+
+  useEffect(() => {
+    if (
+      lastSubmissionId &&
+      !uploading &&
+      !error &&
+      lastSubmissionIdRef.current !== lastSubmissionId
+    ) {
+      lastSubmissionIdRef.current = lastSubmissionId;
+      showToast("Filing submitted successfully! Awaiting admin review.", "success", 5000);
+    }
+  }, [lastSubmissionId, uploading, error, showToast]);
+
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  /* ── Derived ── */
+  const isAnnual = currentIndicator?.reporting_cycle === "Annual";
+  const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
+  const currentQuarterStatus = currentIndicator ? getCurrentQuarterReviewStatus(currentIndicator) : null;
+  const hasSubmission = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
+  const statusBadge = useStatusBadge(currentQuarterStatus, hasSubmission);
+  const StatusIcon = statusBadge.icon;
+
+  const allSubmissions = useMemo<ISubmissionUI[]>(
+    () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
+    [currentIndicator],
+  );
+
+  const activeSub = useMemo<ISubmissionUI | undefined>(() => {
+    if (!currentIndicator?.submissions) return undefined;
+    const year = currentIndicator.currentYear ?? new Date().getFullYear();
+    const key = `${activeQuarterDisplay}_${year}`;
+    return currentIndicator.submissions[key]?.[0];
+  }, [currentIndicator, activeQuarterDisplay]);
+
+  const submissionHistory = useMemo(() => {
+    if (!currentIndicator?.submissions) return [];
+    const year = currentIndicator.currentYear ?? new Date().getFullYear();
+    return currentIndicator.submissions[`${activeQuarterDisplay}_${year}`] ?? [];
+  }, [currentIndicator, activeQuarterDisplay]);
+
+  const rejectedDocs = useMemo(
+    () =>
+      allSubmissions.flatMap((sub) =>
+        (sub.documents ?? [])
+          .filter((d: IDocumentUI) => d.status === "Rejected")
+          .map((d) => ({
+            doc: d,
+            quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
+            year: sub.year,
+            rejectionReason: d.rejectionReason,
+            submission: sub,
+          })),
+      ),
+    [allSubmissions],
+  );
+
+  const activeDocs = useMemo(
+    () =>
+      allSubmissions.flatMap((sub) =>
+        (sub.documents ?? [])
+          .filter((d: IDocumentUI) => d.status !== "Rejected")
+          .map((d) => ({
+            doc: d,
+            quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
+            year: sub.year,
+            submission: sub,
+          })),
+      ),
+    [allSubmissions],
+  );
 
   const submitButtonLabel = isAnnual
     ? hasSubmission && currentQuarterStatus === "Rejected"
@@ -258,17 +257,114 @@ const UserTaskIdPage = () => {
     ? `Update ${activeQuarterDisplay} Filing`
     : `Submit ${activeQuarterDisplay} Filing`;
 
-  // FIX: allow docStatus to be undefined
-  const canEditDescription = (docStatus: string | undefined, submissionReviewStatus?: string): boolean => {
-    if (docStatus === "Accepted") return false;
-    if (submissionReviewStatus === "Accepted") return false;
-    return true;
+  /* ── Description edit handlers ── */
+  const canEditDescription = (
+    docStatus: string | undefined,
+    submissionReviewStatus?: string,
+  ): boolean => docStatus !== "Accepted" && submissionReviewStatus !== "Accepted";
+
+  const handleStartEdit = (doc: IDocumentUI) => {
+    setEditingDocId(doc.id);
+    setEditingDescription(doc.description ?? "");
   };
 
+  const handleCancelEdit = () => {
+    setEditingDocId(null);
+    setEditingDescription("");
+    setUpdatingDescription(false);
+  };
+
+  const handleSaveDescription = async (docId: string) => {
+    if (updatingDescription) return;
+    setUpdatingDescription(true);
+
+    dispatch(optimisticUpdateDocumentDescription({ docId, description: editingDescription }));
+
+    try {
+      await dispatch(
+        updateDocumentDescription({
+          docId,
+          description: editingDescription,
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      ).unwrap();
+
+      showToast("Document description updated successfully.", "success");
+      setEditingDocId(null);
+      setEditingDescription("");
+      if (id) dispatch(fetchIndicatorDetails(id));
+    } catch (err) {
+      console.error("Failed to update description:", err);
+      showToast("Failed to update description. Please try again.", "error");
+      if (id) dispatch(fetchIndicatorDetails(id));
+    } finally {
+      setUpdatingDescription(false);
+    }
+  };
+
+  /* ── Delete document handler ── */
+  const canDeleteDocument = (docStatus: string | undefined, submissionReviewStatus?: string): boolean => {
+    // Can delete if:
+    // 1. Document is rejected, OR
+    // 2. Submission is pending (regardless of document status, as long as not accepted)
+    return docStatus === "Rejected" || submissionReviewStatus === "Pending";
+  };
+
+  const handleDeleteDocument = async (doc: IDocumentUI, submission: ISubmissionUI) => {
+  if (!id) return;
+  
+  const isPendingSubmission = submission.reviewStatus === "Pending";
+  const isRejectedDocument = doc.status === "Rejected";
+  
+  let confirmMessage = "";
+  
+  if (isPendingSubmission) {
+    confirmMessage = "Are you sure you want to delete this document from the pending submission? This action cannot be undone.";
+  } else if (isRejectedDocument) {
+    confirmMessage = "Are you sure you want to delete this rejected document? This action cannot be undone.";
+  } else {
+    showToast("This document cannot be deleted. Only rejected documents or documents from pending submissions can be deleted.", "error");
+    return;
+  }
+  
+  const confirmed = window.confirm(confirmMessage);
+  if (!confirmed) return;
+  
+  setDeletingDocId(doc.id);
+  
+  try {
+    if (isPendingSubmission) {
+      await dispatch(deletePendingDocument({ 
+        indicatorId: id, 
+        submissionId: submission.id, 
+        docId: doc.id 
+      })).unwrap();
+    } else {
+      await dispatch(deleteDocument(doc.id)).unwrap();
+    }
+    
+    showToast("Document deleted successfully.", "success");
+    // Refresh the indicator data
+    if (id) dispatch(fetchIndicatorDetails(id));
+  } catch (err) {
+    console.error("Failed to delete document:", err);
+    const errorMessage = err instanceof Error ? err.message : "Failed to delete document. Please try again.";
+    showToast(errorMessage, "error");
+  } finally {
+    setDeletingDocId(null);
+  }
+};
+
+  const handleModalClose = useCallback(() => {
+    setIsModalOpen(false);
+    if (id) dispatch(fetchIndicatorDetails(id));
+  }, [id, dispatch]);
+
+  /* ── Loading / empty states ── */
   if (loading && !currentIndicator) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#f8f9fa]">
-        <Loader2 className="w-12 h-12 animate-spin text-[#1a3a32] mb-4" />
+        <Loader2 className="w-10 h-10 animate-spin text-[#1a3a32] mb-3" />
         <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">
           Loading Registry...
         </p>
@@ -278,26 +374,22 @@ const UserTaskIdPage = () => {
 
   if (!currentIndicator) return null;
 
+  /* ── Render ── */
   return (
     <div className="min-h-screen bg-[#f8f9fa] p-6 lg:p-12 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
 
-        {/* Success Toast */}
-        {showSuccessToast && (
-          <div className="fixed top-24 right-6 z-50 animate-in slide-in-from-top-2 duration-300">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-lg flex items-center gap-3">
-              <CheckCircle className="w-5 h-5 text-emerald-500" />
-              <div>
-                <p className="text-[10px] font-black uppercase text-emerald-700">Success</p>
-                <p className="text-sm text-emerald-600">{successMessage}</p>
-              </div>
-            </div>
-          </div>
+        {/* Toast */}
+        {toast && (
+          <Toast message={toast.message} type={toast.type} onDismiss={dismissToast} />
         )}
 
-        {/* Navigation & Header */}
+        {/* ── Nav bar ── */}
         <nav className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <button onClick={() => navigate(-1)} className="flex items-center gap-2 group w-fit">
+          <button
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-2 group w-fit"
+          >
             <div className="p-2 bg-white rounded-full border border-gray-100 shadow-sm group-hover:bg-gray-50 transition-colors">
               <ArrowLeft size={18} className="text-[#1a3a32]" />
             </div>
@@ -307,6 +399,7 @@ const UserTaskIdPage = () => {
           </button>
 
           <div className="flex items-center gap-3 flex-wrap">
+            {/* Cycle badge */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-gray-100 shadow-sm">
               <Calendar size={12} className="text-[#c2a336]" />
               <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
@@ -314,6 +407,7 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
+            {/* Status badge */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${statusBadge.color}`}>
               <StatusIcon size={12} className={statusBadge.iconColor} />
               <span className="text-[9px] font-black uppercase tracking-widest">
@@ -321,6 +415,7 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
+            {/* CTA */}
             <button
               onClick={() => setIsModalOpen(true)}
               disabled={
@@ -342,44 +437,44 @@ const UserTaskIdPage = () => {
           </div>
         </nav>
 
-        {/* Resubmission history banner */}
+        {/* ── Resubmission history banner ── */}
         {submissionHistory.length > 1 && (
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
             <div className="flex items-center gap-2 text-blue-700">
               <Clock size={14} />
               <span className="text-[9px] font-black uppercase tracking-wider">
-                Resubmission History: {submissionHistory.length} total submissions
+                Resubmission History — {submissionHistory.length} total submissions
               </span>
             </div>
-            <div className="mt-2 text-xs text-blue-600">
-              Latest submission: {formatDate(submissionHistory[0]?.submittedAt)}
-            </div>
+            <p className="mt-1 text-xs text-blue-600">
+              Latest: {formatDate(submissionHistory[0]?.submittedAt)}
+            </p>
           </div>
         )}
 
-        {/* Rejected documents */}
+        {/* ── Rejected documents ── */}
         {rejectedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
               <AlertTriangle size={16} /> Action Required: Returned Evidence
             </h3>
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
-              {rejectedDocs.map(({ doc, quarterLabel, rejectionReason, year }) => (
+              {rejectedDocs.map(({ doc, quarterLabel, rejectionReason, year, submission }) => (
                 <div
                   key={doc.id}
-                  className="bg-rose-50 border border-rose-100 p-5 rounded-[2rem] flex flex-col md:flex-row gap-4 items-start"
+                  className="bg-rose-50 border border-rose-100 p-5 rounded-[2rem] flex gap-4 items-start"
                 >
-                  <div className="p-4 bg-white rounded-2xl text-rose-500 shadow-sm">
+                  <div className="p-4 bg-white rounded-2xl text-rose-500 shadow-sm shrink-0">
                     <FileText size={24} />
                   </div>
-                  <div className="flex-1 space-y-1">
-                    <p className="text-[10px] font-black text-rose-900 uppercase truncate max-w-[200px]">
+                  <div className="flex-1 space-y-1 min-w-0">
+                    <p className="text-[10px] font-black text-rose-900 uppercase truncate">
                       {doc.fileName ?? "Evidence File"}
                     </p>
                     <p className="text-xs text-rose-700 font-medium italic">
                       "{rejectionReason ?? "Please provide clearer evidence for this metric."}"
                     </p>
-                    <div className="flex items-center gap-2 pt-2">
+                    <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
                         {quarterLabel} {year}
                       </span>
@@ -387,6 +482,17 @@ const UserTaskIdPage = () => {
                         Rejected
                       </span>
                     </div>
+                    {submission.reviewStatus === "Pending" && (
+                      <div className="mt-2">
+                        <button
+                          onClick={() => handleDeleteDocument(doc, submission)}
+                          className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+                        >
+                          <Trash2 size={10} />
+                          Delete Document
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -394,16 +500,18 @@ const UserTaskIdPage = () => {
           </section>
         )}
 
-        {/* Main stats */}
+        {/* ── Hero stats ── */}
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#c2a336]">
                 {currentIndicator.perspective}
               </span>
               <span className="w-1 h-1 rounded-full bg-gray-200" />
               <span className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-400">
-                {isAnnual ? "Full Year Target" : `${activeQuarterDisplay} ${new Date().getFullYear()}`}
+                {isAnnual
+                  ? "Full Year Target"
+                  : `${activeQuarterDisplay} ${new Date().getFullYear()}`}
               </span>
             </div>
             <h1 className="text-3xl font-serif font-black text-[#1a3a32] leading-tight">
@@ -423,7 +531,7 @@ const UserTaskIdPage = () => {
               {isAnnual ? "Annual Completion" : "Quarterly Progress"}
             </p>
             <span className="text-6xl font-serif font-bold">
-              {Math.round(currentIndicator.progress || 0)}%
+              {Math.round(currentIndicator.progress ?? 0)}%
             </span>
             {activeSub && (
               <p className="text-[8px] text-gray-400 mt-2 uppercase tracking-wider">
@@ -433,7 +541,7 @@ const UserTaskIdPage = () => {
           </div>
         </div>
 
-        {/* Current Submission Summary */}
+        {/* ── Current Submission Summary ── */}
         {activeSub && (
           <section className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-sm">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32] mb-4">
@@ -446,20 +554,28 @@ const UserTaskIdPage = () => {
                 <p className="text-sm text-gray-700">{activeSub.notes}</p>
               </div>
               <div>
-                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Achieved Value</p>
+                <p className="text-[9px] font-black uppercase text-gray-400 mb-1">
+                  Achieved Value
+                </p>
                 <p className="text-2xl font-bold text-[#1a3a32]">
                   {activeSub.achievedValue}{" "}
-                  <span className="text-sm font-normal text-gray-400">{currentIndicator.unit}</span>
+                  <span className="text-sm font-normal text-gray-400">
+                    {currentIndicator.unit}
+                  </span>
                 </p>
               </div>
             </div>
+
             {activeSub.adminComment && (
               <div className="mt-4 pt-4 border-t border-gray-100">
-                <p className="text-[9px] font-black uppercase text-amber-600 mb-1">Admin Comment</p>
+                <p className="text-[9px] font-black uppercase text-amber-600 mb-1">
+                  Admin Comment
+                </p>
                 <p className="text-sm text-amber-700">{activeSub.adminComment}</p>
               </div>
             )}
-            <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4">
+
+            <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4 flex-wrap">
               <p className="text-[8px] text-gray-400">
                 Submitted: {formatDate(activeSub.submittedAt)}
               </p>
@@ -472,15 +588,15 @@ const UserTaskIdPage = () => {
           </section>
         )}
 
-        {/* Document Registry with Edit Descriptions */}
+        {/* ── Document Registry ── */}
         <section className="space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
               <FileText size={16} className="text-[#c2a336]" /> Document Registry
             </h3>
-            <p className="text-[8px] text-gray-400 italic">
-              {editingDocId ? "Editing description..." : "Click ✎ to add/edit description"}
-            </p>
+            {editingDocId && (
+              <p className="text-[8px] text-gray-400 italic">Editing description…</p>
+            )}
           </div>
 
           {activeDocs.length === 0 ? (
@@ -491,51 +607,73 @@ const UserTaskIdPage = () => {
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {activeDocs.map(({ doc, quarterLabel, year }) => {
+              {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
                 const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
                 const isPending = doc.status === "Pending" || !doc.status;
-                const isAcceptedStatus = doc.status === "Accepted";
-                const submissionReviewStatus = allSubmissions.find(
-                  (sub) => sub.documents.some((d) => d.id === doc.id)
-                )?.reviewStatus;
+                const isAcceptedDoc = doc.status === "Accepted";
+                const submissionReviewStatus = submission.reviewStatus;
                 const canEdit = canEditDescription(doc.status, submissionReviewStatus);
+                const canDelete = canDeleteDocument(doc.status, submissionReviewStatus);
                 const isEditing = editingDocId === doc.id;
+                const isDeleting = deletingDocId === doc.id;
 
                 return (
                   <div
                     key={doc.id}
-                    className="bg-white p-5 rounded-[2rem] border border-gray-100 transition-all hover:shadow-md"
+                    className="bg-white p-5 rounded-[2rem] border border-gray-100 transition-all hover:shadow-md flex flex-col"
                   >
+                    {/* Card header */}
                     <div className="flex items-start justify-between mb-4">
-                      <div className={`p-3 rounded-2xl ${
-                        isPending
-                          ? "bg-amber-50 text-amber-500"
-                          : isAcceptedStatus
-                          ? "bg-emerald-50 text-emerald-500"
-                          : "bg-gray-50 text-gray-500"
-                      }`}>
+                      <div
+                        className={`p-3 rounded-2xl ${
+                          isPending
+                            ? "bg-amber-50 text-amber-500"
+                            : isAcceptedDoc
+                            ? "bg-emerald-50 text-emerald-500"
+                            : "bg-gray-50 text-gray-500"
+                        }`}
+                      >
                         {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         {canEdit && !isEditing && (
                           <button
-                            onClick={() => handleStartEditDescription(doc)}
+                            onClick={() => handleStartEdit(doc)}
                             className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
                             title="Edit description"
+                            disabled={isDeleting || actionLoading}
                           >
                             <Edit2 size={14} />
                           </button>
                         )}
+                        {canDelete && !isEditing && (
+                          <button
+                            onClick={() => handleDeleteDocument(doc, submission)}
+                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                            title={submissionReviewStatus === "Pending" ? "Delete document from pending submission" : "Delete rejected document"}
+                            disabled={isDeleting || actionLoading}
+                          >
+                            {isDeleting ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
+                          </button>
+                        )}
                         <button
-                          onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
+                          onClick={() =>
+                            setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })
+                          }
                           className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
                           title="Preview file"
+                          disabled={isDeleting || actionLoading}
                         >
                           <ExternalLink size={16} />
                         </button>
                       </div>
                     </div>
 
+                    {/* File name */}
                     <p
                       className="text-[11px] font-black text-[#1a3a32] uppercase truncate"
                       title={resolvedName}
@@ -543,23 +681,31 @@ const UserTaskIdPage = () => {
                       {resolvedName}
                     </p>
 
-                    <div className="flex items-center gap-2 mt-1 mb-4">
+                    {/* Quarter + status pills */}
+                    <div className="flex items-center gap-2 mt-1 mb-4 flex-wrap">
                       <span className="text-[8px] font-black text-gray-300 uppercase">
                         {quarterLabel} {year}
                       </span>
-                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
-                        isPending
-                          ? "bg-amber-100 text-amber-700"
-                          : isAcceptedStatus
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-gray-100 text-gray-700"
-                      }`}>
+                      <span
+                        className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          isPending
+                            ? "bg-amber-100 text-amber-700"
+                            : isAcceptedDoc
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
                         {doc.status ?? "Under Review"}
                       </span>
+                      {submissionReviewStatus === "Pending" && (
+                        <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                          Pending Submission
+                        </span>
+                      )}
                     </div>
 
-                    {/* Editable Description Section */}
-                    <div className="mt-4 pt-4 border-t border-slate-50">
+                    {/* Description area */}
+                    <div className="mt-auto pt-4 border-t border-slate-50">
                       {isEditing ? (
                         <div className="space-y-2">
                           <textarea
@@ -567,26 +713,26 @@ const UserTaskIdPage = () => {
                             onChange={(e) => setEditingDescription(e.target.value)}
                             className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
                             rows={3}
-                            placeholder="Add a description for this document..."
+                            placeholder="Add a description for this document…"
                             maxLength={500}
                             autoFocus
                           />
                           <div className="flex items-center justify-between">
                             <span className="text-[8px] text-gray-400">
-                              {editingDescription.length}/500 characters
+                              {editingDescription.length}/500
                             </span>
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={handleCancelEditDescription}
-                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                                onClick={handleCancelEdit}
                                 disabled={updatingDescription}
+                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors disabled:opacity-50"
                               >
                                 <X size={14} />
                               </button>
                               <button
                                 onClick={() => handleSaveDescription(doc.id)}
-                                className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors"
                                 disabled={updatingDescription}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors disabled:opacity-50"
                               >
                                 {updatingDescription ? (
                                   <Loader2 size={14} className="animate-spin" />
@@ -597,32 +743,18 @@ const UserTaskIdPage = () => {
                             </div>
                           </div>
                         </div>
-                      ) : (
-                        doc.description && (
-                          <div className="group relative">
-                            <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed pr-6">
-                              "{doc.description}"
-                            </p>
-                            {canEdit && (
-                              <button
-                                onClick={() => handleStartEditDescription(doc)}
-                                className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-[#1a3a32]"
-                              >
-                                <Edit2 size={12} />
-                              </button>
-                            )}
-                          </div>
-                        )
-                      )}
-                      {!isEditing && !doc.description && canEdit && (
+                      ) : doc.description ? (
+                        <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
+                          "{doc.description}"
+                        </p>
+                      ) : canEdit ? (
                         <button
-                          onClick={() => handleStartEditDescription(doc)}
+                          onClick={() => handleStartEdit(doc)}
                           className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
                         >
                           + Add description
                         </button>
-                      )}
-                      {!isEditing && !doc.description && !canEdit && (
+                      ) : (
                         <p className="text-[8px] text-gray-300 italic text-center py-2">
                           No description provided
                         </p>
@@ -636,6 +768,7 @@ const UserTaskIdPage = () => {
         </section>
       </div>
 
+      {/* ── Modals ── */}
       {isModalOpen && (
         <SubmissionModal
           task={currentIndicator}

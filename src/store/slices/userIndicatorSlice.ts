@@ -391,6 +391,35 @@ export const deleteDocument = createAsyncThunk(
   },
 );
 
+
+// ─── New thunk ────────────────────────────────────────────────────────────────
+
+/** DELETE /user-indicators/:indicatorId/submissions/:submissionId */
+// Add this new thunk after your existing deleteDocument thunk
+
+/** DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId */
+export const deletePendingDocument = createAsyncThunk(
+  "userIndicators/deletePendingDocument",
+  async (
+    { indicatorId, submissionId, docId }: { indicatorId: string; submissionId: string; docId: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.delete(
+        `/user-indicators/${indicatorId}/submissions/${submissionId}/documents/${docId}`,
+      );
+      return { docId, submissionId, indicatorId, data };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message ?? "Failed to delete document from pending submission",
+      );
+    }
+  },
+);
+
+
+
 /* ─── Slice ──────────────────────────────────────────────────────────────── */
 
 const userIndicatorSlice = createSlice({
@@ -427,7 +456,29 @@ const userIndicatorSlice = createSlice({
       patch(state.currentIndicator);
       patch(state.selectedIndicator);
     },
+    optimisticRemoveSubmission(                                     // ← moved INSIDE reducers: {}
+      state,
+      action: PayloadAction<{ submissionId: string; indicatorId: string }>,
+    ) {
+      const { submissionId } = action.payload;
+      const patch = (indicator: IIndicatorUI | null) => {
+        if (!indicator?.submissions) return;
+        for (const key of Object.keys(indicator.submissions)) {
+          indicator.submissions[key] = indicator.submissions[key].filter(
+            (s) => s.id !== submissionId,
+          );
+          if (indicator.submissions[key].length === 0)
+            delete indicator.submissions[key];
+        }
+      };
+      patch(state.currentIndicator);
+      patch(state.selectedIndicator);
+      for (const ind of [...state.myIndicators, ...state.indicators]) {
+        if (ind.id === action.payload.indicatorId) patch(ind);
+      }
+    },
   },
+
   extraReducers: (builder) => {
     // fetchMyIndicators
     builder
@@ -507,6 +558,46 @@ const userIndicatorSlice = createSlice({
         state.error =
           (action.payload as string) ?? "Failed to resubmit progress";
       });
+
+    // deletePendingSubmission                                       // ← moved INSIDE extraReducers
+    // Add this after the deleteDocument case
+builder
+  .addCase(deletePendingDocument.pending, (state) => {
+    state.actionLoading = true;
+    state.error = null;
+  })
+  .addCase(deletePendingDocument.fulfilled, (state, action) => {
+    state.actionLoading = false;
+    const { docId, submissionId } = action.payload;
+    
+    const removeDocumentFromIndicator = (indicator: IIndicatorUI | null) => {
+      if (!indicator?.submissions) return;
+      for (const bucket of Object.values(indicator.submissions)) {
+        for (const sub of bucket) {
+          if (sub.id === submissionId) {
+            const idx = sub.documents?.findIndex((d) => d.id === docId);
+            if (idx !== undefined && idx !== -1 && sub.documents) {
+              sub.documents.splice(idx, 1);
+            }
+          }
+        }
+      }
+    };
+    
+    removeDocumentFromIndicator(state.currentIndicator);
+    removeDocumentFromIndicator(state.selectedIndicator);
+    
+    // Also update in myIndicators and indicators lists
+    for (const ind of [...state.myIndicators, ...state.indicators]) {
+      if (ind.id === action.payload.indicatorId) {
+        removeDocumentFromIndicator(ind);
+      }
+    }
+  })
+  .addCase(deletePendingDocument.rejected, (state, action) => {
+    state.actionLoading = false;
+    state.error = (action.payload as string) ?? "Failed to delete document from pending submission";
+  });
 
     // addDocuments
     builder
