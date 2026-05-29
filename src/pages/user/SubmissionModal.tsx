@@ -23,6 +23,7 @@ interface SubmissionModalProps {
   task: IIndicatorUI | null;
   onClose: () => void;
   existingSubmission?: ISubmissionUI;
+  onSubmit?: (formData: FormData, quarter?: number) => Promise<void>;
 }
 
 interface ExtendedFile {
@@ -38,7 +39,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "application/pdf", "video/mp4"];
 const MAX_DESCRIPTION_LENGTH = 500;
 
-const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalProps) => {
+const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: SubmissionModalProps) => {
   const dispatch = useDispatch<AppDispatch>();
   const { uploading } = useSelector((state: RootState) => state.userIndicators);
 
@@ -93,8 +94,9 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
   }, [fileEntries]);
 
   const isRejected = currentPeriodSubmission?.reviewStatus === "Rejected";
+  const isPending = currentPeriodSubmission?.reviewStatus === "Pending";
   const isAccepted = currentPeriodSubmission?.reviewStatus === "Accepted";
-  const showModeSwitcher = !!currentPeriodSubmission && !isAccepted;
+  const showModeSwitcher = !!currentPeriodSubmission && !isAccepted && !isPending;
 
   const handleQuarterChange = useCallback((q: string) => {
     setSelectedQuarter(q);
@@ -212,12 +214,54 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
     const formData = new FormData();
     const year = new Date().getFullYear();
     
-    // ✅ Convert quarter display value to database value (number)
+    // Convert quarter display value to database value (number)
     const quarterValue = getQuarterValueForDatabase(selectedQuarter);
     formData.append("quarter", String(quarterValue));
     formData.append("year", String(year));
 
     try {
+      // Check if there's a pending submission for this period
+      const hasPendingSubmission = currentPeriodSubmission?.reviewStatus === "Pending";
+      
+      if (hasPendingSubmission) {
+        // For pending submissions, ALWAYS use add-documents endpoint
+        fileEntries.forEach((entry) => {
+          formData.append("documents", entry.file);
+          formData.append("descriptions", entry.description.trim());
+        });
+
+        if (onSubmit) {
+          await onSubmit(formData, quarterValue);
+        } else {
+          const result = await dispatch(
+            addIndicatorDocuments({ 
+              id: task!.id, 
+              quarter: quarterValue,
+              formData 
+            })
+          );
+
+          if (addIndicatorDocuments.rejected.match(result)) {
+            const payload = result.payload;
+            const errMsg = typeof payload === "object" && payload !== null && "message" in payload
+              ? String((payload as { message: unknown }).message)
+              : result.error?.message ?? "Failed to add documents.";
+            toast.error(errMsg);
+            return;
+          }
+
+          toast.success(`${fileEntries.length} document(s) added to your pending submission.`);
+        }
+        
+        setSuccess(true);
+        setTimeout(() => {
+          onClose();
+          setSuccess(false);
+        }, 1500);
+        return;
+      }
+
+      // For non-pending submissions (first time or rejected), proceed with normal flow
       if (submitMode === "replace") {
         formData.append("notes", "-");
         formData.append("achievedValue", "0");
@@ -227,6 +271,17 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
           formData.append("descriptions", entry.description.trim());
         });
 
+        if (onSubmit) {
+          await onSubmit(formData, quarterValue);
+          setSuccess(true);
+          setTimeout(() => {
+            onClose();
+            setSuccess(false);
+          }, 1500);
+          return;
+        }
+
+        // Fallback to direct dispatch if onSubmit not provided (legacy mode)
         let result;
 
         if (existingSubmission && existingSubmission.reviewStatus === "Rejected") {
@@ -251,37 +306,40 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
           return;
         }
 
-        if (
-          submitIndicatorProgress.fulfilled.match(result) ||
-          resubmitIndicatorProgress.fulfilled.match(result) ||
-          updateRejectedSubmission.fulfilled.match(result)
-        ) {
-          toast.success(
-            existingSubmission?.reviewStatus === "Rejected"
-              ? "Correction submitted for review."
-              : currentPeriodSubmission
-              ? "Registry updated — record revised."
-              : "Evidence filed successfully."
-          );
-          setSuccess(true);
-          setTimeout(() => {
-            onClose();
-            setSuccess(false);
-          }, 1500);
-        }
+        toast.success(
+          existingSubmission?.reviewStatus === "Rejected"
+            ? "Correction submitted for review."
+            : currentPeriodSubmission
+            ? "Registry updated — record revised."
+            : "Evidence filed successfully."
+        );
+        setSuccess(true);
+        setTimeout(() => {
+          onClose();
+          setSuccess(false);
+        }, 1500);
 
       } else {
-        // Append mode - add additional documents to existing submission
+        // Append mode for non-pending submissions
         fileEntries.forEach((entry) => {
           formData.append("documents", entry.file);
           formData.append("descriptions", entry.description.trim());
         });
 
-        // ✅ Use the numeric quarter value for the API call
+        if (onSubmit) {
+          await onSubmit(formData, quarterValue);
+          setSuccess(true);
+          setTimeout(() => {
+            onClose();
+            setSuccess(false);
+          }, 1500);
+          return;
+        }
+
         const result = await dispatch(
           addIndicatorDocuments({ 
             id: task!.id, 
-            quarter: quarterValue,  // Send number, not string
+            quarter: quarterValue,
             formData 
           })
         );
@@ -296,19 +354,12 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
           return;
         }
 
-        if (addIndicatorDocuments.fulfilled.match(result)) {
-          const payload = result.payload;
-          const successMsg =
-            typeof payload === "object" && payload !== null && "message" in payload
-              ? String((payload as { message: unknown }).message)
-              : `${fileEntries.length} document(s) added to the registry.`;
-          toast.success(successMsg);
-          setSuccess(true);
-          setTimeout(() => {
-            onClose();
-            setSuccess(false);
-          }, 1500);
-        }
+        toast.success(`${fileEntries.length} document(s) added to the registry.`);
+        setSuccess(true);
+        setTimeout(() => {
+          onClose();
+          setSuccess(false);
+        }, 1500);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "An unexpected error occurred.";
@@ -338,7 +389,9 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
         <div className="px-6 py-5 md:px-8 md:py-6 border-b border-slate-100 bg-white flex justify-between items-start shrink-0">
           <div className="text-[#1a3a32] space-y-1">
             <h3 className="text-lg md:text-xl font-serif font-black uppercase tracking-tighter">
-              {existingSubmission?.reviewStatus === "Rejected"
+              {isPending
+                ? "Add More Documents"
+                : existingSubmission?.reviewStatus === "Rejected"
                 ? "Correct Returned Filing"
                 : isRejected
                 ? "Returned for Correction"
@@ -377,7 +430,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
           ) : (
             <div className="space-y-6">
 
-              {/* Mode switcher */}
+              {/* Mode switcher - hide for pending submissions */}
               {showModeSwitcher && (
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -402,6 +455,18 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
                   >
                     <PlusCircle size={14} /> Add More
                   </button>
+                </div>
+              )}
+
+              {/* Pending submission info banner */}
+              {isPending && (
+                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-xl">
+                  <p className="text-[9px] text-blue-700 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
+                    <Clock size={12} /> Pending Review
+                  </p>
+                  <p className="text-xs text-blue-600">
+                    You have a pending submission awaiting admin review. You can add more documents to this submission.
+                  </p>
                 </div>
               )}
 
@@ -584,6 +649,11 @@ const SubmissionModal = ({ task, onClose, existingSubmission }: SubmissionModalP
               <><Loader2 className="animate-spin" size={14} /><span>Syncing...</span></>
             ) : isAccepted ? (
               "Period Certified"
+            ) : isPending ? (
+              <>
+                <PlusCircle size={14} />
+                <span>Add Documents to Pending Submission</span>
+              </>
             ) : (
               <>
                 <ShieldCheck size={14} />

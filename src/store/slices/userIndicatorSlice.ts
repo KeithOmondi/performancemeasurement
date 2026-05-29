@@ -65,6 +65,7 @@ interface UserIndicatorState {
   uploading: boolean;
   error: string | null;
   lastSubmissionId: string | null;
+  lastActionSuccess: string | null;
 }
 
 const initialState: UserIndicatorState = {
@@ -78,6 +79,7 @@ const initialState: UserIndicatorState = {
   uploading: false,
   error: null,
   lastSubmissionId: null,
+  lastActionSuccess: null,
 };
 
 /* ─── Bucket helpers (exported) ──────────────────────────────────────────── */
@@ -98,11 +100,16 @@ export const getRejectedSubmission = (
         new Date(a.submittedAt ?? 0).getTime(),
     )[0];
 
+export const getAcceptedSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  bucket.find((s) => s.reviewStatus === "Accepted");
+
 export const getActiveSubmission = (
   bucket: ISubmissionUI[],
 ): ISubmissionUI | undefined =>
   getPendingSubmission(bucket) ??
-  bucket.find((s) => s.reviewStatus === "Accepted") ??
+  getAcceptedSubmission(bucket) ??
   getRejectedSubmission(bucket);
 
 export const getCurrentQuarterReviewStatus = (
@@ -118,8 +125,9 @@ export const canSubmitForCurrentQuarter = (indicator: IIndicatorUI): boolean => 
   const key = _activeKey(indicator);
   if (!key) return true;
   const bucket = indicator.submissions?.[key] ?? [];
-  return bucket.every(
-    (s) => s.reviewStatus === "Rejected" || s.reviewStatus == null,
+  // Can submit if no pending or accepted submission exists
+  return !bucket.some(
+    (s) => s.reviewStatus === "Pending" || s.reviewStatus === "Accepted",
   );
 };
 
@@ -165,7 +173,7 @@ const _activeKey = (indicator: IIndicatorUI): string | null => {
   return `Q${q}_${year}`;
 };
 
-/* ─── Thunks (corrected endpoints) ──────────────────────────────────────── */
+/* ─── Thunks ──────────────────────────────────────────────────────────────── */
 
 /** GET /user-indicators/my-assignments */
 export const fetchMyIndicators = createAsyncThunk(
@@ -228,7 +236,7 @@ export const submitProgress = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      return data.data as { submissionId: string };
+      return { data: data.data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -251,7 +259,7 @@ export const resubmitProgress = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      return data as { submissionId: string };
+      return { data: data.data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -271,7 +279,7 @@ export const addDocuments = createAsyncThunk(
       quarter,
       idempotencyKey,
     }: { id: string; formData: FormData; quarter?: number; idempotencyKey?: string },
-    { rejectWithValue },
+    { rejectWithValue, dispatch },
   ) => {
     try {
       if (quarter !== undefined) formData.append("quarter", String(quarter));
@@ -282,7 +290,13 @@ export const addDocuments = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data", ...config } },
       );
-      return data;
+      
+      // Refresh indicator details to get updated documents
+      if (id) {
+        await dispatch(fetchIndicatorDetails(id));
+      }
+      
+      return { data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -297,7 +311,7 @@ export const updateRejectedSubmission = createAsyncThunk(
   "userIndicators/updateRejectedSubmission",
   async (
     { id, formData, idempotencyKey }: { id: string; formData: FormData; idempotencyKey?: string },
-    { rejectWithValue },
+    { rejectWithValue, dispatch },
   ) => {
     try {
       const config: Record<string, string> = {};
@@ -307,7 +321,13 @@ export const updateRejectedSubmission = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data", ...config } },
       );
-      return data;
+      
+      // Refresh indicator details to get updated submissions
+      if (id) {
+        await dispatch(fetchIndicatorDetails(id));
+      }
+      
+      return { data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -326,7 +346,7 @@ export const updateDocumentDescriptions = createAsyncThunk(
       documents,
       idempotencyKey,
     }: { submissionId: string; documents: Array<{ documentId: string; description: string }>; idempotencyKey?: string },
-    { rejectWithValue },
+    { rejectWithValue }, // Remove dispatch from here
   ) => {
     try {
       const config: Record<string, string> = {};
@@ -336,7 +356,7 @@ export const updateDocumentDescriptions = createAsyncThunk(
         { documents },
         { headers: config },
       );
-      return data;
+      return { data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -345,7 +365,6 @@ export const updateDocumentDescriptions = createAsyncThunk(
     }
   },
 );
-
 /** PATCH /user-indicators/documents/:docId/description */
 export const updateDocumentDescription = createAsyncThunk(
   "userIndicators/updateDocumentDescription",
@@ -365,7 +384,7 @@ export const updateDocumentDescription = createAsyncThunk(
         { description },
         { headers: config },
       );
-      return data;
+      return { data, docId, description, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -375,13 +394,13 @@ export const updateDocumentDescription = createAsyncThunk(
   },
 );
 
-/** DELETE /user-indicators/documents/:docId */
+/** DELETE /user-indicators/documents/:docId (legacy) */
 export const deleteDocument = createAsyncThunk(
   "userIndicators/deleteDocument",
   async (docId: string, { rejectWithValue }) => {
     try {
       const { data } = await api.delete(`/user-indicators/documents/${docId}`);
-      return { docId, data };
+      return { docId, data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -391,24 +410,24 @@ export const deleteDocument = createAsyncThunk(
   },
 );
 
-
-// ─── New thunk ────────────────────────────────────────────────────────────────
-
-/** DELETE /user-indicators/:indicatorId/submissions/:submissionId */
-// Add this new thunk after your existing deleteDocument thunk
-
 /** DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId */
 export const deletePendingDocument = createAsyncThunk(
   "userIndicators/deletePendingDocument",
   async (
     { indicatorId, submissionId, docId }: { indicatorId: string; submissionId: string; docId: string },
-    { rejectWithValue },
+    { rejectWithValue, dispatch },
   ) => {
     try {
       const { data } = await api.delete(
         `/user-indicators/${indicatorId}/submissions/${submissionId}/documents/${docId}`,
       );
-      return { docId, submissionId, indicatorId, data };
+      
+      // Refresh indicator details to get updated document list
+      if (indicatorId) {
+        await dispatch(fetchIndicatorDetails(indicatorId));
+      }
+      
+      return { docId, submissionId, indicatorId, data, message: data.message };
     } catch (err: unknown) {
       return rejectWithValue(
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -417,8 +436,6 @@ export const deletePendingDocument = createAsyncThunk(
     }
   },
 );
-
-
 
 /* ─── Slice ──────────────────────────────────────────────────────────────── */
 
@@ -431,6 +448,9 @@ const userIndicatorSlice = createSlice({
     },
     clearLastSubmissionId(state) {
       state.lastSubmissionId = null;
+    },
+    clearLastActionSuccess(state) {
+      state.lastActionSuccess = null;
     },
     setLocalSelectedIndicator(state, action: PayloadAction<string>) {
       const found =
@@ -456,26 +476,26 @@ const userIndicatorSlice = createSlice({
       patch(state.currentIndicator);
       patch(state.selectedIndicator);
     },
-    optimisticRemoveSubmission(                                     // ← moved INSIDE reducers: {}
+    optimisticRemoveDocument(
       state,
-      action: PayloadAction<{ submissionId: string; indicatorId: string }>,
+      action: PayloadAction<{ docId: string; submissionId: string; indicatorId: string }>,
     ) {
-      const { submissionId } = action.payload;
+      const { docId, submissionId } = action.payload;
       const patch = (indicator: IIndicatorUI | null) => {
         if (!indicator?.submissions) return;
-        for (const key of Object.keys(indicator.submissions)) {
-          indicator.submissions[key] = indicator.submissions[key].filter(
-            (s) => s.id !== submissionId,
-          );
-          if (indicator.submissions[key].length === 0)
-            delete indicator.submissions[key];
+        for (const bucket of Object.values(indicator.submissions)) {
+          for (const sub of bucket) {
+            if (sub.id === submissionId) {
+              const idx = sub.documents?.findIndex((d) => d.id === docId);
+              if (idx !== undefined && idx !== -1 && sub.documents) {
+                sub.documents.splice(idx, 1);
+              }
+            }
+          }
         }
       };
       patch(state.currentIndicator);
       patch(state.selectedIndicator);
-      for (const ind of [...state.myIndicators, ...state.indicators]) {
-        if (ind.id === action.payload.indicatorId) patch(ind);
-      }
     },
   },
 
@@ -533,10 +553,12 @@ const userIndicatorSlice = createSlice({
       .addCase(submitProgress.pending, (state) => {
         state.uploading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
       .addCase(submitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastSubmissionId = action.payload?.data?.submissionId ?? null;
+        state.lastActionSuccess = action.payload?.message ?? "Submission successful";
       })
       .addCase(submitProgress.rejected, (state, action) => {
         state.uploading = false;
@@ -548,10 +570,12 @@ const userIndicatorSlice = createSlice({
       .addCase(resubmitProgress.pending, (state) => {
         state.uploading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
       .addCase(resubmitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastSubmissionId = action.payload?.data?.submissionId ?? null;
+        state.lastActionSuccess = action.payload?.message ?? "Resubmission successful";
       })
       .addCase(resubmitProgress.rejected, (state, action) => {
         state.uploading = false;
@@ -559,54 +583,32 @@ const userIndicatorSlice = createSlice({
           (action.payload as string) ?? "Failed to resubmit progress";
       });
 
-    // deletePendingSubmission                                       // ← moved INSIDE extraReducers
-    // Add this after the deleteDocument case
-builder
-  .addCase(deletePendingDocument.pending, (state) => {
-    state.actionLoading = true;
-    state.error = null;
-  })
-  .addCase(deletePendingDocument.fulfilled, (state, action) => {
-    state.actionLoading = false;
-    const { docId, submissionId } = action.payload;
-    
-    const removeDocumentFromIndicator = (indicator: IIndicatorUI | null) => {
-      if (!indicator?.submissions) return;
-      for (const bucket of Object.values(indicator.submissions)) {
-        for (const sub of bucket) {
-          if (sub.id === submissionId) {
-            const idx = sub.documents?.findIndex((d) => d.id === docId);
-            if (idx !== undefined && idx !== -1 && sub.documents) {
-              sub.documents.splice(idx, 1);
-            }
-          }
-        }
-      }
-    };
-    
-    removeDocumentFromIndicator(state.currentIndicator);
-    removeDocumentFromIndicator(state.selectedIndicator);
-    
-    // Also update in myIndicators and indicators lists
-    for (const ind of [...state.myIndicators, ...state.indicators]) {
-      if (ind.id === action.payload.indicatorId) {
-        removeDocumentFromIndicator(ind);
-      }
-    }
-  })
-  .addCase(deletePendingDocument.rejected, (state, action) => {
-    state.actionLoading = false;
-    state.error = (action.payload as string) ?? "Failed to delete document from pending submission";
-  });
+    // deletePendingDocument
+    builder
+      .addCase(deletePendingDocument.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+        state.lastActionSuccess = null;
+      })
+      .addCase(deletePendingDocument.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Document deleted successfully";
+      })
+      .addCase(deletePendingDocument.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = (action.payload as string) ?? "Failed to delete document from pending submission";
+      });
 
     // addDocuments
     builder
       .addCase(addDocuments.pending, (state) => {
         state.uploading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
-      .addCase(addDocuments.fulfilled, (state) => {
+      .addCase(addDocuments.fulfilled, (state, action) => {
         state.uploading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Documents added successfully";
       })
       .addCase(addDocuments.rejected, (state, action) => {
         state.uploading = false;
@@ -618,9 +620,11 @@ builder
       .addCase(updateRejectedSubmission.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
-      .addCase(updateRejectedSubmission.fulfilled, (state) => {
+      .addCase(updateRejectedSubmission.fulfilled, (state, action) => {
         state.actionLoading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Submission updated successfully";
       })
       .addCase(updateRejectedSubmission.rejected, (state, action) => {
         state.actionLoading = false;
@@ -633,9 +637,11 @@ builder
       .addCase(updateDocumentDescriptions.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
-      .addCase(updateDocumentDescriptions.fulfilled, (state) => {
+      .addCase(updateDocumentDescriptions.fulfilled, (state, action) => {
         state.actionLoading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Document descriptions updated successfully";
       })
       .addCase(updateDocumentDescriptions.rejected, (state, action) => {
         state.actionLoading = false;
@@ -648,9 +654,25 @@ builder
       .addCase(updateDocumentDescription.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
-      .addCase(updateDocumentDescription.fulfilled, (state) => {
+      .addCase(updateDocumentDescription.fulfilled, (state, action) => {
         state.actionLoading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Document description updated successfully";
+        
+        // Optimistically update the document description
+        const { docId, description } = action.payload;
+        const patch = (indicator: IIndicatorUI | null) => {
+          if (!indicator?.submissions) return;
+          for (const bucket of Object.values(indicator.submissions)) {
+            for (const sub of bucket) {
+              const doc = sub.documents?.find((d) => d.id === docId);
+              if (doc) doc.description = description;
+            }
+          }
+        };
+        patch(state.currentIndicator);
+        patch(state.selectedIndicator);
       })
       .addCase(updateDocumentDescription.rejected, (state, action) => {
         state.actionLoading = false;
@@ -658,15 +680,18 @@ builder
           (action.payload as string) ?? "Failed to update document description";
       });
 
-    // deleteDocument
+    // deleteDocument (legacy)
     builder
       .addCase(deleteDocument.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
+        state.lastActionSuccess = null;
       })
       .addCase(deleteDocument.fulfilled, (state, action) => {
         state.actionLoading = false;
-        const docId = action.payload.docId;
+        state.lastActionSuccess = action.payload?.message ?? "Document deleted successfully";
+        
+        const { docId } = action.payload;
         const removeFromIndicator = (indicator: IIndicatorUI | null) => {
           if (!indicator?.submissions) return;
           for (const bucket of Object.values(indicator.submissions)) {
@@ -710,8 +735,10 @@ builder
 export const {
   clearIndicatorError,
   clearLastSubmissionId,
+  clearLastActionSuccess,
   setLocalSelectedIndicator,
   optimisticUpdateDocumentDescription,
+  optimisticRemoveDocument,
 } = userIndicatorSlice.actions;
 
 /* ─── Aliases ─────────────────────────────────────────────────────────────── */

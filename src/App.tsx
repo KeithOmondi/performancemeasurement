@@ -53,6 +53,7 @@ import ExaminerManagement from "./pages/superadmin/ExaminerManagement";
 import ExaminerAssignments from "./pages/examiner/ExaminerAssignments";
 import SuperAdminArchives from "./pages/superadmin/SuperAdminArchives";
 import SuperAdminApproved from "./pages/superadmin/SuperAdminApproved";
+import SuperAdminApprovalPage from "./pages/superadmin/SuperAdminApprovalPage";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -137,6 +138,7 @@ const App = () => {
             <Route path="/superadmin/teams" element={<SuperAdminTeams />} />
             <Route path="/superadmin/rejections" element={<SuperAdminRejected />} />
             <Route path="/superadmin/approvals" element={<SuperAdminApprovals />} />
+            <Route path="/super-admin/approvals/:id" element={<SuperAdminApprovalPage />} />
             <Route path="/superadmin/management" element={<ExaminerManagement />} />
             <Route path="/superadmin/archives" element={<SuperAdminArchives />} />
             <Route path="/superadmin/approved" element={<SuperAdminApproved />} />

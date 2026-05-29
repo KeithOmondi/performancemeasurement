@@ -18,6 +18,10 @@ import {
   getCurrentQuarterReviewStatus,
   deleteDocument,
   deletePendingDocument,
+  clearLastActionSuccess,
+  addDocuments,
+  resubmitProgress,
+  submitProgress,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -134,6 +138,7 @@ const UserTaskIdPage = () => {
   const lastSubmissionId = useAppSelector((s) => s.userIndicators.lastSubmissionId);
   const error = useAppSelector((s) => s.userIndicators.error);
   const actionLoading = useAppSelector((s) => s.userIndicators.actionLoading);
+  const lastActionSuccess = useAppSelector((s) => s.userIndicators.lastActionSuccess);
 
   /* ── Helpers ── */
   const showToast = useCallback(
@@ -167,8 +172,16 @@ const UserTaskIdPage = () => {
     return () => {
       dispatch(clearIndicatorError());
       dispatch(clearLastSubmissionId());
+      dispatch(clearLastActionSuccess());
     };
   }, [id, dispatch]);
+
+  useEffect(() => {
+    if (lastActionSuccess) {
+      showToast(lastActionSuccess, "success", 4000);
+      dispatch(clearLastActionSuccess());
+    }
+  }, [lastActionSuccess, dispatch, showToast]);
 
   useEffect(() => {
     lastSubmissionIdRef.current = null;
@@ -188,6 +201,13 @@ const UserTaskIdPage = () => {
 
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
+  useEffect(() => {
+    if (error) {
+      showToast(error, "error", 5000);
+      dispatch(clearIndicatorError());
+    }
+  }, [error, dispatch, showToast]);
+
   /* ── Derived ── */
   const isAnnual = currentIndicator?.reporting_cycle === "Annual";
   const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
@@ -205,7 +225,18 @@ const UserTaskIdPage = () => {
     if (!currentIndicator?.submissions) return undefined;
     const year = currentIndicator.currentYear ?? new Date().getFullYear();
     const key = `${activeQuarterDisplay}_${year}`;
-    return currentIndicator.submissions[key]?.[0];
+    const submission = currentIndicator.submissions[key]?.[0];
+    
+    // Debug log
+    console.log("🔍 [UserTaskIdPage] activeSub:", {
+      key,
+      submissionId: submission?.id,
+      reviewStatus: submission?.reviewStatus,
+      year,
+      activeQuarterDisplay
+    });
+    
+    return submission;
   }, [currentIndicator, activeQuarterDisplay]);
 
   const submissionHistory = useMemo(() => {
@@ -230,18 +261,21 @@ const UserTaskIdPage = () => {
     [allSubmissions],
   );
 
+  // ✅ FIX: Exclude entire rejected submissions from the active document registry
   const activeDocs = useMemo(
     () =>
-      allSubmissions.flatMap((sub) =>
-        (sub.documents ?? [])
-          .filter((d: IDocumentUI) => d.status !== "Rejected")
-          .map((d) => ({
-            doc: d,
-            quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
-            year: sub.year,
-            submission: sub,
-          })),
-      ),
+      allSubmissions
+        .filter((sub) => sub.reviewStatus !== "Rejected") // 🚫 skip rejected submissions
+        .flatMap((sub) =>
+          (sub.documents ?? [])
+            .filter((d: IDocumentUI) => d.status !== "Rejected")
+            .map((d) => ({
+              doc: d,
+              quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
+              year: sub.year,
+              submission: sub,
+            })),
+        ),
     [allSubmissions],
   );
 
@@ -295,7 +329,8 @@ const UserTaskIdPage = () => {
       if (id) dispatch(fetchIndicatorDetails(id));
     } catch (err) {
       console.error("Failed to update description:", err);
-      showToast("Failed to update description. Please try again.", "error");
+      const errorMessage = err instanceof Error ? err.message : "Failed to update description. Please try again.";
+      showToast(errorMessage, "error");
       if (id) dispatch(fetchIndicatorDetails(id));
     } finally {
       setUpdatingDescription(false);
@@ -304,61 +339,104 @@ const UserTaskIdPage = () => {
 
   /* ── Delete document handler ── */
   const canDeleteDocument = (docStatus: string | undefined, submissionReviewStatus?: string): boolean => {
-    // Can delete if:
-    // 1. Document is rejected, OR
-    // 2. Submission is pending (regardless of document status, as long as not accepted)
     return docStatus === "Rejected" || submissionReviewStatus === "Pending";
   };
 
-  const handleDeleteDocument = async (doc: IDocumentUI, submission: ISubmissionUI) => {
-  if (!id) return;
-  
-  const isPendingSubmission = submission.reviewStatus === "Pending";
-  const isRejectedDocument = doc.status === "Rejected";
-  
-  let confirmMessage = "";
-  
-  if (isPendingSubmission) {
-    confirmMessage = "Are you sure you want to delete this document from the pending submission? This action cannot be undone.";
-  } else if (isRejectedDocument) {
-    confirmMessage = "Are you sure you want to delete this rejected document? This action cannot be undone.";
-  } else {
-    showToast("This document cannot be deleted. Only rejected documents or documents from pending submissions can be deleted.", "error");
-    return;
-  }
-  
-  const confirmed = window.confirm(confirmMessage);
-  if (!confirmed) return;
-  
-  setDeletingDocId(doc.id);
-  
-  try {
+  const getDeleteConfirmMessage = (doc: IDocumentUI, submission: ISubmissionUI): string => {
+    const isPendingSubmission = submission.reviewStatus === "Pending";
+    const isRejectedDocument = doc.status === "Rejected";
+    
     if (isPendingSubmission) {
-      await dispatch(deletePendingDocument({ 
-        indicatorId: id, 
-        submissionId: submission.id, 
-        docId: doc.id 
-      })).unwrap();
-    } else {
-      await dispatch(deleteDocument(doc.id)).unwrap();
+      return "Are you sure you want to delete this document from your pending submission? This action cannot be undone.\n\nYou will need to resubmit or add new documents afterward.";
+    }
+    if (isRejectedDocument) {
+      return "Are you sure you want to delete this rejected document? This action cannot be undone.\n\nYou can upload a new corrected document with your resubmission.";
+    }
+    return "Are you sure you want to delete this document? This action cannot be undone.";
+  };
+
+  const handleDeleteDocument = async (doc: IDocumentUI, submission: ISubmissionUI) => {
+    if (!id) return;
+    
+    const isPendingSubmission = submission.reviewStatus === "Pending";
+    const isRejectedDocument = doc.status === "Rejected";
+    
+    if (!isPendingSubmission && !isRejectedDocument) {
+      showToast(
+        "This document cannot be deleted. Only rejected documents or documents from pending submissions can be deleted.",
+        "error"
+      );
+      return;
     }
     
-    showToast("Document deleted successfully.", "success");
-    // Refresh the indicator data
-    if (id) dispatch(fetchIndicatorDetails(id));
-  } catch (err) {
-    console.error("Failed to delete document:", err);
-    const errorMessage = err instanceof Error ? err.message : "Failed to delete document. Please try again.";
-    showToast(errorMessage, "error");
-  } finally {
-    setDeletingDocId(null);
-  }
-};
+    const confirmMessage = getDeleteConfirmMessage(doc, submission);
+    const confirmed = window.confirm(confirmMessage);
+    if (!confirmed) return;
+    
+    setDeletingDocId(doc.id);
+    
+    try {
+      if (isPendingSubmission) {
+        await dispatch(deletePendingDocument({ 
+          indicatorId: id, 
+          submissionId: submission.id, 
+          docId: doc.id 
+        })).unwrap();
+        showToast("Document removed from pending submission successfully.", "success");
+      } else {
+        await dispatch(deleteDocument(doc.id)).unwrap();
+        showToast("Rejected document deleted successfully.", "success");
+      }
+      
+      if (id) {
+        await dispatch(fetchIndicatorDetails(id));
+      }
+    } catch (err) {
+      console.error("Failed to delete document:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to delete document. Please try again.";
+      showToast(errorMessage, "error");
+    } finally {
+      setDeletingDocId(null);
+    }
+  };
 
   const handleModalClose = useCallback(() => {
     setIsModalOpen(false);
     if (id) dispatch(fetchIndicatorDetails(id));
   }, [id, dispatch]);
+
+  const handleOpenModal = useCallback(async () => {
+    if (id) {
+      await dispatch(fetchIndicatorDetails(id));
+    }
+    setIsModalOpen(true);
+  }, [id, dispatch]);
+
+  const handleSubmissionSubmit = useCallback(async (formData: FormData, quarter?: number) => {
+    if (!id) return;
+    
+    console.log("📤 [handleSubmissionSubmit] Called with:", {
+      activeSubStatus: activeSub?.reviewStatus,
+      quarter,
+      hasFormData: !!formData
+    });
+    
+    if (activeSub?.reviewStatus === "Pending") {
+      console.log("✅ Using addDocuments for pending submission");
+      await dispatch(addDocuments({ id, formData, quarter })).unwrap();
+      showToast("Documents added to pending submission successfully.", "success");
+    } else if (activeSub?.reviewStatus === "Rejected") {
+      console.log("✅ Using resubmitProgress for rejected submission");
+      await dispatch(resubmitProgress({ id, formData })).unwrap();
+      showToast("Resubmission sent for review.", "success");
+    } else {
+      console.log("✅ Using submitProgress for new submission");
+      await dispatch(submitProgress({ id, formData })).unwrap();
+      showToast("Submission sent for review.", "success");
+    }
+    
+    await dispatch(fetchIndicatorDetails(id));
+  }, [id, activeSub, dispatch, showToast]);
 
   /* ── Loading / empty states ── */
   if (loading && !currentIndicator) {
@@ -417,7 +495,7 @@ const UserTaskIdPage = () => {
 
             {/* CTA */}
             <button
-              onClick={() => setIsModalOpen(true)}
+              onClick={handleOpenModal}
               disabled={
                 uploading ||
                 currentQuarterStatus === "Accepted" ||
@@ -452,7 +530,7 @@ const UserTaskIdPage = () => {
           </div>
         )}
 
-        {/* ── Rejected documents ── */}
+        {/* ── Rejected documents section ── */}
         {rejectedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
@@ -482,13 +560,20 @@ const UserTaskIdPage = () => {
                         Rejected
                       </span>
                     </div>
-                    {submission.reviewStatus === "Pending" && (
+                    
+                    {/* Delete button for rejected documents */}
+                    {(submission.reviewStatus === "Pending" || doc.status === "Rejected") && (
                       <div className="mt-2">
                         <button
                           onClick={() => handleDeleteDocument(doc, submission)}
-                          className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider"
+                          disabled={deletingDocId === doc.id || actionLoading}
+                          className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <Trash2 size={10} />
+                          {deletingDocId === doc.id ? (
+                            <Loader2 size={10} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={10} />
+                          )}
                           Delete Document
                         </button>
                       </div>
@@ -588,7 +673,7 @@ const UserTaskIdPage = () => {
           </section>
         )}
 
-        {/* ── Document Registry ── */}
+        {/* ── Document Registry (only non‑rejected submissions) ── */}
         <section className="space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
@@ -774,6 +859,7 @@ const UserTaskIdPage = () => {
           task={currentIndicator}
           onClose={handleModalClose}
           existingSubmission={activeSub}
+          onSubmit={handleSubmissionSubmit}
         />
       )}
 
