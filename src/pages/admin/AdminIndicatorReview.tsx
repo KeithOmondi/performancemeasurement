@@ -21,6 +21,7 @@ import {
   rejectSubmission,
   getIndicatorByIdAdmin,
   getSubmitterName,
+  getPreviousRejectionReason,
   type ISubmission,
   type IDocument,
   type IDocumentReviewUpdate,
@@ -34,15 +35,19 @@ interface Toast {
   message: string;
 }
 
+interface DocRejectionDraft {
+  documentId: string;
+  fileName: string;
+  reason: string;
+}
 
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Local Helpers (not exposed by slice) ────────────────────────────────────
 
 function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
   if (!docs || !Array.isArray(docs) || docs.length === 0) return [];
   const seen = new Map<string, IDocument>();
   for (const doc of docs) {
-    if (!doc || !doc.id) continue;
+    if (!doc?.id) continue;
     const key = doc.fileName || doc.id;
     if (!seen.has(key)) seen.set(key, doc);
   }
@@ -50,58 +55,23 @@ function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
 }
 
 function getSafeDocuments(sub: ISubmission): IDocument[] {
-  const docs = sub.documents;
-  if (!docs || !Array.isArray(docs)) return [];
-  return docs;
+  return sub.documents && Array.isArray(sub.documents) ? sub.documents : [];
 }
 
-// Get the most recent rejection for this quarter/year period
-function getMostRecentRejection(
-  currentSubmission: ISubmission,
-  allSubmissionsForPeriod: ISubmission[]
-): ISubmission | null {
-  // Find all submissions for the same quarter/year that are rejected
-  const rejectedSubmissions = allSubmissionsForPeriod.filter(
-    (s) => 
-      s.quarter === currentSubmission.quarter && 
-      s.year === currentSubmission.year &&
-      s.reviewStatus === "Rejected"
-  );
-  
-  if (rejectedSubmissions.length === 0) return null;
-  
-  // Sort by submittedAt descending to get most recent rejection
-  const sortedRejections = rejectedSubmissions.sort(
-    (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
-  );
-  
-  return sortedRejections[0];
-}
+// ─── Status Badge ─────────────────────────────────────────────────────────────
 
-// Get previous rejection reason (either from current submission or from history)
-function getPreviousRejectionReason(
-  currentSubmission: ISubmission,
-  allSubmissionsForPeriod: ISubmission[]
-): string | null {
-  // Check if current submission has previousRejectionReason field
-  if (currentSubmission.previousRejectionReason) {
-    return currentSubmission.previousRejectionReason;
+function reviewStatusBadgeClass(status: ISubmission["reviewStatus"]): string {
+  switch (status) {
+    case "Verified":
+    case "Accepted":
+      return "bg-emerald-50 text-emerald-600 border-emerald-100";
+    case "Rejected":
+      return "bg-rose-50 text-rose-600 border-rose-100";
+    case "Correction Needed":
+      return "bg-amber-50 text-amber-600 border-amber-200";
+    default:
+      return "bg-orange-50 text-orange-600 border-orange-100";
   }
-  
-  // Check if current submission has adminComment from a previous rejection
-  if (currentSubmission.adminComment && currentSubmission.reviewStatus === "Pending") {
-    // This might be from a previous rejection
-    return currentSubmission.adminComment;
-  }
-  
-  // Find the most recent rejected submission for the same period
-  const mostRecentRejection = getMostRecentRejection(currentSubmission, allSubmissionsForPeriod);
-  
-  if (mostRecentRejection && mostRecentRejection.adminComment) {
-    return mostRecentRejection.adminComment;
-  }
-  
-  return null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -114,20 +84,16 @@ const AdminIndicatorReview: React.FC = () => {
   const { selectedIndicator: indicator, isReviewing, isLoading } =
     useAppSelector((state) => state.adminIndicators);
 
-  // Core local states
   const [individualComments, setIndividualComments] = useState<Record<string, string>>({});
-  const [documentUpdates, setDocumentUpdates] = useState<IDocumentReviewUpdate[]>([]);
-  const [overallComment, setOverallComment] = useState("");
-  const [explicitRejectionToggle, setExplicitRejectionToggle] = useState(false);
+  const [docRejectionDrafts, setDocRejectionDrafts] = useState<Record<string, DocRejectionDraft>>({});
+  const [overallComment, setOverallComment] = useState<string>("");
+  const [explicitRejectionToggle, setExplicitRejectionToggle] = useState<boolean>(false);
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
-  // Fetch data on mount
   useEffect(() => {
-    if (indicatorId) {
-      dispatch(getIndicatorByIdAdmin(indicatorId));
-    }
+    if (indicatorId) dispatch(getIndicatorByIdAdmin(indicatorId));
   }, [dispatch, indicatorId]);
 
   const allSubmissions = useMemo<ISubmission[]>(() => {
@@ -136,53 +102,62 @@ const AdminIndicatorReview: React.FC = () => {
   }, [indicator]);
 
   const pendingSubmissions = useMemo(
-    () => allSubmissions.filter((s) => s.reviewStatus === "Pending"),
+    () =>
+      allSubmissions.filter(
+        (s) =>
+          s.reviewStatus === "Pending" || s.reviewStatus === "Correction Needed"
+      ),
     [allSubmissions]
   );
 
-  // Group submissions by quarter/year for rejection lookup
   const submissionsByPeriod = useMemo(() => {
     const grouped: Record<string, ISubmission[]> = {};
-    
     allSubmissions.forEach((sub) => {
       const key = `${sub.quarter}-${sub.year}`;
-      if (!grouped[key]) {
-        grouped[key] = [];
-      }
+      if (!grouped[key]) grouped[key] = [];
       grouped[key].push(sub);
     });
-    
     return grouped;
   }, [allSubmissions]);
 
-  // Clean, derived render computation instead of executing a synchronizing useEffect
-  const rejectionMode = useMemo(() => {
-    return explicitRejectionToggle || documentUpdates.length > 0;
-  }, [explicitRejectionToggle, documentUpdates.length]);
+  const rejectionMode = useMemo(
+    () =>
+      explicitRejectionToggle ||
+      Object.keys(docRejectionDrafts).length > 0 ||
+      indicator?.status === "Correction Needed",
+    [explicitRejectionToggle, docRejectionDrafts, indicator?.status]
+  );
 
   const showToast = useCallback((type: Toast["type"], message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const toggleFileRejection = useCallback(
-    (documentId: string, fileName: string) => {
-      setDocumentUpdates((prev) => {
-        const exists = prev.find((d) => d.documentId === documentId);
-        if (exists) return prev.filter((d) => d.documentId !== documentId);
-        return [
-          ...prev,
-          { documentId, status: "Rejected", reason: `File [${fileName}] rejected.` },
-        ];
-      });
-    },
-    []
-  );
+  const toggleFileRejection = useCallback((documentId: string, fileName: string) => {
+    setDocRejectionDrafts((prev) => {
+      if (prev[documentId]) {
+        const next = { ...prev };
+        delete next[documentId];
+        return next;
+      }
+      return {
+        ...prev,
+        [documentId]: { documentId, fileName, reason: "" },
+      };
+    });
+  }, []);
+
+  const updateDocReason = useCallback((documentId: string, reason: string) => {
+    setDocRejectionDrafts((prev) => ({
+      ...prev,
+      [documentId]: { ...prev[documentId], reason },
+    }));
+  }, []);
 
   const resetReviewState = useCallback(() => {
     setOverallComment("");
     setIndividualComments({});
-    setDocumentUpdates([]);
+    setDocRejectionDrafts({});
     setExplicitRejectionToggle(false);
   }, []);
 
@@ -191,10 +166,12 @@ const AdminIndicatorReview: React.FC = () => {
   const handleApprove = useCallback(async () => {
     if (!indicator) return;
 
-    // Dynamically compile payloads on event execution path rather than pulling from state structures
     const submissionUpdates = pendingSubmissions.map((s) => ({
       submissionId: s.id,
-      adminComment: individualComments[s.id]?.trim() || overallComment.trim() || "Approved.",
+      adminComment:
+        individualComments[s.id]?.trim() ||
+        overallComment.trim() ||
+        "Approved.",
     }));
 
     const result = await dispatch(
@@ -212,9 +189,20 @@ const AdminIndicatorReview: React.FC = () => {
       dispatch(getIndicatorByIdAdmin(indicator.id));
       resetReviewState();
     } else if (approveSubmission.rejected.match(result)) {
-      showToast("error", (result.payload as string) || "Approval failed. Please try again.");
+      showToast(
+        "error",
+        (result.payload as string) || "Approval failed. Please try again."
+      );
     }
-  }, [dispatch, indicator, individualComments, overallComment, pendingSubmissions, resetReviewState, showToast]);
+  }, [
+    dispatch,
+    indicator,
+    individualComments,
+    overallComment,
+    pendingSubmissions,
+    resetReviewState,
+    showToast,
+  ]);
 
   // ── Reject ────────────────────────────────────────────────────────────────
 
@@ -226,10 +214,42 @@ const AdminIndicatorReview: React.FC = () => {
       return;
     }
 
-    const submissionUpdates = pendingSubmissions.map((s) => ({
-      submissionId: s.id,
-      adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
+    const drafts = Object.values(docRejectionDrafts);
+    const missingReason = drafts.find((d) => !d.reason.trim());
+    if (missingReason) {
+      alert(
+        `Please provide a rejection reason for "${missingReason.fileName}" before submitting.`
+      );
+      return;
+    }
+
+    const documentUpdates: IDocumentReviewUpdate[] = drafts.map((d) => ({
+      documentId: d.documentId,
+      status: "Rejected",
+      reason: d.reason.trim(),
     }));
+
+    const submissionUpdates = pendingSubmissions.map((s) => {
+      const submissionDocIds = getSafeDocuments(s).map((d) => d.id);
+      const rejectedDocIds = documentUpdates
+        .filter((du) => submissionDocIds.includes(du.documentId))
+        .map((du) => du.documentId);
+
+      const allDocsRejected =
+        submissionDocIds.length > 0 &&
+        submissionDocIds.every((id) => rejectedDocIds.includes(id));
+
+      const reviewStatus: "Rejected" | "Correction Needed" =
+        (explicitRejectionToggle && drafts.length === 0) || allDocsRejected
+          ? "Rejected"
+          : "Correction Needed";
+
+      return {
+        submissionId: s.id,
+        adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
+        reviewStatus,
+      };
+    });
 
     const result = await dispatch(
       rejectSubmission({
@@ -247,9 +267,22 @@ const AdminIndicatorReview: React.FC = () => {
       dispatch(getIndicatorByIdAdmin(indicator.id));
       resetReviewState();
     } else if (rejectSubmission.rejected.match(result)) {
-      showToast("error", (result.payload as string) || "Rejection failed. Please try again.");
+      showToast(
+        "error",
+        (result.payload as string) || "Rejection failed. Please try again."
+      );
     }
-  }, [dispatch, indicator, individualComments, documentUpdates, overallComment, pendingSubmissions, resetReviewState, showToast]);
+  }, [
+    dispatch,
+    indicator,
+    individualComments,
+    docRejectionDrafts,
+    explicitRejectionToggle,
+    overallComment,
+    pendingSubmissions,
+    resetReviewState,
+    showToast,
+  ]);
 
   // ── Loading ───────────────────────────────────────────────────────────────
 
@@ -263,8 +296,6 @@ const AdminIndicatorReview: React.FC = () => {
       </div>
     );
   }
-
-  // ── Not found ─────────────────────────────────────────────────────────────
 
   if (!indicator) {
     return (
@@ -282,10 +313,10 @@ const AdminIndicatorReview: React.FC = () => {
   }
 
   const hasPending = pendingSubmissions.length > 0;
+  const isPartialCorrection = indicator.status === "Correction Needed";
 
   return (
     <div className="flex flex-col min-h-screen bg-[#fcfdfb]">
-
       {/* ── Header ── */}
       <div className="px-8 py-5 bg-white/80 backdrop-blur-md border-b border-slate-100 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-6">
@@ -335,7 +366,13 @@ const AdminIndicatorReview: React.FC = () => {
               ) : (
                 <CheckCircle2 size={14} />
               )}
-              {rejectionMode ? "Confirm Rejection" : "Approve Submission"}
+              {isReviewing
+                ? "Processing..."
+                : rejectionMode
+                ? isPartialCorrection
+                  ? "Submit Correction Request"
+                  : "Confirm Rejection"
+                : "Approve Submission"}
             </button>
           </div>
         )}
@@ -344,7 +381,6 @@ const AdminIndicatorReview: React.FC = () => {
       {/* ── Main Content ── */}
       <div className="flex-1 p-6 md:p-12">
         <div className="w-full max-w-6xl mx-auto space-y-10">
-
           {/* Summary Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
@@ -360,6 +396,12 @@ const AdminIndicatorReview: React.FC = () => {
                   )}
                   {indicator.reportingCycle || "Quarterly"} Cycle
                 </div>
+                {isPartialCorrection && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-amber-50 text-amber-700 border border-amber-200">
+                    <AlertOctagon size={12} />
+                    Correction Needed
+                  </div>
+                )}
               </div>
               <h3 className="text-2xl font-serif font-black text-slate-900 mb-4 leading-tight">
                 {indicator.objective?.title || "Objective Title"}
@@ -382,25 +424,29 @@ const AdminIndicatorReview: React.FC = () => {
             </div>
           </div>
 
-          {/* Rejection Textarea */}
+          {/* Rejection / Correction Textarea */}
           {rejectionMode && (
             <div className="space-y-4 bg-rose-50/50 p-8 rounded-[2.5rem] border-2 border-dashed border-rose-200">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-rose-600">
                   <AlertOctagon size={20} />
                   <h4 className="text-[11px] font-black uppercase tracking-widest">
-                    Rejection Note
+                    {isPartialCorrection
+                      ? "Correction Request Note"
+                      : "Rejection Note"}
                   </h4>
                 </div>
-                <button
-                  onClick={() => {
-                    setExplicitRejectionToggle(false);
-                    setDocumentUpdates([]);
-                  }}
-                  className="text-[10px] font-black text-slate-400 hover:text-black uppercase"
-                >
-                  Cancel
-                </button>
+                {!isPartialCorrection && (
+                  <button
+                    onClick={() => {
+                      setExplicitRejectionToggle(false);
+                      setDocRejectionDrafts({});
+                    }}
+                    className="text-[10px] font-black text-slate-400 hover:text-black uppercase"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
               <textarea
                 autoFocus
@@ -421,11 +467,12 @@ const AdminIndicatorReview: React.FC = () => {
             {indicator.submissions &&
               Object.entries(indicator.submissions).map(
                 ([quarterKey, submissions]) => {
-                  // Sort submissions by date to ensure proper order
                   const sortedSubmissions = [...submissions].sort(
-                    (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+                    (a, b) =>
+                      new Date(b.submittedAt).getTime() -
+                      new Date(a.submittedAt).getTime()
                   );
-                  
+
                   return (
                     <div key={quarterKey} className="space-y-4">
                       <div className="flex items-center gap-4 px-2">
@@ -441,26 +488,35 @@ const AdminIndicatorReview: React.FC = () => {
                         const uniqueDocs = deduplicateDocs(documents);
                         const isResubmission = sub.resubmissionCount > 0;
                         const submitterName = getSubmitterName(sub);
-                        
-                        // Get previous rejection reason if this is a resubmission
                         const periodKey = `${sub.quarter}-${sub.year}`;
-                        const periodSubmissions = submissionsByPeriod[periodKey] || submissions;
-                        const previousRejectionReason = isResubmission 
-                          ? getPreviousRejectionReason(sub, periodSubmissions)
+                        const periodSubmissions =
+                          submissionsByPeriod[periodKey] || submissions;
+                        const previousRejectionReason = isResubmission
+                          ? getPreviousRejectionReason(sub) ||
+                            (sub.adminComment && sub.reviewStatus === "Pending"
+                              ? sub.adminComment
+                              : periodSubmissions.find(
+                                  (s) => s.reviewStatus === "Rejected"
+                                )?.adminComment)
                           : null;
+
+                        const isActionable =
+                          sub.reviewStatus === "Pending" ||
+                          sub.reviewStatus === "Correction Needed";
 
                         return (
                           <div
                             key={sub.id}
                             className={`bg-white border rounded-[2rem] p-8 shadow-sm ${
-                              isResubmission
+                              sub.reviewStatus === "Correction Needed"
+                                ? "border-amber-200/80"
+                                : isResubmission
                                 ? "border-amber-200/60"
                                 : "border-slate-200/60"
                             }`}
                           >
                             <div className="flex flex-col md:flex-row justify-between gap-8">
                               <div className="flex-1 space-y-6">
-
                                 <div className="flex items-center justify-between flex-wrap gap-4">
                                   <div className="flex items-center gap-4">
                                     <div>
@@ -482,7 +538,10 @@ const AdminIndicatorReview: React.FC = () => {
                                       {submitterName ? (
                                         <div className="flex items-center gap-1.5">
                                           <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
-                                            <User size={10} className="text-emerald-700" />
+                                            <User
+                                              size={10}
+                                              className="text-emerald-700"
+                                            />
                                           </div>
                                           <span className="text-[12px] font-black text-slate-800">
                                             {submitterName}
@@ -506,25 +565,22 @@ const AdminIndicatorReview: React.FC = () => {
                                       </div>
                                     )}
                                     <span
-                                      className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                        sub.reviewStatus === "Verified" ||
-                                        sub.reviewStatus === "Accepted"
-                                          ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                          : sub.reviewStatus === "Rejected"
-                                          ? "bg-rose-50 text-rose-600 border-rose-100"
-                                          : "bg-orange-50 text-orange-600 border-orange-100"
-                                      }`}
+                                      className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${reviewStatusBadgeClass(
+                                        sub.reviewStatus
+                                      )}`}
                                     >
                                       {sub.reviewStatus || "Pending"}
                                     </span>
                                   </div>
                                 </div>
 
-                                {/* Display previous rejection reason prominently for resubmissions */}
                                 {isResubmission && previousRejectionReason && (
                                   <div className="flex gap-3 p-5 bg-amber-50/60 border border-amber-200/70 rounded-2xl">
                                     <div className="shrink-0 mt-0.5">
-                                      <MessageSquareWarning size={15} className="text-amber-600" />
+                                      <MessageSquareWarning
+                                        size={15}
+                                        className="text-amber-600"
+                                      />
                                     </div>
                                     <div className="min-w-0">
                                       <p className="text-[9px] font-black text-amber-700 uppercase tracking-widest mb-1.5">
@@ -549,20 +605,21 @@ const AdminIndicatorReview: React.FC = () => {
                                   </p>
                                 </div>
 
-                                {/* Row comment updates input area */}
-                                {sub.reviewStatus === "Pending" && (
+                                {isActionable && (
                                   <div className="space-y-2">
                                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
                                       Reviewer Row Comments (Optional)
                                     </label>
-                                    <input 
+                                    <input
                                       type="text"
                                       placeholder="Add notes specific to this value..."
                                       value={individualComments[sub.id] || ""}
-                                      onChange={(e) => setIndividualComments(prev => ({
-                                        ...prev,
-                                        [sub.id]: e.target.value
-                                      }))}
+                                      onChange={(e) =>
+                                        setIndividualComments((prev) => ({
+                                          ...prev,
+                                          [sub.id]: e.target.value,
+                                        }))
+                                      }
                                       className="w-full px-4 py-3 border border-slate-100 bg-slate-50/30 rounded-xl text-[12px] font-medium outline-none focus:border-slate-300 focus:bg-white transition-all"
                                     />
                                   </div>
@@ -588,18 +645,20 @@ const AdminIndicatorReview: React.FC = () => {
                                   <div className="flex flex-col gap-3">
                                     {uniqueDocs.length > 0 ? (
                                       uniqueDocs.map((doc) => {
-                                        const isRejected = documentUpdates.some(
-                                          (du) => du.documentId === doc.id
-                                        );
+                                        const draft = docRejectionDrafts[doc.id];
+                                        const isRejected = Boolean(draft);
                                         const isExpanded = expandedDocId === doc.id;
                                         const docDescription =
-                                          doc.description || doc.fileDescription || null;
+                                          doc.description ||
+                                          doc.fileDescription ||
+                                          null;
+                                        const serverRejected = doc.status === "Rejected";
 
                                         return (
                                           <div key={doc.id} className="group relative">
                                             <div
                                               className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
-                                                isRejected
+                                                isRejected || serverRejected
                                                   ? "border-rose-200 bg-rose-50/30"
                                                   : "border-slate-100 bg-white shadow-sm"
                                               }`}
@@ -617,19 +676,27 @@ const AdminIndicatorReview: React.FC = () => {
                                                 <FileText
                                                   size={14}
                                                   className={
-                                                    isRejected
+                                                    isRejected || serverRejected
                                                       ? "text-rose-500 shrink-0"
                                                       : "text-emerald-600 shrink-0"
                                                   }
                                                 />
                                                 <span
                                                   className={`text-[11px] font-bold truncate ${
-                                                    isRejected ? "text-rose-600" : "text-slate-700"
+                                                    isRejected || serverRejected
+                                                      ? "text-rose-600"
+                                                      : "text-slate-700"
                                                   }`}
                                                 >
                                                   {doc.fileName || "Untitled Document"}
                                                 </span>
                                               </button>
+
+                                              {serverRejected && doc.rejectionReason && (
+                                                <span className="shrink-0 text-[9px] font-bold text-rose-500 italic max-w-[160px] truncate">
+                                                  {doc.rejectionReason}
+                                                </span>
+                                              )}
 
                                               {isResubmission && (
                                                 <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
@@ -642,7 +709,9 @@ const AdminIndicatorReview: React.FC = () => {
                                                 <button
                                                   type="button"
                                                   onClick={() =>
-                                                    setExpandedDocId(isExpanded ? null : doc.id)
+                                                    setExpandedDocId(
+                                                      isExpanded ? null : doc.id
+                                                    )
                                                   }
                                                   className={`shrink-0 p-1 rounded-lg transition-all ${
                                                     isExpanded
@@ -654,7 +723,7 @@ const AdminIndicatorReview: React.FC = () => {
                                                 </button>
                                               )}
 
-                                              {sub.reviewStatus === "Pending" && (
+                                              {isActionable && !serverRejected && (
                                                 <button
                                                   type="button"
                                                   onClick={() =>
@@ -686,6 +755,30 @@ const AdminIndicatorReview: React.FC = () => {
                                                 <p className="text-[12px] text-slate-600 font-medium leading-relaxed">
                                                   {docDescription}
                                                 </p>
+                                              </div>
+                                            )}
+
+                                            {isRejected && (
+                                              <div className="mt-2 ml-4">
+                                                <input
+                                                  type="text"
+                                                  autoFocus
+                                                  placeholder={`Why is "${doc.fileName || "this document"}" being rejected?`}
+                                                  value={draft?.reason || ""}
+                                                  onChange={(e) =>
+                                                    updateDocReason(doc.id, e.target.value)
+                                                  }
+                                                  className={`w-full px-4 py-2.5 rounded-xl border text-[12px] font-medium outline-none transition-all ${
+                                                    draft?.reason.trim()
+                                                      ? "border-rose-200 bg-rose-50/40 focus:ring-2 focus:ring-rose-400/20"
+                                                      : "border-rose-300 bg-rose-50 focus:ring-2 focus:ring-rose-500/20"
+                                                  }`}
+                                                />
+                                                {!draft?.reason.trim() && (
+                                                  <p className="text-[9px] text-rose-500 font-bold mt-1 ml-1 uppercase tracking-wide">
+                                                    A reason is required
+                                                  </p>
+                                                )}
                                               </div>
                                             )}
                                           </div>
@@ -723,7 +816,7 @@ const AdminIndicatorReview: React.FC = () => {
         </div>
       </div>
 
-      {/* ── File Preview Modal ── */}
+      {/* File Preview Modal */}
       {previewFile && (
         <FilePreviewModal
           url={previewFile.url}
@@ -732,7 +825,7 @@ const AdminIndicatorReview: React.FC = () => {
         />
       )}
 
-      {/* ── Toast ── */}
+      {/* Toast */}
       {toast && (
         <div
           className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl text-white text-[11px] font-black uppercase tracking-widest transition-all ${

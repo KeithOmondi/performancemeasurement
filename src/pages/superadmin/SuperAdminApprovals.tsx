@@ -13,32 +13,26 @@ import {
   MessageSquare,
   Hash,
   AlertCircle,
+  Award,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
-  fetchSuperAdminApprovedIndicators,
-  superAdminReview,
+  fetchIndicators, // fetch all indicators
   type IIndicator,
   type ISuperAdminReviewPayload,
+  superAdminReview,
 } from "../../store/slices/indicatorSlice";
 import { toast } from "react-hot-toast";
 
-interface ApprovalIndicator extends IIndicator {
+interface EnhancedIndicator extends IIndicator {
+  isCertified: boolean; // true if already approved by super admin
   verifiedByAdmin?: string;
   verifiedAt?: string;
   adminComment?: string;
   submittedValue?: number;
   submissionId?: string;
-}
-
-// Define error type for better type safety
-interface ApiError {
-  message?: string;
-  response?: {
-    data?: {
-      message?: string;
-    };
-  };
+  approvedAt?: string; // when super admin approved
+  approvedValue?: number;
 }
 
 const SuperAdminApprovals = () => {
@@ -48,52 +42,65 @@ const SuperAdminApprovals = () => {
   const [filterCycle, setFilterCycle] = useState<"all" | "quarterly" | "annual">("all");
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  const { superAdminApprovedIndicators, loading } = useAppSelector(
-    (state) => state.indicators
-  );
+  // Fetch all indicators (available to superadmin)
+  const { indicators, loading } = useAppSelector((state) => state.indicators);
 
   useEffect(() => {
-    dispatch(fetchSuperAdminApprovedIndicators());
+    dispatch(fetchIndicators());
   }, [dispatch]);
 
-  // Transform indicators to include admin verification info
-  const pendingApprovals = useMemo<ApprovalIndicator[]>(() => {
-    const approvals: ApprovalIndicator[] = [];
+  // Build enhanced list: includes both pending and already certified
+  const approvalsList = useMemo<EnhancedIndicator[]>(() => {
+    const result: EnhancedIndicator[] = [];
 
-    superAdminApprovedIndicators.forEach((ind) => {
-      // Only show indicators awaiting Super Admin review
-      if (ind.status === "Awaiting Super Admin") {
-        // Find the admin verification event from review history
-        const adminReviewEvent = ind.reviewHistory?.find(
-          (h) => h.action === "Verified" && h.reviewerRole === "admin"
-        );
-        
-        // Find the verified submission
-        const verifiedSubmission = ind.submissions?.find(
-          (s) => s.reviewStatus === "Verified" && s.isReviewed === true
-        );
+    indicators.forEach((ind) => {
+      // Find if Super Admin has ever approved this indicator
+      const superApproval = ind.reviewHistory?.find(
+        (h) => h.action === "Approved" && h.reviewerRole === "superadmin"
+      );
+      const isCertified = !!superApproval;
 
-        approvals.push({
-          ...ind,
-          verifiedByAdmin: adminReviewEvent?.reviewedByName || verifiedSubmission?.adminComment ? "Admin" : undefined,
-          verifiedAt: adminReviewEvent?.at || verifiedSubmission?.submittedAt,
-          adminComment: verifiedSubmission?.adminComment,
-          submittedValue: verifiedSubmission?.achievedValue,
-          submissionId: verifiedSubmission?.id,
-        });
-      }
+      // Only include if:
+      // - It's awaiting Super Admin approval, OR
+      // - It has already been certified (by Super Admin)
+      const isAwaiting = ind.status === "Awaiting Super Admin";
+      if (!isAwaiting && !isCertified) return;
+
+      // Find admin verification info (for pending)
+      const adminReviewEvent = ind.reviewHistory?.find(
+        (h) => h.action === "Verified" && h.reviewerRole === "admin"
+      );
+      const verifiedSubmission = ind.submissions?.find(
+        (s) => s.reviewStatus === "Verified" && s.isReviewed === true
+      );
+
+      // For certified, find the approved submission (the one that was accepted)
+      const approvedSubmission = ind.submissions?.find(
+        (s) => s.reviewStatus === "Accepted"
+      );
+
+      result.push({
+        ...ind,
+        isCertified,
+        verifiedByAdmin: adminReviewEvent?.reviewedByName || (verifiedSubmission?.adminComment ? "Admin" : undefined),
+        verifiedAt: adminReviewEvent?.at || verifiedSubmission?.submittedAt,
+        adminComment: verifiedSubmission?.adminComment,
+        submittedValue: verifiedSubmission?.achievedValue,
+        submissionId: verifiedSubmission?.id,
+        approvedAt: superApproval?.at,
+        approvedValue: approvedSubmission?.achievedValue,
+      });
     });
 
-    // Sort by most recently verified first
-    return approvals.sort(
-      (a, b) =>
-        new Date(b.verifiedAt || "").getTime() -
-        new Date(a.verifiedAt || "").getTime()
-    );
-  }, [superAdminApprovedIndicators]);
+    // Sort: pending first, then certified (by approval date desc)
+    return result.sort((a, b) => {
+      if (a.isCertified !== b.isCertified) return a.isCertified ? 1 : -1;
+      return new Date(b.verifiedAt || "").getTime() - new Date(a.verifiedAt || "").getTime();
+    });
+  }, [indicators]);
 
   const handleSuperAdminDecision = async (
-    indicator: ApprovalIndicator,
+    indicator: EnhancedIndicator,
     decision: "Approved" | "Rejected",
     progressOverride?: number
   ) => {
@@ -127,35 +134,24 @@ const SuperAdminApprovals = () => {
       
       toast.success(
         decision === "Approved" 
-          ? "Indicator successfully certified and completed!" 
+          ? "Indicator successfully certified!" 
           : "Changes requested successfully. User has been notified."
       );
       
       // Refresh the list
-      dispatch(fetchSuperAdminApprovedIndicators());
+      dispatch(fetchIndicators());
     } catch (error) {
-      // Type-safe error handling
-      let errorMessage = `Failed to ${decision === "Approved" ? "approve" : "request changes"}`;
-      
-      if (error && typeof error === 'object') {
-        const apiError = error as ApiError;
-        if (apiError.message) {
-          errorMessage = apiError.message;
-        } else if (apiError.response?.data?.message) {
-          errorMessage = apiError.response.data.message;
-        }
-      }
-      
+      const errorMessage = error instanceof Error ? error.message : "Operation failed";
       toast.error(errorMessage);
     } finally {
       setProcessingId(null);
     }
   };
 
-  const filteredApprovals = useMemo(() => {
+  const filteredList = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
 
-    return pendingApprovals.filter((ind) => {
+    return approvalsList.filter((ind) => {
       if (filterCycle === "quarterly" && ind.reportingCycle !== "Quarterly") return false;
       if (filterCycle === "annual" && ind.reportingCycle !== "Annual") return false;
       if (!searchTerm) return true;
@@ -166,7 +162,7 @@ const SuperAdminApprovals = () => {
         ind.assigneeDisplayName?.toLowerCase().includes(searchLower)
       );
     });
-  }, [pendingApprovals, searchTerm, filterCycle]);
+  }, [approvalsList, searchTerm, filterCycle]);
 
   const formatDateTime = (dateStr?: string) => {
     if (!dateStr) return "N/A";
@@ -178,7 +174,7 @@ const SuperAdminApprovals = () => {
           date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
-  if (loading && pendingApprovals.length === 0) {
+  if (loading && indicators.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#fdfcfc]">
         <Loader2 className="animate-spin text-emerald-600 mb-4" size={40} />
@@ -189,6 +185,9 @@ const SuperAdminApprovals = () => {
     );
   }
 
+  const pendingCount = approvalsList.filter((i) => !i.isCertified).length;
+  const certifiedCount = approvalsList.filter((i) => i.isCertified).length;
+
   return (
     <div className="p-6 md:p-10 bg-[#fdfcfc] min-h-screen font-sans">
       {/* Header */}
@@ -198,8 +197,13 @@ const SuperAdminApprovals = () => {
             <h1 className="text-2xl font-serif font-black text-[#1d3331] tracking-tighter uppercase flex items-center gap-3">
               FINAL APPROVALS
               <span className="bg-emerald-600 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest">
-                {filteredApprovals.length} Pending
+                {pendingCount} Pending
               </span>
+              {certifiedCount > 0 && (
+                <span className="bg-slate-200 text-slate-600 text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest">
+                  {certifiedCount} Certified
+                </span>
+              )}
             </h1>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] mt-2">
               Admin-verified submissions awaiting your final certification
@@ -231,7 +235,7 @@ const SuperAdminApprovals = () => {
                 : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
             }`}
           >
-            All ({pendingApprovals.length})
+            All ({approvalsList.length})
           </button>
           <button
             onClick={() => setFilterCycle("quarterly")}
@@ -242,8 +246,7 @@ const SuperAdminApprovals = () => {
             }`}
           >
             <Layers size={12} />
-            Quarterly (
-            {pendingApprovals.filter((i) => i.reportingCycle === "Quarterly").length})
+            Quarterly ({approvalsList.filter((i) => i.reportingCycle === "Quarterly").length})
           </button>
           <button
             onClick={() => setFilterCycle("annual")}
@@ -254,14 +257,13 @@ const SuperAdminApprovals = () => {
             }`}
           >
             <CalendarDays size={12} />
-            Annual (
-            {pendingApprovals.filter((i) => i.reportingCycle === "Annual").length})
+            Annual ({approvalsList.filter((i) => i.reportingCycle === "Annual").length})
           </button>
         </div>
       </div>
 
       {/* Content */}
-      {filteredApprovals.length === 0 ? (
+      {filteredList.length === 0 ? (
         <div className="bg-white rounded-3xl p-20 text-center border border-dashed border-gray-200">
           {searchTerm ? (
             <>
@@ -280,33 +282,37 @@ const SuperAdminApprovals = () => {
             <>
               <CheckCircle className="mx-auto mb-4 text-emerald-200" size={48} />
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">
-                No Pending Approvals
+                No Records Found
               </h2>
               <p className="text-[10px] text-slate-400 mt-2">
-                All verified submissions have been processed
+                No pending or certified submissions available
               </p>
             </>
           )}
         </div>
       ) : (
         <div className="grid gap-4">
-          {filteredApprovals.map((indicator) => {
+          {filteredList.map((indicator) => {
             const isAnnual = indicator.reportingCycle === "Annual";
             const latestSubmission = indicator.submissions?.find(
               (s) => s.reviewStatus === "Verified"
             );
             const resubmissionCount = latestSubmission?.resubmissionCount ?? 0;
-            const achievedValue =
-              indicator.submittedValue ?? latestSubmission?.achievedValue ?? 0;
+            const achievedValue = indicator.isCertified
+              ? indicator.approvedValue ?? indicator.submittedValue ?? 0
+              : indicator.submittedValue ?? latestSubmission?.achievedValue ?? 0;
             
-            // Determine if this is the final quarter for Quarterly reports
             const isFinalQuarter = !isAnnual && indicator.activeQuarter === 4;
             const willComplete = isAnnual || isFinalQuarter;
 
             return (
               <div
                 key={indicator.id}
-                className="bg-white rounded-2xl border border-emerald-100 hover:border-emerald-200 transition-all duration-300 overflow-hidden hover:shadow-lg"
+                className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden hover:shadow-lg ${
+                  indicator.isCertified
+                    ? "border-emerald-200 bg-emerald-50/10"
+                    : "border-emerald-100"
+                }`}
               >
                 <div className="p-6">
                   <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
@@ -321,18 +327,21 @@ const SuperAdminApprovals = () => {
                               : "bg-blue-100 text-blue-700 border border-blue-200"
                           }`}
                         >
-                          {isAnnual ? (
-                            <CalendarDays size={10} />
-                          ) : (
-                            <Layers size={10} />
-                          )}
+                          {isAnnual ? <CalendarDays size={10} /> : <Layers size={10} />}
                           {indicator.reportingCycle}
                         </span>
 
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">
-                          <CheckCircle size={10} />
-                          Verified by Admin
-                        </span>
+                        {indicator.isCertified ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">
+                            <Award size={10} />
+                            Final Certified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
+                            <CheckCircle size={10} />
+                            Verified by Admin
+                          </span>
+                        )}
 
                         {resubmissionCount > 0 && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
@@ -341,17 +350,17 @@ const SuperAdminApprovals = () => {
                           </span>
                         )}
 
-                        {!willComplete && indicator.reportingCycle === "Quarterly" && (
+                        {!indicator.isCertified && !willComplete && indicator.reportingCycle === "Quarterly" && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
                             <AlertCircle size={10} />
                             Q{indicator.activeQuarter} of 4
                           </span>
                         )}
 
-                        {willComplete && (
+                        {!indicator.isCertified && willComplete && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
                             <CheckCircle size={10} />
-                            Final Certification
+                            Final Quarter
                           </span>
                         )}
                       </div>
@@ -367,7 +376,7 @@ const SuperAdminApprovals = () => {
                       <div className="flex flex-wrap items-center gap-6 mb-3">
                         <div>
                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                            Submitted Value
+                            {indicator.isCertified ? "Certified Value" : "Submitted Value"}
                           </p>
                           <p className="text-lg font-bold text-emerald-600">
                             {achievedValue}
@@ -433,6 +442,14 @@ const SuperAdminApprovals = () => {
                             Verified on: {formatDateTime(indicator.verifiedAt)}
                           </span>
                         </div>
+                        {indicator.isCertified && indicator.approvedAt && (
+                          <div className="flex items-center gap-1.5">
+                            <Award size={12} className="text-emerald-500" />
+                            <span className="text-slate-500">
+                              Certified on: {formatDateTime(indicator.approvedAt)}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Admin Comment */}
@@ -464,42 +481,50 @@ const SuperAdminApprovals = () => {
                         <Eye size={14} /> Review Details
                       </button>
 
-                      <button
-                        onClick={() => {
-                          const value = prompt(
-                            `Enter the achieved value for approval:\n\nTarget: ${indicator.target} ${indicator.unit}\nSubmitted: ${achievedValue} ${indicator.unit}\n\nNote: This will be added to the cumulative progress.`,
-                            String(achievedValue)
-                          );
-                          if (value !== null && !isNaN(Number(value))) {
-                            handleSuperAdminDecision(indicator, "Approved", Number(value));
-                          } else if (value !== null) {
-                            toast.error("Please enter a valid number");
-                          }
-                        }}
-                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={processingId === indicator.id}
-                      >
-                        {processingId === indicator.id ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <CheckCircle size={14} />
-                        )}
-                        {willComplete ? "Approve & Complete" : "Approve & Continue"}
-                      </button>
+                      {!indicator.isCertified ? (
+                        <>
+                          <button
+                            onClick={() => {
+                              const value = prompt(
+                                `Enter the achieved value for approval:\n\nTarget: ${indicator.target} ${indicator.unit}\nSubmitted: ${achievedValue} ${indicator.unit}\n\nNote: This will be added to the cumulative progress.`,
+                                String(achievedValue)
+                              );
+                              if (value !== null && !isNaN(Number(value))) {
+                                handleSuperAdminDecision(indicator, "Approved", Number(value));
+                              } else if (value !== null) {
+                                toast.error("Please enter a valid number");
+                              }
+                            }}
+                            className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={processingId === indicator.id}
+                          >
+                            {processingId === indicator.id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <CheckCircle size={14} />
+                            )}
+                            {willComplete ? "Approve & Complete" : "Approve & Continue"}
+                          </button>
 
-                      <div className="flex items-center gap-2 w-full">
-                        <div className="flex-1 h-px bg-slate-100" />
-                        <span className="text-[8px] text-slate-300">or</span>
-                        <div className="flex-1 h-px bg-slate-100" />
-                      </div>
+                          <div className="flex items-center gap-2 w-full">
+                            <div className="flex-1 h-px bg-slate-100" />
+                            <span className="text-[8px] text-slate-300">or</span>
+                            <div className="flex-1 h-px bg-slate-100" />
+                          </div>
 
-                      <button
-                        onClick={() => handleSuperAdminDecision(indicator, "Rejected")}
-                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-red-200 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={processingId === indicator.id}
-                      >
-                        <XCircle size={14} /> Request Changes
-                      </button>
+                          <button
+                            onClick={() => handleSuperAdminDecision(indicator, "Rejected")}
+                            className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-red-200 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={processingId === indicator.id}
+                          >
+                            <XCircle size={14} /> Request Changes
+                          </button>
+                        </>
+                      ) : (
+                        <div className="w-full text-center px-5 py-2.5 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
+                          Already Certified
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

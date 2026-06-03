@@ -29,7 +29,7 @@ export interface ISubmission {
   documents: IDocument[];
   notes: string;
   achievedValue: number;
-  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected";
+  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected" | "Correction Needed";
   adminComment?: string;
   submittedAt: string;
   resubmissionCount: number;
@@ -50,6 +50,7 @@ export interface IDocumentReviewUpdate {
 export interface ISubmissionReviewUpdate {
   submissionId: string;
   adminComment?: string;
+  reviewStatus?: "Rejected" | "Correction Needed";
 }
 
 export interface IApprovePayload {
@@ -87,7 +88,6 @@ export interface IAdminIndicator {
   weight: number;
   unit: string;
   target: number;
-  // ❌ REMOVED: approvedIndicators: [],   // <-- this was incorrect
   assigneeName: string;
   assigneeEmail: string;
   pjNumber?: string;
@@ -101,12 +101,13 @@ export interface IAdminIndicator {
   instructions?: string;
 }
 
-// ✅ Add approvedIndicators to the STATE interface
+// ─── State ────────────────────────────────────────────────────────────────────
+
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
   pendingAdminReview: IAdminIndicator[];
   resubmittedWork: IAdminIndicator[];
-  approvedIndicators: IAdminIndicator[];   // <-- new
+  approvedIndicators: IAdminIndicator[];
   selectedIndicator: IAdminIndicator | null;
   isLoading: boolean;
   isReviewing: boolean;
@@ -114,12 +115,11 @@ interface IAdminIndicatorState {
   error: string | null;
 }
 
-// ✅ Update initial state
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
   pendingAdminReview: [],
   resubmittedWork: [],
-  approvedIndicators: [],   // <-- new
+  approvedIndicators: [],
   selectedIndicator: null,
   isLoading: false,
   isReviewing: false,
@@ -127,7 +127,7 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
-// ─── Helpers (internal) ───────────────────────────────────────────────────────
+// ─── Internal Helpers ─────────────────────────────────────────────────────────
 
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
@@ -153,7 +153,9 @@ export const getPreviousRejectionReason = (
 export const hasEverBeenRejected = (indicator: IAdminIndicator): boolean =>
   flattenSubmissions(indicator).some((s) => s.reviewStatus === "Rejected");
 
-export const getRejectedSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
+export const getRejectedSubmissions = (
+  indicator: IAdminIndicator
+): ISubmission[] =>
   flattenSubmissions(indicator)
     .filter((s) => s.reviewStatus === "Rejected")
     .sort(
@@ -174,11 +176,31 @@ export const getMaxResubmissionCount = (indicator: IAdminIndicator): number =>
     0
   );
 
+// Returns true when at least one submission has doc-level corrections pending
+// but the submission itself was NOT fully rejected
+export const hasCorrectionNeededSubmissions = (
+  indicator: IAdminIndicator
+): boolean =>
+  flattenSubmissions(indicator).some(
+    (s) => s.reviewStatus === "Correction Needed"
+  );
+
+export const getCorrectionNeededSubmissions = (
+  indicator: IAdminIndicator
+): ISubmission[] =>
+  flattenSubmissions(indicator).filter(
+    (s) => s.reviewStatus === "Correction Needed"
+  );
+
 // ─── Queue Refresh ────────────────────────────────────────────────────────────
 
 const refreshQueues = (state: IAdminIndicatorState) => {
+  // Include "Correction Needed" so partially-rejected indicators
+  // remain visible in the review queue rather than silently disappearing
   state.pendingAdminReview = state.allAssignments.filter(
-    (ind) => ind.status === "Awaiting Admin Approval"
+    (ind) =>
+      ind.status === "Awaiting Admin Approval" ||
+      ind.status === "Correction Needed"
   );
 
   state.resubmittedWork = state.allAssignments.filter((ind) =>
@@ -190,7 +212,7 @@ const refreshQueues = (state: IAdminIndicatorState) => {
   );
 };
 
-// ─── Upsert Helper ────────────────────────────────────────────────────────────
+// ─── Upsert Helpers ───────────────────────────────────────────────────────────
 
 const upsertIntoAssignments = (
   state: IAdminIndicatorState,
@@ -229,7 +251,7 @@ const extractError = (error: unknown, fallback: string): string => {
 
 // ─── Thunks ───────────────────────────────────────────────────────────────────
 
-export const fetchAllAdminIndicators = createAsyncThunk<
+export const fetchAllAdminIndicators = createAsyncThunk < 
   IAdminIndicator[],
   { status?: string; search?: string } | undefined,
   { rejectValue: string }
@@ -249,7 +271,7 @@ export const fetchAllAdminIndicators = createAsyncThunk<
   }
 });
 
-export const fetchResubmittedIndicators = createAsyncThunk<
+export const fetchResubmittedIndicators = createAsyncThunk <
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -260,11 +282,13 @@ export const fetchResubmittedIndicators = createAsyncThunk<
     );
     return res.data?.data ?? [];
   } catch (error) {
-    return rejectWithValue(extractError(error, "Failed to load resubmissions"));
+    return rejectWithValue(
+      extractError(error, "Failed to load resubmissions")
+    );
   }
 });
 
-export const getIndicatorByIdAdmin = createAsyncThunk<
+export const getIndicatorByIdAdmin = createAsyncThunk <
   IAdminIndicator,
   string,
   { rejectValue: string }
@@ -277,7 +301,7 @@ export const getIndicatorByIdAdmin = createAsyncThunk<
   }
 });
 
-export const approveSubmission = createAsyncThunk<
+export const approveSubmission = createAsyncThunk <
   IAdminIndicator,
   { id: string; payload: IApprovePayload },
   { rejectValue: string }
@@ -291,7 +315,7 @@ export const approveSubmission = createAsyncThunk<
   }
 });
 
-export const rejectSubmission = createAsyncThunk<
+export const rejectSubmission = createAsyncThunk <
   IAdminIndicator,
   { id: string; payload: IRejectPayload },
   { rejectValue: string }
@@ -305,7 +329,7 @@ export const rejectSubmission = createAsyncThunk<
   }
 });
 
-export const reopenIndicator = createAsyncThunk<
+export const reopenIndicator = createAsyncThunk <
   IAdminIndicator,
   { id: string; payload: IReopenPayload },
   { rejectValue: string }
@@ -317,12 +341,13 @@ export const reopenIndicator = createAsyncThunk<
     );
     return res.data.data;
   } catch (error) {
-    return rejectWithValue(extractError(error, "Failed to reopen indicator"));
+    return rejectWithValue(
+      extractError(error, "Failed to reopen indicator")
+    );
   }
 });
 
-// ✅ New thunk for admin-approved indicators
-export const fetchAdminApprovedIndicators = createAsyncThunk<
+export const fetchAdminApprovedIndicators = createAsyncThunk <
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -333,7 +358,9 @@ export const fetchAdminApprovedIndicators = createAsyncThunk<
     );
     return res.data?.data ?? [];
   } catch (error) {
-    return rejectWithValue(extractError(error, "Failed to load admin-approved indicators"));
+    return rejectWithValue(
+      extractError(error, "Failed to load admin-approved indicators")
+    );
   }
 });
 

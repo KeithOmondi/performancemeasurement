@@ -1,5 +1,4 @@
-import { useEffect, useRef } from "react";
-import { useDispatch } from "react-redux";
+import { useEffect, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Loader2,
@@ -11,43 +10,36 @@ import {
   XCircle,
   Clock,
 } from "lucide-react";
-
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
-import { useDashboard } from "../../hooks/useDashboard";
-import type { AppDispatch, RootState } from "../../store/store";
-import { useSelector as useAppSelector } from "react-redux";
-
-/* ─── TYPES ──────────────────────────────────────────────────────────────── */
-
-interface IUser {
-  id?:       string;
-  _id?:      string;
-  name:      string;
-  title?:    string;
-  pjNumber?: string;
-  email?:    string;
-}
+import {
+  fetchIndicators,
+  fetchSubmissionsQueue,
+} from "../../store/slices/indicatorSlice";
+import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
+import type { IQueueItem } from "../../store/slices/indicatorSlice";
+import type { IStrategicPlan } from "../../store/slices/strategicPlan/strategicPlanService";
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
 
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString);
-  const now  = new Date();
+  const now = new Date();
   const diffDays = Math.ceil(
     Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)
   );
   if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7)  return `${diffDays} days ago`;
+  if (diffDays < 7) return `${diffDays} days ago`;
   return date.toLocaleDateString();
 };
 
 /* ─── DONUT CHART ─────────────────────────────────────────────────────────── */
 
 interface DonutProps {
-  overdue:       number;
+  overdue: number;
   pendingReview: number;
-  returned:      number;
-  onTrack:       number;
+  returned: number;
+  onTrack: number;
 }
 
 const DonutChart = ({ overdue, pendingReview, returned, onTrack }: DonutProps) => {
@@ -62,25 +54,25 @@ const DonutChart = ({ overdue, pendingReview, returned, onTrack }: DonutProps) =
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr   = window.devicePixelRatio || 1;
-    const size  = 140;
-    canvas.width  = size * dpr;
+    const dpr = window.devicePixelRatio || 1;
+    const size = 140;
+    canvas.width = size * dpr;
     canvas.height = size * dpr;
-    canvas.style.width  = `${size}px`;
+    canvas.style.width = `${size}px`;
     canvas.style.height = `${size}px`;
     ctx.scale(dpr, dpr);
 
-    const cx     = size / 2;
-    const cy     = size / 2;
+    const cx = size / 2;
+    const cy = size / 2;
     const radius = 54;
     const cutout = 36;
-    const gap    = 0.02;
+    const gap = 0.02;
 
     const slices = [
-      { value: overdue,       color: "#E24B4A" },
+      { value: overdue, color: "#E24B4A" },
       { value: pendingReview, color: "#BA7517" },
-      { value: returned,      color: "#A32D2D" },
-      { value: onTrack,       color: "#3B6D11" },
+      { value: returned, color: "#A32D2D" },
+      { value: onTrack, color: "#3B6D11" },
     ].filter((s) => s.value > 0);
 
     let startAngle = -Math.PI / 2;
@@ -95,31 +87,24 @@ const DonutChart = ({ overdue, pendingReview, returned, onTrack }: DonutProps) =
       startAngle += sliceAngle + gap;
     });
 
-    // Punch out centre
     ctx.beginPath();
     ctx.arc(cx, cy, cutout, 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
   }, [overdue, pendingReview, returned, onTrack]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      aria-label="Health overview donut chart"
-      style={{ width: 140, height: 140 }}
-    />
-  );
+  return <canvas ref={canvasRef} style={{ width: 140, height: 140 }} />;
 };
 
 /* ─── HEALTH PANEL ────────────────────────────────────────────────────────── */
 
 interface HealthPanelProps {
-  total:         number;
-  assigned:      number;
-  overdue:       number;
+  total: number;
+  assigned: number;
+  overdue: number;
   pendingReview: number;
-  returned:      number;
-  approved:      number;
+  returned: number;
+  approved: number;
 }
 
 const HealthPanel = ({
@@ -133,23 +118,23 @@ const HealthPanel = ({
   const onTrack = Math.max(0, assigned - overdue - pendingReview - returned - approved);
 
   const pipeline = [
-    { label: "Assigned",            value: assigned,      color: "#185FA5" },
-    { label: "Pending review",      value: pendingReview, color: "#BA7517" },
-    { label: "Reviewed & approved", value: approved,      color: "#3B6D11" },
-    { label: "Returned",            value: returned,      color: "#A32D2D" },
-    { label: "Overdue",             value: overdue,       color: "#E24B4A" },
+    { label: "Assigned", value: assigned, color: "#185FA5" },
+    { label: "Pending review", value: pendingReview, color: "#BA7517" },
+    { label: "Reviewed & approved", value: approved, color: "#3B6D11" },
+    { label: "Returned", value: returned, color: "#A32D2D" },
+    { label: "Overdue", value: overdue, color: "#E24B4A" },
   ];
 
   const legend = [
-    { label: "Overdue",        value: overdue,       color: "#E24B4A" },
+    { label: "Overdue", value: overdue, color: "#E24B4A" },
     { label: "Pending review", value: pendingReview, color: "#BA7517" },
-    { label: "Returned",       value: returned,      color: "#A32D2D" },
-    { label: "On track",       value: onTrack,       color: "#3B6D11" },
+    { label: "Returned", value: returned, color: "#A32D2D" },
+    { label: "On track", value: onTrack, color: "#3B6D11" },
   ];
 
-  const assignedPct   = total > 0 ? Math.round((assigned / total) * 100) : 0;
+  const assignedPct = total > 0 ? Math.round((assigned / total) * 100) : 0;
   const unassignedPct = 100 - assignedPct;
-  const unassigned    = total - assigned;
+  const unassigned = total - assigned;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 mb-8">
@@ -158,8 +143,6 @@ const HealthPanel = ({
       </h3>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-
-        {/* Completion pipeline */}
         <div>
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">
             Completion pipeline
@@ -177,10 +160,7 @@ const HealthPanel = ({
                     }}
                   />
                 </div>
-                <span
-                  className="text-[13px] font-bold w-6 text-right flex-shrink-0"
-                  style={{ color }}
-                >
+                <span className="text-[13px] font-bold w-6 text-right flex-shrink-0" style={{ color }}>
                   {value}
                 </span>
               </div>
@@ -188,7 +168,6 @@ const HealthPanel = ({
           </div>
         </div>
 
-        {/* Donut + legend */}
         <div>
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">
             Distribution
@@ -203,10 +182,7 @@ const HealthPanel = ({
             <div className="flex-1 space-y-2">
               {legend.map(({ label, value, color }) => (
                 <div key={label} className="flex items-center gap-2 text-[12px]">
-                  <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ background: color }}
-                  />
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
                   <span className="text-slate-500 flex-1">{label}</span>
                   <span className="font-bold" style={{ color }}>{value}</span>
                 </div>
@@ -216,7 +192,6 @@ const HealthPanel = ({
         </div>
       </div>
 
-      {/* Assignment rate */}
       <div className="mt-6 pt-5 border-t border-slate-100">
         <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-2">
           <span className="uppercase tracking-widest">Assignment rate</span>
@@ -239,21 +214,116 @@ const HealthPanel = ({
 
 /* ─── MAIN COMPONENT ──────────────────────────────────────────────────────── */
 
-const SuperAdminDashboardPage = () => {
-  const dispatch = useDispatch<AppDispatch>();
+const SuperAdminDashboard = () => {
+  const dispatch = useAppDispatch();
 
-  const { users = [], isLoading: uLoad } = useAppSelector(
-    (s: RootState) => s.users
-  );
+  // Slices
+  const { users, isLoading: usersLoading } = useAppSelector((s) => s.users);
+  const {
+    indicators,
+    queue,
+    loading: indicatorsLoading,
+    error: indicatorsError,
+  } = useAppSelector((s) => s.indicators);
+  const { plans, loading: plansLoading } = useAppSelector((s) => s.strategicPlan);
 
   useEffect(() => {
+    dispatch(fetchIndicators());
     dispatch(fetchAllUsers());
+    dispatch(getAllStrategicPlans());
+    dispatch(fetchSubmissionsQueue());
   }, [dispatch]);
 
-  const { data, loading, error } = useDashboard();
+  const isLoading = usersLoading || indicatorsLoading || plansLoading;
+  const error = indicatorsError;
 
-  /* ─── LOADING ── */
-  if (uLoad || loading || !data) {
+  // Statistics from indicators (accurate)
+  const stats = useMemo(() => {
+    if (!indicators.length) {
+      return {
+        total: 0,
+        assigned: 0,
+        unassigned: 0,
+        overdue: 0,
+        pendingReview: 0,
+        approved: 0,
+        returnedForCorrection: 0,
+      };
+    }
+
+    const total = indicators.length;
+    const now = new Date();
+
+    const assigned = indicators.filter((ind) => ind.assignee && ind.assignee.trim() !== "").length;
+    const unassigned = total - assigned;
+
+    const overdue = indicators.filter((ind) => {
+      if (!ind.deadline) return false;
+      const isTerminal = ["Completed", "Rejected by Admin", "Rejected by Super Admin"].includes(ind.status);
+      return new Date(ind.deadline) < now && !isTerminal;
+    }).length;
+
+    const pendingReview = indicators.filter((ind) =>
+      ["Awaiting Admin Approval", "Awaiting Super Admin"].includes(ind.status)
+    ).length;
+
+    const approved = indicators.filter((ind) => ind.status === "Completed").length;
+    const returnedForCorrection = indicators.filter((ind) =>
+      ["Rejected by Admin", "Rejected by Super Admin"].includes(ind.status)
+    ).length;
+
+    return { total, assigned, unassigned, overdue, pendingReview, approved, returnedForCorrection };
+  }, [indicators]);
+
+  // Perspectives (unchanged)
+  const perspectives = useMemo(() => {
+    if (!plans.length || !indicators.length) return [];
+
+    return plans.map((plan: IStrategicPlan) => {
+      let totalActivities = 0;
+      let assignedActivities = 0;
+      let totalWeight = 0;
+      let achievedWeight = 0;
+
+      plan.objectives?.forEach((obj) => {
+        obj.activities?.forEach((act) => {
+          totalActivities++;
+          const indicator = indicators.find((ind) => ind.activityId === act.id);
+          if (indicator && indicator.assignee && indicator.assignee.trim() !== "") {
+            assignedActivities++;
+            totalWeight += indicator.weight || 0;
+            achievedWeight += (indicator.progress || 0) * ((indicator.weight || 0) / 100);
+          }
+        });
+      });
+
+      const completionPercentage = totalWeight > 0 ? Math.round((achievedWeight / totalWeight) * 100) : 0;
+      return {
+        name: plan.perspective,
+        totalActivities,
+        assignedActivities,
+        completionPercentage,
+      };
+    });
+  }, [plans, indicators]);
+
+  // Recent submissions from queue (already sorted by submittedOn desc)
+  const recentSubmissions = useMemo(() => queue.slice(0, 5), [queue]);
+
+  // Team assignment counts
+  const userAssignments = useMemo(() => {
+    const map: Record<string, number> = {};
+    indicators.forEach((ind) => {
+      if (ind.assigneeDisplayName) {
+        map[ind.assigneeDisplayName] = (map[ind.assigneeDisplayName] || 0) + 1;
+      }
+    });
+    return map;
+  }, [indicators]);
+
+  const maxAssignments = Math.max(...Object.values(userAssignments), 1);
+
+  if (isLoading && !indicators.length) {
     return (
       <div className="min-h-screen bg-[#fcfcf7] flex items-center justify-center flex-col">
         <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
@@ -264,7 +334,6 @@ const SuperAdminDashboardPage = () => {
     );
   }
 
-  /* ─── ERROR ── */
   if (error) {
     return (
       <div className="min-h-screen bg-[#fcfcf7] flex items-center justify-center flex-col gap-3">
@@ -274,49 +343,35 @@ const SuperAdminDashboardPage = () => {
     );
   }
 
-  /* ─── DATA ── */
-  const { stats, perspectives, recentSubmissions } = data;
-
-  const userAssignments: Record<string, number> = {};
-  recentSubmissions.forEach((s) => {
-    userAssignments[s.submittedBy] = (userAssignments[s.submittedBy] || 0) + 1;
-  });
-  const maxAssignments = Math.max(...Object.values(userAssignments), 1);
-
   const statCards = [
-    { label: "Total indicators", value: stats.total,         color: "bg-[#1d3331]",   icon: FileText,     filter: "ALL"       },
-    { label: "Assigned",         value: stats.assigned,      color: "bg-emerald-600", icon: CheckCircle2, filter: "ASSIGNED"  },
-    { label: "Unassigned",       value: stats.unassigned,    color: "bg-amber-500",   icon: AlertCircle,  filter: "UNASSIGNED"},
-    { label: "Pending review",   value: stats.pendingReview, color: "bg-blue-500",    icon: Clock,        filter: "REVIEW"    },
-    { label: "Approved",         value: stats.approved,      color: "bg-emerald-600", icon: CheckCircle2, filter: "ALL"       },
+    { label: "Total indicators", value: stats.total, color: "bg-[#1d3331]", icon: FileText, filter: "ALL" },
+    { label: "Assigned", value: stats.assigned, color: "bg-emerald-600", icon: CheckCircle2, filter: "ASSIGNED" },
+    { label: "Unassigned", value: stats.unassigned, color: "bg-amber-500", icon: AlertCircle, filter: "UNASSIGNED" },
+    { label: "Pending review", value: stats.pendingReview, color: "bg-blue-500", icon: Clock, filter: "REVIEW" },
+    { label: "Approved", value: stats.approved, color: "bg-emerald-600", icon: CheckCircle2, filter: "ALL" },
   ];
 
   return (
     <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 text-[#1a2c2c] font-sans">
-
-      {/* Alert banner */}
       {(stats.pendingReview > 0 || stats.overdue > 0) && (
         <div className="bg-[#fff9e6] border border-[#f5e6b3] rounded-lg p-3 mb-8 flex items-center gap-3">
           <AlertCircle size={16} className="text-amber-600" />
           <p className="text-[12px] font-medium text-amber-900">
             {stats.pendingReview > 0 && (
               <>
-                <span className="font-bold">{stats.pendingReview} indicators</span>{" "}
-                have evidence pending review
+                <span className="font-bold">{stats.pendingReview} indicators</span> have evidence pending review
               </>
             )}
             {stats.pendingReview > 0 && stats.overdue > 0 && " · "}
             {stats.overdue > 0 && (
               <>
-                <span className="font-bold">{stats.overdue} indicators</span>{" "}
-                are overdue
+                <span className="font-bold">{stats.overdue} indicators</span> are overdue
               </>
             )}
           </p>
         </div>
       )}
 
-      {/* ── Primary stat cards ── */}
       <div className="space-y-6 mb-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {statCards.map((card) => (
@@ -348,7 +403,6 @@ const SuperAdminDashboardPage = () => {
           ))}
         </div>
 
-        {/* ── Secondary stats ── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Link
             to="/superadmin/indicators?filter=OVERDUE"
@@ -370,7 +424,7 @@ const SuperAdminDashboardPage = () => {
               <div>
                 <h2 className="text-4xl font-serif font-bold text-emerald-700">{stats.approved}</h2>
                 <p className="text-[9px] font-black uppercase text-slate-400 tracking-wider mt-1">
-                  Reviewed &amp; approved
+                  Reviewed & approved
                 </p>
               </div>
               <CheckCircle2 size={20} className="text-emerald-400" />
@@ -391,7 +445,6 @@ const SuperAdminDashboardPage = () => {
         </div>
       </div>
 
-      {/* ── Health overview panel — sits between stat cards and submissions ── */}
       <HealthPanel
         total={stats.total}
         assigned={stats.assigned}
@@ -401,9 +454,7 @@ const SuperAdminDashboardPage = () => {
         approved={stats.approved}
       />
 
-      {/* ── Recent submissions + perspectives ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-12">
-
         <div className="lg:col-span-8">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-serif font-bold text-[#1d3331]">Recent submissions</h3>
@@ -422,21 +473,16 @@ const SuperAdminDashboardPage = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {recentSubmissions.slice(0, 5).map((item) => (
+              {recentSubmissions.map((item: IQueueItem) => (
                 <div
                   key={item.submissionId}
                   className="bg-white p-5 rounded-2xl border border-slate-100 flex items-center justify-between group hover:border-emerald-200 transition-all"
                 >
                   <div className="flex gap-4 flex-1">
-                    <div
-                      className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                        item.reviewStatus === "Pending" ? "bg-amber-500" : "bg-emerald-500"
-                      }`}
-                    />
+                    <div className="w-2 h-2 rounded-full mt-2 bg-amber-500 flex-shrink-0" />
                     <div className="flex-1">
                       <p className="text-[14px] text-slate-600 font-medium leading-snug">
-                        <span className="font-bold text-[#1a2c2c]">{item.submittedBy}</span>{" "}
-                        submitted evidence for{" "}
+                        <span className="font-bold text-[#1a2c2c]">{item.submittedBy}</span> submitted evidence for{" "}
                         <span className="font-bold text-[#1a2c2c]">{item.indicatorTitle}</span>
                       </p>
                       <div className="flex gap-4 mt-2">
@@ -464,7 +510,6 @@ const SuperAdminDashboardPage = () => {
           )}
         </div>
 
-        {/* Perspectives breakdown */}
         <div className="lg:col-span-4 space-y-4">
           <h3 className="text-xl font-serif font-bold text-[#1d3331] mb-6">By perspective</h3>
           {perspectives.map((p) => (
@@ -492,7 +537,6 @@ const SuperAdminDashboardPage = () => {
         </div>
       </div>
 
-      {/* ── Team overview ── */}
       <div className="mt-16 pt-8 border-t border-slate-200">
         <div className="flex justify-between items-center mb-8">
           <h3 className="text-2xl font-serif font-bold text-[#1d3331]">Team overview</h3>
@@ -510,13 +554,11 @@ const SuperAdminDashboardPage = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {(users as IUser[]).slice(0, 4).map((member) => {
-              const userId          = member.id || member._id || "";
+            {users.slice(0, 4).map((member) => {
               const assignmentCount = userAssignments[member.name] || 0;
-
               return (
                 <div
-                  key={userId}
+                  key={member.id || member._id}
                   className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm group hover:shadow-md transition-all"
                 >
                   <div className="flex items-center gap-4 mb-6">
@@ -553,7 +595,7 @@ const SuperAdminDashboardPage = () => {
 
                   <div className="flex gap-2">
                     <Link
-                      to={`/superadmin/team/${userId}`}
+                      to={`/superadmin/team/${member.id || member._id}`}
                       className="flex-1 bg-slate-50 text-[10px] font-black uppercase py-2.5 rounded-xl text-center hover:bg-slate-100 transition-colors"
                     >
                       Profile
@@ -575,4 +617,4 @@ const SuperAdminDashboardPage = () => {
   );
 };
 
-export default SuperAdminDashboardPage;
+export default SuperAdminDashboard;
