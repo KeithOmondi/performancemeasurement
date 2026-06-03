@@ -9,31 +9,12 @@ import type {
 } from "../store/slices/dashboardSlice";
 import type { AppDispatch, RootState } from "../store/store";
 
-/* ─── Re-export types so consumers import from one place ─────────────────── */
+// Re-export for convenience
 export type { IDashboardData, IDashboardStats, IPerspectiveStat, IRecentSubmission };
 
-/* ─── Hook ───────────────────────────────────────────────────────────────── */
-
-/**
- * useDashboard
- *
- * Wraps the dashboardSlice — uses apiPrivate (auth headers + interceptors)
- * and dispatches fetchDashboardStats exactly once per mount.
- *
- * Usage:
- *   const { data, loading, error, refetch } = useDashboard();
- *
- *   data.stats.total
- *   data.stats.pendingReview
- *   data.perspectives        // by-perspective breakdown
- *   data.recentSubmissions   // last 10 submissions
- */
 export function useDashboard() {
   const dispatch = useDispatch<AppDispatch>();
-
-  const { data, loading, error } = useSelector(
-    (state: RootState) => state.dashboard
-  );
+  const { data, loading, error } = useSelector((state: RootState) => state.dashboard);
 
   useEffect(() => {
     dispatch(fetchDashboardStats());
