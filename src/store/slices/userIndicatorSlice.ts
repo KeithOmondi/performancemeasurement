@@ -11,6 +11,7 @@ export interface IDocumentUI {
   id: string;
   fileName?: string;
   evidenceUrl: string;
+  fileType?: string;
   status?: string;
   rejectionReason?: string;
   description?: string;
@@ -26,7 +27,9 @@ export interface ISubmissionUI {
   reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected"
   adminComment?: string;
   submittedAt?: string;
+  submittedBy?: string;
   resubmissionCount: number;
+  isReviewed?: boolean;
   documents: IDocumentUI[];
 }
 
@@ -39,6 +42,7 @@ export interface IIndicatorUI {
   perspective?: string;
   assignee_model?: string;
   assigneeName?: string;
+  assignedByName?: string;
   reporting_cycle?: string;
   reportingCycle?: string;
   target?: number;
@@ -173,7 +177,61 @@ const _activeKey = (indicator: IIndicatorUI): string | null => {
   return `Q${q}_${year}`;
 };
 
+/* ─── Helper to build FormData ───────────────────────────────────────────── */
+
+interface SubmissionFormData {
+  quarter: number | string;
+  year: number;
+  achievedValue?: number;
+  notes?: string;
+  descriptions?: string[];
+  idempotencyKey?: string;
+  files?: File[];
+}
+
+export const buildSubmissionFormData = (data: SubmissionFormData): FormData => {
+  const formData = new FormData();
+  
+  formData.append("quarter", String(data.quarter));
+  formData.append("year", String(data.year));
+  
+  if (data.achievedValue !== undefined) {
+    formData.append("achievedValue", String(data.achievedValue));
+  }
+  
+  if (data.notes) {
+    formData.append("notes", data.notes);
+  }
+  
+  if (data.idempotencyKey) {
+    formData.append("idempotencyKey", data.idempotencyKey);
+  }
+  
+  if (data.descriptions && data.descriptions.length > 0) {
+    data.descriptions.forEach((desc, index) => {
+      formData.append(`descriptions[${index}]`, desc);
+    });
+  }
+  
+  if (data.files && data.files.length > 0) {
+    data.files.forEach((file) => {
+      formData.append("documents", file);
+    });
+  }
+  
+  return formData;
+};
+
 /* ─── Thunks ──────────────────────────────────────────────────────────────── */
+/* 
+ * NOTE: These thunks do NOT show any toasts. They only:
+ * 1. Make API calls
+ * 2. Return data or reject with error message
+ * 3. Update Redux state
+ * 
+ * Toast notifications are handled by the component (SubmissionModal)
+ * to prevent duplicate messages.
+ */
 
 /** GET /user-indicators/my-assignments */
 export const fetchMyIndicators = createAsyncThunk(
@@ -183,10 +241,8 @@ export const fetchMyIndicators = createAsyncThunk(
       const { data } = await api.get("/user-indicators/my-assignments");
       return (data.data ?? []) as IIndicatorUI[];
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to fetch indicators",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to fetch indicators";
+      return rejectWithValue(errorMessage);
     }
   },
 );
@@ -199,10 +255,8 @@ export const fetchRejectedSubmissions = createAsyncThunk(
       const { data } = await api.get("/user-indicators/rejects");
       return (data.data ?? []) as IIndicatorUI[];
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to fetch rejected submissions",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to fetch rejected submissions";
+      return rejectWithValue(errorMessage);
     }
   },
 );
@@ -215,20 +269,18 @@ export const fetchIndicatorDetails = createAsyncThunk(
       const { data } = await api.get(`/user-indicators/${id}`);
       return data.data as IIndicatorUI;
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to fetch indicator details",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to fetch indicator details";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** POST /user-indicators/:id/submit */
+/** POST /user-indicators/:id/submit - First time submission only */
 export const submitProgress = createAsyncThunk(
   "userIndicators/submitProgress",
   async (
     { id, formData }: { id: string; formData: FormData },
-    { rejectWithValue },
+    { rejectWithValue, dispatch },
   ) => {
     try {
       const { data } = await api.post(
@@ -236,22 +288,28 @@ export const submitProgress = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      return { data: data.data, message: data.message };
+      
+      // Refresh indicator details to get updated submissions
+      await dispatch(fetchIndicatorDetails(id));
+      
+      return { 
+        data: data.data, 
+        message: data.message,
+        submissionId: data.data?.submissionId,
+      };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to submit progress",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to submit progress";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** POST /user-indicators/:id/resubmit */
+/** POST /user-indicators/:id/resubmit - Resubmit rejected submission only */
 export const resubmitProgress = createAsyncThunk(
   "userIndicators/resubmitProgress",
   async (
     { id, formData }: { id: string; formData: FormData },
-    { rejectWithValue },
+    { rejectWithValue, dispatch },
   ) => {
     try {
       const { data } = await api.post(
@@ -259,80 +317,83 @@ export const resubmitProgress = createAsyncThunk(
         formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-      return { data: data.data, message: data.message };
+      
+      // Refresh indicator details to get updated submissions
+      await dispatch(fetchIndicatorDetails(id));
+      
+      return { 
+        data: data.data, 
+        message: data.message,
+        submissionId: data.data?.submissionId,
+        resubmissionCount: data.data?.resubmissionCount,
+      };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to resubmit progress",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to resubmit progress";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** POST /user-indicators/:id/add-documents */
+/** POST /user-indicators/:id/add-documents - Add documents to pending submission only */
 export const addDocuments = createAsyncThunk(
   "userIndicators/addDocuments",
   async (
     {
       id,
       formData,
-      quarter,
-      idempotencyKey,
-    }: { id: string; formData: FormData; quarter?: number; idempotencyKey?: string },
+    }: { id: string; formData: FormData },
     { rejectWithValue, dispatch },
   ) => {
     try {
-      if (quarter !== undefined) formData.append("quarter", String(quarter));
-      const config: Record<string, string> = {};
-      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
       const { data } = await api.post(
         `/user-indicators/${id}/add-documents`,
         formData,
-        { headers: { "Content-Type": "multipart/form-data", ...config } },
+        { headers: { "Content-Type": "multipart/form-data" } },
       );
       
       // Refresh indicator details to get updated documents
-      if (id) {
-        await dispatch(fetchIndicatorDetails(id));
-      }
+      await dispatch(fetchIndicatorDetails(id));
       
       return { data, message: data.message };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to add documents",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to add documents";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** PATCH /user-indicators/:id/update-submission */
-export const updateRejectedSubmission = createAsyncThunk(
-  "userIndicators/updateRejectedSubmission",
+/** 
+ * PATCH /user-indicators/:id/update-submission 
+ * SMART ROUTER - Automatically detects submission status and routes to:
+ * - submitProgress (no submission exists)
+ * - resubmitProgress (rejected submission exists)
+ * - addDocuments (pending submission exists)
+ */
+export const updateSubmission = createAsyncThunk(
+  "userIndicators/updateSubmission",
   async (
-    { id, formData, idempotencyKey }: { id: string; formData: FormData; idempotencyKey?: string },
+    { id, formData }: { id: string; formData: FormData },
     { rejectWithValue, dispatch },
   ) => {
     try {
-      const config: Record<string, string> = {};
-      if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
       const { data } = await api.patch(
         `/user-indicators/${id}/update-submission`,
         formData,
-        { headers: { "Content-Type": "multipart/form-data", ...config } },
+        { headers: { "Content-Type": "multipart/form-data" } },
       );
       
       // Refresh indicator details to get updated submissions
-      if (id) {
-        await dispatch(fetchIndicatorDetails(id));
-      }
+      await dispatch(fetchIndicatorDetails(id));
       
-      return { data, message: data.message };
+      return { 
+        data: data.data, 
+        message: data.message,
+        submissionId: data.data?.submissionId,
+        resubmissionCount: data.data?.resubmissionCount,
+      };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to update submission",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update submission";
+      return rejectWithValue(errorMessage);
     }
   },
 );
@@ -345,26 +406,31 @@ export const updateDocumentDescriptions = createAsyncThunk(
       submissionId,
       documents,
       idempotencyKey,
-    }: { submissionId: string; documents: Array<{ documentId: string; description: string }>; idempotencyKey?: string },
-    { rejectWithValue }, // Remove dispatch from here
+    }: { 
+      submissionId: string; 
+      documents: Array<{ documentId: string; description: string }>; 
+      idempotencyKey?: string;
+    },
+    { rejectWithValue },
   ) => {
     try {
       const config: Record<string, string> = {};
       if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      
       const { data } = await api.patch(
         `/user-indicators/submissions/${submissionId}/documents/descriptions`,
         { documents },
         { headers: config },
       );
-      return { data, message: data.message };
+      
+      return { data, message: data.message, documents };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to update document descriptions",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document descriptions";
+      return rejectWithValue(errorMessage);
     }
   },
 );
+
 /** PATCH /user-indicators/documents/:docId/description */
 export const updateDocumentDescription = createAsyncThunk(
   "userIndicators/updateDocumentDescription",
@@ -379,22 +445,22 @@ export const updateDocumentDescription = createAsyncThunk(
     try {
       const config: Record<string, string> = {};
       if (idempotencyKey) config["Idempotency-Key"] = idempotencyKey;
+      
       const { data } = await api.patch(
         `/user-indicators/documents/${docId}/description`,
         { description },
         { headers: config },
       );
+      
       return { data, docId, description, message: data.message };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to update document description",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document description";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** DELETE /user-indicators/documents/:docId (legacy) */
+/** DELETE /user-indicators/documents/:docId (legacy - use deletePendingDocument instead) */
 export const deleteDocument = createAsyncThunk(
   "userIndicators/deleteDocument",
   async (docId: string, { rejectWithValue }) => {
@@ -402,15 +468,16 @@ export const deleteDocument = createAsyncThunk(
       const { data } = await api.delete(`/user-indicators/documents/${docId}`);
       return { docId, data, message: data.message };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to delete document",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to delete document";
+      return rejectWithValue(errorMessage);
     }
   },
 );
 
-/** DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId */
+/** 
+ * DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId
+ * Preferred method - only works for pending submissions
+ */
 export const deletePendingDocument = createAsyncThunk(
   "userIndicators/deletePendingDocument",
   async (
@@ -423,16 +490,12 @@ export const deletePendingDocument = createAsyncThunk(
       );
       
       // Refresh indicator details to get updated document list
-      if (indicatorId) {
-        await dispatch(fetchIndicatorDetails(indicatorId));
-      }
+      await dispatch(fetchIndicatorDetails(indicatorId));
       
       return { docId, submissionId, indicatorId, data, message: data.message };
     } catch (err: unknown) {
-      return rejectWithValue(
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to delete document from pending submission",
-      );
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to delete document from pending submission";
+      return rejectWithValue(errorMessage);
     }
   },
 );
@@ -544,8 +607,7 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(fetchIndicatorDetails.rejected, (state, action) => {
         state.loading = false;
-        state.error =
-          (action.payload as string) ?? "Failed to fetch indicator details";
+        state.error = (action.payload as string) ?? "Failed to fetch indicator details";
       });
 
     // submitProgress
@@ -557,7 +619,7 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(submitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload?.data?.submissionId ?? null;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
         state.lastActionSuccess = action.payload?.message ?? "Submission successful";
       })
       .addCase(submitProgress.rejected, (state, action) => {
@@ -574,13 +636,29 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(resubmitProgress.fulfilled, (state, action) => {
         state.uploading = false;
-        state.lastSubmissionId = action.payload?.data?.submissionId ?? null;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
         state.lastActionSuccess = action.payload?.message ?? "Resubmission successful";
       })
       .addCase(resubmitProgress.rejected, (state, action) => {
         state.uploading = false;
-        state.error =
-          (action.payload as string) ?? "Failed to resubmit progress";
+        state.error = (action.payload as string) ?? "Failed to resubmit progress";
+      });
+
+    // updateSubmission (Smart Router)
+    builder
+      .addCase(updateSubmission.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+        state.lastActionSuccess = null;
+      })
+      .addCase(updateSubmission.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastActionSuccess = action.payload?.message ?? "Submission updated successfully";
+      })
+      .addCase(updateSubmission.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = (action.payload as string) ?? "Failed to update submission";
       });
 
     // deletePendingDocument
@@ -615,23 +693,6 @@ const userIndicatorSlice = createSlice({
         state.error = (action.payload as string) ?? "Failed to add documents";
       });
 
-    // updateRejectedSubmission
-    builder
-      .addCase(updateRejectedSubmission.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-        state.lastActionSuccess = null;
-      })
-      .addCase(updateRejectedSubmission.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.lastActionSuccess = action.payload?.message ?? "Submission updated successfully";
-      })
-      .addCase(updateRejectedSubmission.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error =
-          (action.payload as string) ?? "Failed to update submission";
-      });
-
     // updateDocumentDescriptions
     builder
       .addCase(updateDocumentDescriptions.pending, (state) => {
@@ -645,8 +706,7 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(updateDocumentDescriptions.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error =
-          (action.payload as string) ?? "Failed to update document descriptions";
+        state.error = (action.payload as string) ?? "Failed to update document descriptions";
       });
 
     // updateDocumentDescription
@@ -676,8 +736,7 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(updateDocumentDescription.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error =
-          (action.payload as string) ?? "Failed to update document description";
+        state.error = (action.payload as string) ?? "Failed to update document description";
       });
 
     // deleteDocument (legacy)
@@ -710,23 +769,6 @@ const userIndicatorSlice = createSlice({
         state.actionLoading = false;
         state.error = (action.payload as string) ?? "Failed to delete document";
       });
-
-    // Generic rejected matcher
-    builder.addMatcher(
-      (action): action is PayloadAction<string | undefined> =>
-        typeof action.type === "string" &&
-        action.type.startsWith("userIndicators/") &&
-        action.type.endsWith("/rejected"),
-      (state, action) => {
-        state.loading = false;
-        state.actionLoading = false;
-        state.uploading = false;
-        if (!state.error) {
-          state.error =
-            (action.payload as string) ?? "An unexpected error occurred";
-        }
-      },
-    );
   },
 });
 
@@ -741,12 +783,12 @@ export const {
   optimisticRemoveDocument,
 } = userIndicatorSlice.actions;
 
-/* ─── Aliases ─────────────────────────────────────────────────────────────── */
+/* ─── Aliases for backward compatibility ─────────────────────────────────── */
 
 export const fetchMyAssignments = fetchMyIndicators;
 export const submitIndicatorProgress = submitProgress;
 export const resubmitIndicatorProgress = resubmitProgress;
 export const addIndicatorDocuments = addDocuments;
-export const updateSubmission = updateRejectedSubmission;
+export const updateRejectedSubmission = updateSubmission; // Alias for the smart router
 
 export default userIndicatorSlice.reducer;

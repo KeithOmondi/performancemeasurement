@@ -19,9 +19,8 @@ import {
   deleteDocument,
   deletePendingDocument,
   clearLastActionSuccess,
-  addDocuments,
-  resubmitProgress,
-  submitProgress,
+  updateSubmission, // ✅ NEW: Single smart router
+  //buildSubmissionFormData, // ✅ NEW: Helper for FormData
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -227,7 +226,6 @@ const UserTaskIdPage = () => {
     const key = `${activeQuarterDisplay}_${year}`;
     const submission = currentIndicator.submissions[key]?.[0];
     
-    // Debug log
     console.log("🔍 [UserTaskIdPage] activeSub:", {
       key,
       submissionId: submission?.id,
@@ -412,30 +410,35 @@ const UserTaskIdPage = () => {
     setIsModalOpen(true);
   }, [id, dispatch]);
 
-  const handleSubmissionSubmit = useCallback(async (formData: FormData, quarter?: number) => {
+  /**
+   * ✅ UPDATED: Use the smart router (updateSubmission) for all submissions
+   * The backend will automatically route to the correct endpoint based on submission status
+   */
+  const handleSubmissionSubmit = useCallback(async (formData: FormData, quarter?: number, year?: number) => {
     if (!id) return;
     
-    console.log("📤 [handleSubmissionSubmit] Called with:", {
+    console.log("📤 [handleSubmissionSubmit] Using smart router (updateSubmission)", {
       activeSubStatus: activeSub?.reviewStatus,
       quarter,
+      year,
       hasFormData: !!formData
     });
     
-    if (activeSub?.reviewStatus === "Pending") {
-      console.log("✅ Using addDocuments for pending submission");
-      await dispatch(addDocuments({ id, formData, quarter })).unwrap();
-      showToast("Documents added to pending submission successfully.", "success");
-    } else if (activeSub?.reviewStatus === "Rejected") {
-      console.log("✅ Using resubmitProgress for rejected submission");
-      await dispatch(resubmitProgress({ id, formData })).unwrap();
-      showToast("Resubmission sent for review.", "success");
-    } else {
-      console.log("✅ Using submitProgress for new submission");
-      await dispatch(submitProgress({ id, formData })).unwrap();
-      showToast("Submission sent for review.", "success");
+    try {
+      // ✅ Use the single smart router endpoint
+      const result = await dispatch(updateSubmission({ id, formData })).unwrap();
+      
+      // Show appropriate success message based on what the backend did
+      const successMessage = result?.message || "Submission processed successfully.";
+      showToast(successMessage, "success");
+      
+      // Refresh indicator details to get updated data
+      await dispatch(fetchIndicatorDetails(id));
+    } catch (err) {
+      console.error("Submission failed:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to process submission. Please try again.";
+      showToast(errorMessage, "error");
     }
-    
-    await dispatch(fetchIndicatorDetails(id));
   }, [id, activeSub, dispatch, showToast]);
 
   /* ── Loading / empty states ── */

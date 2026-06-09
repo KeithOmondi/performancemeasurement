@@ -1,29 +1,26 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   X, Upload, CheckCircle2, Loader2, AlertCircle,
-  Trash2, ShieldCheck, FileText, Users,
-  RefreshCw, PlusCircle, Clock, AlertTriangle
+  Trash2, FileText, Users,
+  RefreshCw, PlusCircle, Clock, AlertTriangle, Send
 } from "lucide-react";
 import {
-  submitIndicatorProgress,
-  resubmitIndicatorProgress,
-  addIndicatorDocuments,
-  updateRejectedSubmission,
+  updateSubmission,
   getActiveQuarterDisplay,
+  buildSubmissionFormData,
 } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
-import {
-  type IIndicatorUI,
-  type ISubmissionUI,
-} from "../../store/slices/userIndicatorSlice";
+import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
 import toast from "react-hot-toast";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SubmissionModalProps {
   task: IIndicatorUI | null;
   onClose: () => void;
   existingSubmission?: ISubmissionUI;
-  onSubmit?: (formData: FormData, quarter?: number) => Promise<void>;
+  onSubmit?: (formData: FormData, quarter?: number, year?: number) => Promise<void>;
 }
 
 interface ExtendedFile {
@@ -34,350 +31,254 @@ interface ExtendedFile {
 
 type SubmitMode = "replace" | "append";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE      = 10 * 1024 * 1024;
+const MAX_DESC_LENGTH    = 500;
 const ALLOWED_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "application/pdf", "video/mp4"];
-const MAX_DESCRIPTION_LENGTH = 500;
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: SubmissionModalProps) => {
-  const dispatch = useDispatch<AppDispatch>();
+  const dispatch      = useDispatch<AppDispatch>();
   const { uploading } = useSelector((state: RootState) => state.userIndicators);
 
   const isAnnual = task?.reporting_cycle === "Annual";
-  const isTeam = task?.assignee_model === "Team";
+  const isTeam   = task?.assignee_model  === "Team";
 
-  const getInitialQuarter = useCallback(() => {
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  const getSubmissionForQuarter = useCallback((quarter: string): ISubmissionUI | undefined => {
+    if (!task?.submissions) return undefined;
+    const key = `${quarter}_${new Date().getFullYear()}`;
+    return task.submissions[key]?.[0];
+  }, [task]);
+
+  const getInitialQuarter = useCallback((): string => {
     if (existingSubmission?.reviewStatus === "Rejected") {
-      // For display purposes, show "Annual" for quarter 1 when reporting cycle is Annual
-      if (isAnnual && existingSubmission.quarter === 1) {
-        return "Annual";
-      }
-      return `Q${existingSubmission.quarter}`;
+      return isAnnual && existingSubmission.quarter === 1
+        ? "Annual"
+        : `Q${existingSubmission.quarter}`;
     }
     return isAnnual ? "Annual" : (task ? getActiveQuarterDisplay(task) : "Q1");
   }, [existingSubmission, isAnnual, task]);
 
-  const [selectedQuarter, setSelectedQuarter] = useState<string>(getInitialQuarter);
-  const [fileEntries, setFileEntries] = useState<ExtendedFile[]>([]);
-  const [success, setSuccess] = useState(false);
-  const [submitMode, setSubmitMode] = useState<SubmitMode>("replace");
+  // ─── State ──────────────────────────────────────────────────────────────────
+
+  const [selectedQuarter,  setSelectedQuarter]  = useState<string>(getInitialQuarter);
+  const [fileEntries,      setFileEntries]      = useState<ExtendedFile[]>([]);
+  const [success,          setSuccess]          = useState(false);
+  const [submitMode,       setSubmitMode]       = useState<SubmitMode>("replace");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  const getSubmissionForQuarter = useCallback((quarter: string): ISubmissionUI | undefined => {
-    if (!task?.submissions) return undefined;
-    const currentYear = new Date().getFullYear();
-    const quarterKey = `${quarter}_${currentYear}`;
-    const submissions = task.submissions[quarterKey];
-    return submissions?.[0];
-  }, [task]);
+  const syncedSubmissionIdRef = useRef<string | undefined>(undefined);
+
+  // ─── Derived submission state ────────────────────────────────────────────────
 
   const currentPeriodSubmission = useMemo<ISubmissionUI | undefined>(
     () => getSubmissionForQuarter(selectedQuarter),
-    [selectedQuarter, getSubmissionForQuarter]
+    [selectedQuarter, getSubmissionForQuarter],
   );
 
+  const submissionType = useMemo(() => {
+    if (!currentPeriodSubmission)                            return "new";
+    if (currentPeriodSubmission.reviewStatus === "Rejected") return "resubmit";
+    if (currentPeriodSubmission.reviewStatus === "Pending")  return "addDocuments";
+    if (currentPeriodSubmission.reviewStatus === "Accepted") return "locked";
+    return "new";
+  }, [currentPeriodSubmission]);
+
+  const isRejected = submissionType === "resubmit";
+  const isPending  = submissionType === "addDocuments";
+  const isAccepted = submissionType === "locked";
+  const isNew      = submissionType === "new";
+
+  const showModeSwitcher = !!currentPeriodSubmission && !isAccepted && !isPending && !isNew;
+
+  // ─── Reset sync tracker when task changes ───────────────────────────────────
+
   useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleEsc);
-    return () => window.removeEventListener("keydown", handleEsc);
+    syncedSubmissionIdRef.current = undefined;
+  }, [task?.id]);
+
+  // ─── Global keyboard handler ─────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  useEffect(() => {
-    const currentFiles = [...fileEntries];
-    return () => {
-      currentFiles.forEach(entry => {
-        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
-      });
-    };
-  }, [fileEntries]);
+  // ─── Revoke object URLs on unmount ──────────────────────────────────────────
 
-  const isRejected = currentPeriodSubmission?.reviewStatus === "Rejected";
-  const isPending = currentPeriodSubmission?.reviewStatus === "Pending";
-  const isAccepted = currentPeriodSubmission?.reviewStatus === "Accepted";
-  const showModeSwitcher = !!currentPeriodSubmission && !isAccepted && !isPending;
+  useEffect(() => {
+    const snapshot = [...fileEntries];
+    return () => snapshot.forEach(e => { if (e.previewUrl) URL.revokeObjectURL(e.previewUrl); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── Quarter change ──────────────────────────────────────────────────────────
 
   const handleQuarterChange = useCallback((q: string) => {
     setSelectedQuarter(q);
     setFileEntries([]);
     setSubmitMode("replace");
     setValidationErrors({});
+    syncedSubmissionIdRef.current = undefined;
   }, []);
 
+  // ─── File handling ───────────────────────────────────────────────────────────
+
   const validateFile = useCallback((file: File): string | null => {
-    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+    if (!ALLOWED_FILE_TYPES.includes(file.type))
       return `File type not allowed. Allowed: ${ALLOWED_FILE_TYPES.join(", ")}`;
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      return `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`;
-    }
+    if (file.size > MAX_FILE_SIZE)
+      return `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB limit`;
     return null;
   }, []);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
-
     const newFiles: ExtendedFile[] = [];
     const errors: string[] = [];
 
-    Array.from(e.target.files).forEach((file) => {
-      const error = validateFile(file);
-      if (error) {
-        errors.push(`${file.name}: ${error}`);
-      } else {
-        newFiles.push({
-          file,
-          description: "",
-          previewUrl: URL.createObjectURL(file),
-        });
-      }
+    Array.from(e.target.files).forEach(file => {
+      const err = validateFile(file);
+      if (err) { errors.push(`${file.name}: ${err}`); return; }
+      newFiles.push({ file, description: "", previewUrl: URL.createObjectURL(file) });
     });
 
-    if (errors.length > 0) toast.error(errors.join("\n"));
-    if (newFiles.length > 0) {
-      setFileEntries((prev) => [...prev, ...newFiles].slice(0, 50));
-      setValidationErrors(prev => {
-        const next = { ...prev };
-        delete next.files;
-        return next;
-      });
+    if (errors.length)   toast.error(errors.join("\n"));
+    if (newFiles.length) {
+      setFileEntries(prev => [...prev, ...newFiles].slice(0, 50));
+      setValidationErrors(prev => { const n = { ...prev }; delete n.files; return n; });
     }
   }, [validateFile]);
 
   const updateFileDescription = useCallback((index: number, text: string) => {
-    if (text.length > MAX_DESCRIPTION_LENGTH) {
-      setValidationErrors(prev => ({
-        ...prev,
-        [`desc_${index}`]: `Description cannot exceed ${MAX_DESCRIPTION_LENGTH} characters`,
-      }));
-    } else {
-      setValidationErrors(prev => {
-        const next = { ...prev };
-        delete next[`desc_${index}`];
-        delete next.descriptions;
-        return next;
-      });
-    }
-    setFileEntries((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, description: text.slice(0, MAX_DESCRIPTION_LENGTH) } : item))
-    );
+    const clamped = text.slice(0, MAX_DESC_LENGTH);
+    setFileEntries(prev => prev.map((item, i) => i === index ? { ...item, description: clamped } : item));
+    setValidationErrors(prev => {
+      const n = { ...prev };
+      if (text.length > MAX_DESC_LENGTH) {
+        n[`desc_${index}`] = `Description cannot exceed ${MAX_DESC_LENGTH} characters`;
+      } else {
+        delete n[`desc_${index}`];
+        delete n.descriptions;
+      }
+      return n;
+    });
   }, []);
 
   const removeFile = useCallback((index: number) => {
-    const entry = fileEntries[index];
-    if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
-    setFileEntries((prev) => prev.filter((_, i) => i !== index));
-    setValidationErrors(prev => {
-      const next = { ...prev };
-      delete next[`desc_${index}`];
-      return next;
+    setFileEntries(prev => {
+      const entry = prev[index];
+      if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      return prev.filter((_, i) => i !== index);
     });
-  }, [fileEntries]);
+    setValidationErrors(prev => { const n = { ...prev }; delete n[`desc_${index}`]; return n; });
+  }, []);
+
+  // ─── Validation ──────────────────────────────────────────────────────────────
 
   const validateForm = useCallback((): boolean => {
     const errors: Record<string, string> = {};
 
-    if (fileEntries.length === 0) {
+    if (submissionType !== "addDocuments" && fileEntries.length === 0)
       errors.files = "At least one evidence file is required";
-    } else {
+
+    if (fileEntries.length > 0) {
       fileEntries.forEach((f, i) => {
-        if (!f.description.trim()) {
-          errors[`desc_${i}`] = "Description is required";
-        }
+        if (!f.description.trim()) errors[`desc_${i}`] = "Description is required for each document";
       });
-      if (fileEntries.some((f) => !f.description.trim())) {
+      if (fileEntries.some(f => !f.description.trim()))
         errors.descriptions = "Please provide a description for every document";
-      }
     }
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [fileEntries]);
+  }, [fileEntries, submissionType]);
 
-  // Helper function to convert quarter display value to database value
-  const getQuarterValueForDatabase = useCallback((quarterDisplay: string): number => {
-    if (quarterDisplay === "Annual") {
-      return 1; // Annual submissions use quarter 1
-    }
-    return parseInt(quarterDisplay.replace("Q", ""), 10);
-  }, []);
+  // ─── Submit ──────────────────────────────────────────────────────────────────
+
+  const getQuarterNumber = useCallback((display: string): number =>
+    display === "Annual" ? 0 : parseInt(display.replace("Q", ""), 10),
+  []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateForm()) { toast.error("Please fix the validation errors"); return; }
 
-    if (!validateForm()) {
-      toast.error("Please fix the validation errors");
-      return;
-    }
+    const year         = new Date().getFullYear();
+    const quarterValue = getQuarterNumber(selectedQuarter);
 
-    const formData = new FormData();
-    const year = new Date().getFullYear();
-    
-    // Convert quarter display value to database value (number)
-    const quarterValue = getQuarterValueForDatabase(selectedQuarter);
-    formData.append("quarter", String(quarterValue));
-    formData.append("year", String(year));
+    const formData = buildSubmissionFormData({
+      quarter:        quarterValue,
+      year,
+      descriptions:   fileEntries.map(f => f.description),
+      files:          fileEntries.map(f => f.file),
+      idempotencyKey: crypto.randomUUID(),
+    });
 
     try {
-      // Check if there's a pending submission for this period
-      const hasPendingSubmission = currentPeriodSubmission?.reviewStatus === "Pending";
-      
-      if (hasPendingSubmission) {
-        // For pending submissions, ALWAYS use add-documents endpoint
-        fileEntries.forEach((entry) => {
-          formData.append("documents", entry.file);
-          formData.append("descriptions", entry.description.trim());
-        });
-
-        if (onSubmit) {
-          await onSubmit(formData, quarterValue);
-        } else {
-          const result = await dispatch(
-            addIndicatorDocuments({ 
-              id: task!.id, 
-              quarter: quarterValue,
-              formData 
-            })
-          );
-
-          if (addIndicatorDocuments.rejected.match(result)) {
-            const payload = result.payload;
-            const errMsg = typeof payload === "object" && payload !== null && "message" in payload
-              ? String((payload as { message: unknown }).message)
-              : result.error?.message ?? "Failed to add documents.";
-            toast.error(errMsg);
-            return;
-          }
-
-          toast.success(`${fileEntries.length} document(s) added to your pending submission.`);
-        }
-        
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-          setSuccess(false);
-        }, 1500);
-        return;
-      }
-
-      // For non-pending submissions (first time or rejected), proceed with normal flow
-      if (submitMode === "replace") {
-        formData.append("notes", "-");
-        formData.append("achievedValue", "0");
-
-        fileEntries.forEach((entry) => {
-          formData.append("documents", entry.file);
-          formData.append("descriptions", entry.description.trim());
-        });
-
-        if (onSubmit) {
-          await onSubmit(formData, quarterValue);
-          setSuccess(true);
-          setTimeout(() => {
-            onClose();
-            setSuccess(false);
-          }, 1500);
-          return;
-        }
-
-        // Fallback to direct dispatch if onSubmit not provided (legacy mode)
-        let result;
-
-        if (existingSubmission && existingSubmission.reviewStatus === "Rejected") {
-          result = await dispatch(updateRejectedSubmission({ id: task!.id, formData }));
-        } else if (currentPeriodSubmission) {
-          result = await dispatch(resubmitIndicatorProgress({ id: task!.id, formData }));
-        } else {
-          result = await dispatch(submitIndicatorProgress({ id: task!.id, formData }));
-        }
-
-        if (
-          submitIndicatorProgress.rejected.match(result) ||
-          resubmitIndicatorProgress.rejected.match(result) ||
-          updateRejectedSubmission.rejected.match(result)
-        ) {
-          const payload = result.payload;
-          const errMsg =
-            typeof payload === "object" && payload !== null && "message" in payload
-              ? String((payload as { message: unknown }).message)
-              : result.error?.message ?? "Submission failed. Please try again.";
-          toast.error(errMsg);
-          return;
-        }
-
-        toast.success(
-          existingSubmission?.reviewStatus === "Rejected"
-            ? "Correction submitted for review."
-            : currentPeriodSubmission
-            ? "Registry updated — record revised."
-            : "Evidence filed successfully."
-        );
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-          setSuccess(false);
-        }, 1500);
-
+      if (onSubmit) {
+        await onSubmit(formData, quarterValue, year);
       } else {
-        // Append mode for non-pending submissions
-        fileEntries.forEach((entry) => {
-          formData.append("documents", entry.file);
-          formData.append("descriptions", entry.description.trim());
-        });
-
-        if (onSubmit) {
-          await onSubmit(formData, quarterValue);
-          setSuccess(true);
-          setTimeout(() => {
-            onClose();
-            setSuccess(false);
-          }, 1500);
-          return;
-        }
-
-        const result = await dispatch(
-          addIndicatorDocuments({ 
-            id: task!.id, 
-            quarter: quarterValue,
-            formData 
-          })
-        );
-
-        if (addIndicatorDocuments.rejected.match(result)) {
-          const payload = result.payload;
-          const errMsg =
-            typeof payload === "object" && payload !== null && "message" in payload
-              ? String((payload as { message: unknown }).message)
-              : result.error?.message ?? "Failed to add documents.";
-          toast.error(errMsg);
-          return;
-        }
-
-        toast.success(`${fileEntries.length} document(s) added to the registry.`);
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-          setSuccess(false);
-        }, 1500);
+        await dispatch(updateSubmission({ id: task!.id, formData })).unwrap();
       }
+
+      const messages: Record<string, string> = {
+        new:          "Evidence submitted successfully! Awaiting admin review.",
+        resubmit:     "Correction submitted for review. Thank you for updating.",
+        addDocuments: `${fileEntries.length} document(s) added to your pending submission.`,
+      };
+      toast.success(messages[submissionType] ?? "Submitted successfully.");
+
+      setSuccess(true);
+      setTimeout(() => { onClose(); setSuccess(false); }, 1500);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "An unexpected error occurred.";
-      console.error("[SubmissionModal] Unexpected error:", err);
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : "An unexpected error occurred.");
     }
   };
 
+  // ─── Quarter status helper ───────────────────────────────────────────────────
+
   const getQuarterStatus = useCallback((quarter: string) => {
-    const submission = getSubmissionForQuarter(quarter);
-    if (!submission) return null;
-    return {
-      status: submission.reviewStatus,
-      isLocked: submission.reviewStatus === "Accepted",
-    };
+    const sub = getSubmissionForQuarter(quarter);
+    if (!sub) return null;
+    return { status: sub.reviewStatus, isLocked: sub.reviewStatus === "Accepted" };
   }, [getSubmissionForQuarter]);
 
+  // ─── Labels ──────────────────────────────────────────────────────────────────
+
+  const modalTitle = isPending
+    ? "Add More Documents"
+    : isRejected
+    ? "Correct Returned Filing"
+    : (isNew && submitMode === "append" && currentPeriodSubmission)
+    ? "Add More Documents"
+    : (currentPeriodSubmission && !isNew)
+    ? "Update Registry"
+    : "Submit Evidence";
+
+  const buttonText = uploading
+    ? "Processing..."
+    : isAccepted
+    ? "Period Certified"
+    : isPending
+    ? "Add Documents to Pending Submission"
+    : isRejected
+    ? "Submit Correction"
+    : (isNew && submitMode === "append" && currentPeriodSubmission)
+    ? "Append Evidence"
+    : (currentPeriodSubmission && !isNew)
+    ? "Update & Resubmit"
+    : "Finalize Submission";
+
   if (!task) return null;
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-[1000] flex justify-end overflow-hidden">
@@ -389,17 +290,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
         <div className="px-6 py-5 md:px-8 md:py-6 border-b border-slate-100 bg-white flex justify-between items-start shrink-0">
           <div className="text-[#1a3a32] space-y-1">
             <h3 className="text-lg md:text-xl font-serif font-black uppercase tracking-tighter">
-              {isPending
-                ? "Add More Documents"
-                : existingSubmission?.reviewStatus === "Rejected"
-                ? "Correct Returned Filing"
-                : isRejected
-                ? "Returned for Correction"
-                : submitMode === "append"
-                ? "Add More Documents"
-                : currentPeriodSubmission
-                ? "Update Registry"
-                : "Submit Evidence"}
+              {modalTitle}
             </h3>
             <div className="flex items-center gap-2">
               <p className="text-[#c2a336] text-[9px] font-bold uppercase tracking-[0.15em] line-clamp-1">
@@ -430,93 +321,77 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
           ) : (
             <div className="space-y-6">
 
-              {/* Mode switcher - hide for pending submissions */}
+              {/* Mode switcher */}
               {showModeSwitcher && (
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setSubmitMode("replace"); setFileEntries([]); setValidationErrors({}); }}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${
-                      submitMode === "replace"
-                        ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-md"
-                        : "bg-white text-slate-500 border-slate-200 hover:border-[#1a3a32]"
-                    }`}
-                  >
-                    <RefreshCw size={14} /> Replace All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setSubmitMode("append"); setFileEntries([]); setValidationErrors({}); }}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${
-                      submitMode === "append"
-                        ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-md"
-                        : "bg-white text-slate-500 border-slate-200 hover:border-[#1a3a32]"
-                    }`}
-                  >
-                    <PlusCircle size={14} /> Add More
-                  </button>
+                  {(["replace", "append"] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => { setSubmitMode(mode); setFileEntries([]); setValidationErrors({}); }}
+                      className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${
+                        submitMode === mode
+                          ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-md"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-[#1a3a32]"
+                      }`}
+                    >
+                      {mode === "replace" ? <><RefreshCw size={14} /> Replace All</> : <><PlusCircle size={14} /> Add More</>}
+                    </button>
+                  ))}
                 </div>
               )}
 
-              {/* Pending submission info banner */}
+              {/* Pending banner */}
               {isPending && (
                 <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-xl">
                   <p className="text-[9px] text-blue-700 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
                     <Clock size={12} /> Pending Review
                   </p>
                   <p className="text-xs text-blue-600">
-                    You have a pending submission awaiting admin review. You can add more documents to this submission.
+                    You have a pending submission awaiting admin review. You can add more documents without modifying existing ones.
                   </p>
                 </div>
               )}
 
-              {/* Rejection feedback banner */}
-              {(isRejected || existingSubmission?.reviewStatus === "Rejected") && (
+              {/* Rejection banner */}
+              {isRejected && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
                     <AlertTriangle size={12} /> Revision Required
                   </p>
                   <p className="text-xs text-rose-600 font-medium italic">
-                    "{currentPeriodSubmission?.adminComment ?? existingSubmission?.adminComment ?? "Please update your filing based on the feedback above."}"
+                    "{currentPeriodSubmission?.adminComment ?? "Please update your filing based on the feedback above."}"
                   </p>
                 </div>
               )}
 
-              {/* Quarter selector - hide for Annual since it's not applicable */}
+              {/* Quarter selector */}
               {!isAnnual && (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
                     Target Period
                   </label>
                   <div className="grid grid-cols-4 gap-1.5">
-                    {QUARTERS.map((q) => {
-                      const quarterStatus = getQuarterStatus(q);
-                      const isLocked = quarterStatus?.isLocked || false;
-                      const isCurrentSelected = selectedQuarter === q;
+                    {QUARTERS.map(q => {
+                      const qs       = getQuarterStatus(q);
+                      const locked   = qs?.isLocked ?? false;
+                      const selected = selectedQuarter === q;
                       return (
                         <button
                           key={q}
                           type="button"
-                          disabled={isLocked}
+                          disabled={locked}
                           onClick={() => handleQuarterChange(q)}
                           className={`py-2.5 rounded-lg text-[10px] font-black border transition-all relative ${
-                            isLocked
-                              ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
-                              : isCurrentSelected
-                              ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-sm"
-                              : "bg-white border-slate-200 hover:border-[#1a3a32]"
+                            locked     ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
+                            : selected ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-sm"
+                            :            "bg-white border-slate-200 hover:border-[#1a3a32]"
                           }`}
                         >
                           {q}
-                          {quarterStatus?.status === "Pending" && (
-                            <Clock size={10} className="absolute -top-1 -right-1 text-amber-500" />
-                          )}
-                          {quarterStatus?.status === "Rejected" && (
-                            <AlertCircle size={10} className="absolute -top-1 -right-1 text-rose-500" />
-                          )}
-                          {isLocked && (
-                            <CheckCircle2 size={10} className="absolute -top-1 -right-1 text-emerald-500" />
-                          )}
+                          {qs?.status === "Pending"  && <Clock        size={10} className="absolute -top-1 -right-1 text-amber-500"  />}
+                          {qs?.status === "Rejected" && <AlertCircle  size={10} className="absolute -top-1 -right-1 text-rose-500"   />}
+                          {locked                    && <CheckCircle2 size={10} className="absolute -top-1 -right-1 text-emerald-500" />}
                         </button>
                       );
                     })}
@@ -524,7 +399,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
                 </div>
               )}
 
-              {/* For Annual indicators, show a read-only period indicator */}
+              {/* Annual display */}
               {isAnnual && (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
@@ -565,7 +440,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
                       {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
                     </p>
                     <p className="text-[7px] text-slate-400 mt-1">
-                      Max 50 files, 10MB each. Supported: JPG, PNG, GIF, PDF, MP4
+                      Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF, MP4
                     </p>
                   </div>
                 </div>
@@ -581,7 +456,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
                 )}
               </div>
 
-              {/* File entry cards */}
+              {/* File cards */}
               <div className="space-y-4">
                 {fileEntries.map((entry, i) => (
                   <div
@@ -610,7 +485,7 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
                       <textarea
                         placeholder="Describe how this document supports the achievement..."
                         value={entry.description}
-                        onChange={(e) => updateFileDescription(i, e.target.value)}
+                        onChange={e => updateFileDescription(i, e.target.value)}
                         className={`w-full text-[11px] font-medium text-slate-600 focus:outline-none min-h-[60px] resize-none placeholder:text-slate-300 border rounded-lg p-2 transition-colors focus:ring-1 ${
                           validationErrors[`desc_${i}`]
                             ? "border-rose-300 bg-rose-50 focus:ring-rose-400"
@@ -622,12 +497,8 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
                           <p className="text-[7px] text-rose-500 flex items-center gap-1">
                             <AlertCircle size={8} /> {validationErrors[`desc_${i}`]}
                           </p>
-                        ) : (
-                          <span />
-                        )}
-                        <span className="text-[7px] text-slate-300">
-                          {entry.description.length}/{MAX_DESCRIPTION_LENGTH}
-                        </span>
+                        ) : <span />}
+                        <span className="text-[7px] text-slate-300">{entry.description.length}/{MAX_DESC_LENGTH}</span>
                       </div>
                     </div>
                   </div>
@@ -647,27 +518,12 @@ const SubmissionModal = ({ task, onClose, existingSubmission, onSubmit }: Submis
           >
             {uploading ? (
               <><Loader2 className="animate-spin" size={14} /><span>Syncing...</span></>
-            ) : isAccepted ? (
-              "Period Certified"
-            ) : isPending ? (
-              <>
-                <PlusCircle size={14} />
-                <span>Add Documents to Pending Submission</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck size={14} />
-                <span>
-                  {existingSubmission?.reviewStatus === "Rejected"
-                    ? "Submit Correction"
-                    : currentPeriodSubmission
-                    ? submitMode === "append" ? "Append Evidence" : "Update & Resubmit"
-                    : "Finalize Submission"}
-                </span>
-              </>
+            ) : isAccepted ? "Period Certified" : (
+              <>{isPending ? <PlusCircle size={14} /> : <Send size={14} />}<span>{buttonText}</span></>
             )}
           </button>
         </div>
+
       </section>
     </div>
   );
