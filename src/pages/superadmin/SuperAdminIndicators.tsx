@@ -10,6 +10,9 @@ import {
   fetchReviewIndicators,
   clearIndicatorError,
   unassignIndicator,
+  fetchIndicatorCounts,
+  optimisticUnassign,
+  //optimisticAssign,
   type IIndicator,
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
@@ -51,6 +54,8 @@ interface IndicatorSectionProps {
   onUnassign: (indicatorId: string) => void;
   onEdit: (indicator: IIndicator) => void;
   activeFilter: string;
+  optimisticUnassignId?: string | null;
+  optimisticAssignId?: string | null;
 }
 
 /* ─── SERVER COUNTS SHAPE ────────────────────────────────────────────────── */
@@ -109,6 +114,8 @@ const IndicatorSection = ({
   onViewIndicator,
   onUnassign,
   onEdit,
+  optimisticUnassignId,
+  optimisticAssignId,
 }: IndicatorSectionProps) => {
   const visibleActivities = getActivities(objective);
   const total = visibleActivities.length;
@@ -141,10 +148,20 @@ const IndicatorSection = ({
 
       {visibleActivities.map((activity: IActivity) => {
         const activityId = activity.id;
-        const assignment = (indicators || []).find((ind) =>
+        let assignment = (indicators || []).find((ind) =>
           matchId(ind.activityId, activityId),
         );
-        const ids = resolveIds(assignment?.assignee);
+        
+        // Check for optimistic updates
+        const isOptimisticallyUnassigning = optimisticUnassignId === assignment?.id;
+        const isOptimisticallyAssigning = optimisticAssignId === activityId;
+        
+        // Skip showing assignment if it's being optimistically unassigned
+        if (isOptimisticallyUnassigning) {
+          assignment = undefined;
+        }
+        
+        const ids = resolveIds(assignment?.assigneeId || assignment?.assignee);
         const primaryUser = userMap[ids[0]];
 
         const needsReview =
@@ -152,30 +169,30 @@ const IndicatorSection = ({
           assignment?.status === "Awaiting Admin Approval" ||
           assignment?.status === "Awaiting Super Admin";
 
-        const hasAssigneeValue =
-          assignment && assignment.assignee && assignment.assignee !== "";
+        const hasAssigneeValue = assignment && (assignment.assigneeId || assignment.assignee);
         const hasValidDisplayName =
           assignment?.assigneeDisplayName &&
           assignment.assigneeDisplayName !== "Unassigned" &&
           assignment.assigneeDisplayName !== "";
         const hasPrimaryUser = primaryUser && primaryUser.name;
-        const isAssigned = hasAssigneeValue || hasValidDisplayName || hasPrimaryUser;
+        const isAssigned = hasAssigneeValue || hasValidDisplayName || hasPrimaryUser || isOptimisticallyAssigning;
 
         const getAssigneeDisplayName = () => {
-          if (
-            assignment?.assigneeDisplayName &&
-            assignment.assigneeDisplayName !== "Unassigned"
-          ) {
+          if (isOptimisticallyAssigning) return "Assigning...";
+          if (assignment?.assigneeDisplayName && assignment.assigneeDisplayName !== "Unassigned") {
             return assignment.assigneeDisplayName;
           }
           if (primaryUser?.name) return primaryUser.name;
-          return "Assigned";
+          if (assignment?.assigneeId) return "Assigned";
+          return "Unassigned";
         };
 
         return (
           <tr
             key={activityId}
-            className="bg-white border-b border-gray-50 hover:bg-gray-50/50"
+            className={`bg-white border-b border-gray-50 hover:bg-gray-50/50 ${
+              isOptimisticallyAssigning ? "opacity-60" : ""
+            }`}
           >
             {/* Activity description */}
             <td className="p-4 pl-12">
@@ -185,7 +202,6 @@ const IndicatorSection = ({
                   <span className="italic text-[13px] font-medium text-gray-600 leading-relaxed">
                     {activity.description}
                   </span>
-                  {/* Reporting cycle badge — only shown when assigned */}
                   {assignment && (
                     <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200">
                       {assignment.reportingCycle === "Annual" ? "Annual" : "Quarterly"}
@@ -266,7 +282,12 @@ const IndicatorSection = ({
 
             {/* Status */}
             <td className="p-4">
-              {needsReview ? (
+              {isOptimisticallyAssigning ? (
+                <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-blue-100">
+                  <Loader2 size={10} className="animate-spin" />
+                  Assigning...
+                </span>
+              ) : needsReview ? (
                 <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-amber-100">
                   Needs review
                 </span>
@@ -283,11 +304,10 @@ const IndicatorSection = ({
 
             {/* Actions */}
             <td className="p-4 text-center">
-              {isAssigned ? (
+              {isAssigned && assignment && !isOptimisticallyAssigning ? (
                 <div className="flex items-center justify-center gap-1.5">
-                  {/* View / Review */}
                   <button
-                    onClick={() => onViewIndicator(assignment!.id)}
+                    onClick={() => onViewIndicator(assignment.id)}
                     className={`border px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 transition-all ${
                       needsReview
                         ? "border-amber-500 text-amber-600 hover:bg-amber-500 hover:text-white"
@@ -296,19 +316,15 @@ const IndicatorSection = ({
                   >
                     {needsReview ? "Review" : "View"} <ArrowRight size={12} />
                   </button>
-
-                  {/* Edit reporting cycle */}
                   <button
-                    onClick={() => onEdit(assignment!)}
+                    onClick={() => onEdit(assignment)}
                     title="Edit reporting cycle"
                     className="border border-sky-200 text-sky-500 p-1.5 rounded-lg hover:bg-sky-600 hover:text-white hover:border-sky-600 transition-all"
                   >
                     <Pencil size={12} />
                   </button>
-
-                  {/* Unassign */}
                   <button
-                    onClick={() => onUnassign(assignment!.id)}
+                    onClick={() => onUnassign(assignment.id)}
                     title="Unassign"
                     className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
                   >
@@ -324,9 +340,15 @@ const IndicatorSection = ({
                       activityId:      activityId,
                     })
                   }
-                  className="border border-slate-400 text-slate-500 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-slate-800 hover:text-white transition-all mx-auto"
+                  disabled={isOptimisticallyAssigning}
+                  className="border border-slate-400 text-slate-500 px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 hover:bg-slate-800 hover:text-white transition-all mx-auto disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Assign <ArrowRight size={12} />
+                  {isOptimisticallyAssigning ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    "Assign"
+                  )}
+                  <ArrowRight size={12} />
                 </button>
               )}
             </td>
@@ -348,6 +370,8 @@ const SuperAdminIndicators = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [optimisticUnassignId, setOptimisticUnassignId] = useState<string | null>(null);
+  const [optimisticAssignId, setOptimisticAssignId] = useState<string | null>(null);
 
   /* ── Server-side counts ── */
   const [serverCounts, setServerCounts] = useState<IIndicatorCounts | null>(null);
@@ -409,6 +433,7 @@ const SuperAdminIndicators = () => {
           dispatch(fetchUnassignedIndicators()).unwrap(),
           dispatch(fetchReviewIndicators()).unwrap(),
           dispatch(fetchAllUsers()).unwrap(),
+          dispatch(fetchIndicatorCounts()).unwrap(),
           fetchCounts(),
         ]);
       } catch (error) {
@@ -426,55 +451,68 @@ const SuperAdminIndicators = () => {
 
   /* ── Refresh after any mutation ── */
   const refreshAllLists = useCallback(async () => {
-  if (isRefreshing) return; // ← removed actionLoading from guard
-  setIsRefreshing(true);
-  try {
-    await Promise.all([
-      dispatch(fetchIndicators()).unwrap(),
-      dispatch(fetchAssignedIndicators()).unwrap(),
-      dispatch(fetchUnassignedIndicators()).unwrap(),
-      dispatch(fetchReviewIndicators()).unwrap(),
-      fetchCounts(),
-    ]);
-  } catch (error) {
-    console.error("Failed to refresh indicators:", error);
-  } finally {
-    setIsRefreshing(false);
-  }
-}, [dispatch, fetchCounts, isRefreshing]); // ← removed actionLoading from deps
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        dispatch(fetchIndicators()).unwrap(),
+        dispatch(fetchAssignedIndicators()).unwrap(),
+        dispatch(fetchUnassignedIndicators()).unwrap(),
+        dispatch(fetchReviewIndicators()).unwrap(),
+        dispatch(fetchIndicatorCounts()).unwrap(),
+        fetchCounts(),
+      ]);
+    } catch (error) {
+      console.error("Failed to refresh indicators:", error);
+    } finally {
+      setIsRefreshing(false);
+      // Clear optimistic states after refresh
+      setOptimisticUnassignId(null);
+      setOptimisticAssignId(null);
+    }
+  }, [dispatch, fetchCounts, isRefreshing]);
 
   /* ── Handlers ── */
   const handleViewIndicator = useCallback((indicatorId: string) => {
-  navigate(`/superadmin/indicators/${indicatorId}`);
-}, [navigate]);
+    navigate(`/superadmin/indicators/${indicatorId}`);
+  }, [navigate]);
 
   const handleOpenAssign = useCallback((prefill?: AssignPrefill) => {
-  setAssignPrefill(prefill);
-  setIsAssignModalOpen(true);
-}, []);
+    setAssignPrefill(prefill);
+    setIsAssignModalOpen(true);
+  }, []);
 
   const handleCloseAssign = useCallback(async () => {
-  setIsAssignModalOpen(false);
-  setAssignPrefill(undefined);
-  await refreshAllLists();
-}, [refreshAllLists]);
+    setIsAssignModalOpen(false);
+    setAssignPrefill(undefined);
+    await refreshAllLists();
+  }, [refreshAllLists]);
 
- const handleCloseEdit = useCallback(async () => {
-  setEditingIndicator(null);
-  await refreshAllLists();
-}, [refreshAllLists]);
+  const handleCloseEdit = useCallback(async () => {
+    setEditingIndicator(null);
+    await refreshAllLists();
+  }, [refreshAllLists]);
 
   const handleUnassign = useCallback(async (indicatorId: string) => {
-  if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
-  try {
-    await dispatch(unassignIndicator(indicatorId)).unwrap();
-    toast.success("Activity unassigned successfully.");
-    await refreshAllLists();
-  } catch (error) {
-    console.error("Unassign failed:", error);
-    toast.error("Failed to unassign. Please try again.");
-  }
-}, [dispatch, refreshAllLists]);
+    if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
+    
+    // Optimistic update
+    setOptimisticUnassignId(indicatorId);
+    dispatch(optimisticUnassign({ id: indicatorId }));
+    
+    try {
+      await dispatch(unassignIndicator(indicatorId)).unwrap();
+      toast.success("Activity unassigned successfully.");
+      await refreshAllLists();
+    } catch (error) {
+      console.error("Unassign failed:", error);
+      toast.error("Failed to unassign. Please try again.");
+      // Refresh to revert optimistic update
+      await refreshAllLists();
+    } finally {
+      setOptimisticUnassignId(null);
+    }
+  }, [dispatch, refreshAllLists]);
 
   /* ── User map ── */
   const userMap = useMemo(() => {
@@ -708,6 +746,8 @@ const SuperAdminIndicators = () => {
                       onUnassign={handleUnassign}
                       onEdit={setEditingIndicator}
                       activeFilter={activeFilter}
+                      optimisticUnassignId={optimisticUnassignId}
+                      optimisticAssignId={optimisticAssignId}
                     />
                   )),
                 )

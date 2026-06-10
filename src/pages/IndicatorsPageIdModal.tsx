@@ -286,7 +286,7 @@ const AnnualSummary = ({ indicator }: { indicator: IIndicator }) => {
   );
 };
 
-/* ─── SUBMISSION CARD (with document preview modal) ────────────── */
+/* ─── SUBMISSION CARD ───────────────────────────────────────────────────── */
 
 const SubmissionCard = ({
   sub,
@@ -470,7 +470,7 @@ const HistoryItem = ({ entry }: { entry: IReviewHistory }) => (
   </div>
 );
 
-/* ─── MAIN MODAL (with Portal) ──────────────────────────────────────────── */
+/* ─── MAIN MODAL ────────────────────────────────────────────────────────── */
 
 const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
   const dispatch = useAppDispatch();
@@ -533,9 +533,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
       })
     );
 
-    setReviewAction(null);
-    setComment("");
-    setProgressValue("");
+    onClose();
   };
 
   const cancelReview = () => {
@@ -563,9 +561,39 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
 
   const { pill, dot } = statusConfig(indicator.status);
 
-  const modalContent = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        backdropFilter: "blur(4px)",
+        zIndex: 999999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1rem",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: "white",
+          borderRadius: "1rem",
+          width: "100%",
+          maxWidth: "72rem",
+          maxHeight: "90vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+        }}
+      >
         {/* Header */}
         <div className="px-6 pt-6 pb-5 bg-white border-b border-slate-100 shrink-0">
           <div className="flex items-start justify-between gap-4">
@@ -626,7 +654,6 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
             </button>
           </div>
 
-          {/* Status strip */}
           <div className="flex items-center gap-3 mt-4 flex-wrap">
             <span
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black border uppercase tracking-wider ${pill}`}
@@ -680,7 +707,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           ))}
         </div>
 
-        {/* Scrollable content */}
+        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {activeTab === "overview" && (
             <div className="space-y-4">
@@ -1064,12 +1091,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           </div>
         </div>
       </div>
-    </div>
-  );
 
-  return createPortal(
-    <>
-      {modalContent}
       {previewDoc && (
         <FilePreviewModal
           url={previewDoc.evidenceUrl}
@@ -1077,7 +1099,7 @@ const IndicatorsPageIdModal = ({ indicator, onClose }: Props) => {
           onClose={() => setPreviewDoc(null)}
         />
       )}
-    </>,
+    </div>,
     document.body
   );
 };

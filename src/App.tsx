@@ -168,6 +168,7 @@ const App = () => {
             <Route path="/user/rejects" element={<UserRejections />} />
             <Route path="/user/history" element={<UserHistory />} />
             <Route path="/user/approvals" element={<UserApprovals />} />
+            
           </Route>
         </Route>
 
