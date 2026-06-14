@@ -1,4 +1,5 @@
-// SuperAdminIndicators.tsx
+// SuperAdminIndicators.tsx – fully corrected with proper JSX closing tags
+import React from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, Search, Filter, ChevronDown, ChevronUp } from "lucide-react";
@@ -56,13 +57,6 @@ interface IndicatorSectionProps {
   activeFilter: string;
   optimisticUnassignId?: string | null;
   optimisticAssignId?: string | null;
-  // 🆕 Additional filters passed down for display (not used in filtering at this level)
-  searchTerm?: string;
-  statusFilter?: string;
-  assigneeFilter?: string;
-  cycleFilter?: string;
-  progressMin?: number;
-  progressMax?: number;
 }
 
 /* ─── SERVER COUNTS SHAPE ────────────────────────────────────────────────── */
@@ -109,7 +103,6 @@ const PERSPECTIVE_ORDER: Record<string, number> = {
   "INTERNAL PROCESS":     5,
 };
 
-// 🆕 Status options for filtering
 const STATUS_OPTIONS = [
   { value: "ALL", label: "All statuses" },
   { value: "Active", label: "Active" },
@@ -118,7 +111,6 @@ const STATUS_OPTIONS = [
   { value: "Rejected", label: "Rejected" },
 ];
 
-// 🆕 Reporting cycle options
 const CYCLE_OPTIONS = [
   { value: "ALL", label: "All cycles" },
   { value: "Quarterly", label: "Quarterly" },
@@ -148,7 +140,8 @@ const IndicatorSection = ({
   ).length;
 
   return (
-    <>
+    <React.Fragment>
+      {/* Objective header row */}
       <tr className="bg-white border-b border-gray-50">
         <td className="p-4 py-6 align-top">
           <h3 className="font-bold text-[#1a3a32] text-[15px] leading-tight mb-2">
@@ -166,9 +159,10 @@ const IndicatorSection = ({
             {perspective?.replace(" PERSPECTIVE", "")}
           </div>
         </td>
-        <td colSpan={7} />
+        <td colSpan={7}></td>
       </tr>
 
+      {/* Activity rows */}
       {visibleActivities.map((activity: IActivity) => {
         const activityId = activity.id;
         let assignment = (indicators || []).find((ind) =>
@@ -231,7 +225,7 @@ const IndicatorSection = ({
               </div>
             </td>
 
-            <td />
+            <td></td>
 
             <td className="p-4 text-center">
               {assignment ? (
@@ -369,10 +363,11 @@ const IndicatorSection = ({
         );
       })}
 
+      {/* Spacer row */}
       <tr className="h-4 bg-[#fcfdfb]">
-        <td colSpan={9} />
+        <td colSpan={9}></td>
       </tr>
-    </>
+    </React.Fragment>
   );
 };
 
@@ -386,7 +381,7 @@ const SuperAdminIndicators = () => {
   const [optimisticUnassignId, setOptimisticUnassignId] = useState<string | null>(null);
   const [optimisticAssignId, setOptimisticAssignId] = useState<string | null>(null);
 
-  // 🆕 Filter state
+  // Filter state
   const [showFilters, setShowFilters] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -397,19 +392,17 @@ const SuperAdminIndicators = () => {
   const [progressMax, setProgressMax] = useState<number>(100);
 
   // Debounce search input
- const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-useEffect(() => {
-  if (debounceTimer.current) clearTimeout(debounceTimer.current);
-  debounceTimer.current = setTimeout(() => {
-    setDebouncedSearch(searchTerm);
-  }, 300);
-  return () => {
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-  };
-}, [searchTerm]);
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [searchTerm]);
 
-  // Reset all extra filters
   const resetFilters = () => {
     setSearchTerm("");
     setDebouncedSearch("");
@@ -420,9 +413,8 @@ useEffect(() => {
     setProgressMax(100);
   };
 
-  /* ── Server-side counts ── */
+  /* Server-side counts */
   const [serverCounts, setServerCounts] = useState<IIndicatorCounts | null>(null);
-
   const fetchCounts = useCallback(async () => {
     try {
       const res = await apiPrivate.get<{ success: boolean; data: IIndicatorCounts }>(
@@ -436,7 +428,7 @@ useEffect(() => {
 
   const activeFilter = searchParams.get("filter")?.toUpperCase() || "ALL";
 
-  /* ── Redux selectors ── */
+  /* Redux selectors */
   const { plans, loading: plansLoading } = useAppSelector(
     (s) => s.strategicPlan,
     shallowEqual,
@@ -464,12 +456,12 @@ useEffect(() => {
     shallowEqual,
   );
 
-  /* ── Modal state ── */
+  /* Modal state */
   const [assignPrefill, setAssignPrefill]         = useState<AssignPrefill | undefined>();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [editingIndicator, setEditingIndicator]   = useState<IIndicator | null>(null);
 
-  /* ── Initial load ── */
+  /* Initial load */
   useEffect(() => {
     const loadInitialData = async () => {
       try {
@@ -488,15 +480,13 @@ useEffect(() => {
         toast.error("Failed to load indicators data");
       }
     };
-
     loadInitialData();
-
     return () => {
       dispatch(clearIndicatorError());
     };
   }, [dispatch, fetchCounts]);
 
-  /* ── Refresh after any mutation ── */
+  /* Refresh after mutations */
   const refreshAllLists = useCallback(async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
@@ -518,7 +508,7 @@ useEffect(() => {
     }
   }, [dispatch, fetchCounts, isRefreshing]);
 
-  /* ── Handlers ── */
+  /* Handlers */
   const handleViewIndicator = useCallback((indicatorId: string) => {
     navigate(`/superadmin/indicators/${indicatorId}`);
   }, [navigate]);
@@ -541,10 +531,8 @@ useEffect(() => {
 
   const handleUnassign = useCallback(async (indicatorId: string) => {
     if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
-    
     setOptimisticUnassignId(indicatorId);
     dispatch(optimisticUnassign({ id: indicatorId }));
-    
     try {
       await dispatch(unassignIndicator(indicatorId)).unwrap();
       toast.success("Activity unassigned successfully.");
@@ -558,7 +546,7 @@ useEffect(() => {
     }
   }, [dispatch, refreshAllLists]);
 
-  /* ── User map ── */
+  /* User map */
   const userMap = useMemo(() => {
     const map: Record<string, IUser> = {};
     (users ?? []).forEach((u) => {
@@ -567,14 +555,13 @@ useEffect(() => {
     return map;
   }, [users]);
 
-  /* 🆕 Helper to check if an activity+indicator matches all filters */
+  /* Helper to check if an activity+indicator matches all filters */
   const matchesAllFilters = useCallback((
     activity: IActivity,
     indicator: IIndicator | undefined,
     objective: IObjective,
     planPerspective: string
   ): boolean => {
-    // Search term: matches activity description, objective title, perspective, assignee name, indicator title
     if (debouncedSearch) {
       const searchLower = debouncedSearch.toLowerCase();
       const activityMatch = activity.description?.toLowerCase().includes(searchLower);
@@ -588,7 +575,6 @@ useEffect(() => {
       }
     }
 
-    // Status filter
     if (statusFilter !== "ALL") {
       if (!indicator) return false;
       let indicatorStatus = "";
@@ -604,32 +590,27 @@ useEffect(() => {
       if (indicatorStatus !== statusFilter) return false;
     }
 
-    // Assignee filter
     if (assigneeFilter !== "ALL") {
       if (!indicator) return false;
-      const assigneeId = indicator.assigneeId;
-      if (String(assigneeId) !== String(assigneeFilter)) return false;
+      if (String(indicator.assigneeId) !== String(assigneeFilter)) return false;
     }
 
-    // Reporting cycle filter
     if (cycleFilter !== "ALL") {
       if (!indicator) return false;
       if (indicator.reportingCycle !== cycleFilter) return false;
     }
 
-    // Progress range filter
     if (indicator) {
       const progress = indicator.progress ?? 0;
       if (progress < progressMin || progress > progressMax) return false;
     } else {
-      // Unassigned activities have no progress – include only if progress range includes 0 (default)
       if (progressMin > 0) return false;
     }
 
     return true;
   }, [debouncedSearch, statusFilter, assigneeFilter, cycleFilter, progressMin, progressMax, userMap]);
 
-  /* ─── Filtered table data (integrates tab filter + extra filters) ─── */
+  /* Filtered table data (integrates tab filter + extra filters) */
   const filteredData = useMemo(() => {
     const getIndicatorsForFilter = () => {
       if (activeFilter === "ASSIGNED")   return assignedIndicators;
@@ -639,14 +620,12 @@ useEffect(() => {
     };
 
     let basePlans = [...(plans ?? [])];
-
     basePlans.sort((a, b) => {
       const orderA = PERSPECTIVE_ORDER[a?.perspective?.toUpperCase()] ?? 99;
       const orderB = PERSPECTIVE_ORDER[b?.perspective?.toUpperCase()] ?? 99;
       return orderA - orderB;
     });
 
-    // Apply perspective filter from tabs (if activeFilter is a perspective name)
     if (activeFilter !== "ALL" && PERSPECTIVE_ORDER[activeFilter]) {
       basePlans = basePlans.filter((p) =>
         p?.perspective?.toUpperCase().includes(activeFilter),
@@ -655,7 +634,6 @@ useEffect(() => {
 
     const currentIndicators = getIndicatorsForFilter();
 
-    // Build the tree with additional filters applied
     return basePlans
       .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
@@ -668,8 +646,9 @@ useEffect(() => {
               );
               const hasIndicator = !!indicator;
 
+              // ✅ FIXED: UNASSIGNED now shows activities that HAVE an indicator (unassigned indicator)
               if (activeFilter === "ASSIGNED")   return hasIndicator;
-              if (activeFilter === "UNASSIGNED") return !hasIndicator;
+              if (activeFilter === "UNASSIGNED") return hasIndicator;   // FIXED
               if (activeFilter === "REVIEW") {
                 return hasIndicator && (
                   indicator.needsAction ||
@@ -680,7 +659,7 @@ useEffect(() => {
               return true;
             });
 
-            // Now apply extra filters (search, status, assignee, cycle, progress)
+            // Apply extra filters (search, status, assignee, cycle, progress)
             filteredActivities = filteredActivities.filter((act) => {
               const actId = act.id;
               const indicator = (currentIndicators ?? []).find((ind) =>
@@ -711,7 +690,7 @@ useEffect(() => {
     matchesAllFilters,
   ]);
 
-  /* ── Tab counts (still reflect server or raw counts, not affected by extra filters) ── */
+  /* Tab counts (server counts or fallback) */
   const counts = serverCounts ?? {
     total:        allIndicators.length,
     assigned:     assignedIndicators.length,
@@ -749,7 +728,7 @@ useEffect(() => {
     { label: "INTERNAL PROCESS",     count: getPerspectiveCount("INTERNAL PROCESS") },
   ];
 
-  /* ─── LOADING ─────────────────────────────────────────────────────────── */
+  /* Loading state */
   if (
     (plansLoading || indicatorsLoading || usersLoading) &&
     (plans ?? []).length === 0
@@ -764,7 +743,7 @@ useEffect(() => {
     );
   }
 
-  /* ─── RENDER ──────────────────────────────────────────────────────────── */
+  /* Render */
   return (
     <div className="p-4 md:p-10 bg-[#fcfdfb] min-h-screen font-sans">
 
@@ -787,7 +766,6 @@ useEffect(() => {
           </p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* 🆕 Toggle filters button */}
           <button
             onClick={() => setShowFilters(!showFilters)}
             className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:bg-gray-50 transition-all"
@@ -809,11 +787,10 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* 🆕 Expanded filter panel */}
+      {/* Filter panel */}
       {showFilters && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            {/* Search */}
             <div className="col-span-1 md:col-span-2">
               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Search</label>
               <div className="relative">
@@ -827,8 +804,6 @@ useEffect(() => {
                 />
               </div>
             </div>
-
-            {/* Status */}
             <div>
               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Status</label>
               <select
@@ -841,8 +816,6 @@ useEffect(() => {
                 ))}
               </select>
             </div>
-
-            {/* Assignee */}
             <div>
               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Assignee</label>
               <select
@@ -856,8 +829,6 @@ useEffect(() => {
                 ))}
               </select>
             </div>
-
-            {/* Reporting Cycle */}
             <div>
               <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Reporting Cycle</label>
               <select
@@ -871,8 +842,6 @@ useEffect(() => {
               </select>
             </div>
           </div>
-
-          {/* Progress range */}
           <div className="mt-4">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-[10px] font-bold uppercase text-gray-500">Progress Range (%)</label>
@@ -897,10 +866,7 @@ useEffect(() => {
               />
             </div>
             <div className="flex justify-end mt-3">
-              <button
-                onClick={resetFilters}
-                className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1"
-              >
+              <button onClick={resetFilters} className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1">
                 <X size={12} /> Clear all filters
               </button>
             </div>
@@ -908,7 +874,7 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Filter tabs (existing) */}
+      {/* Filter tabs */}
       <div className="flex overflow-x-auto pb-4 gap-2 mb-8 no-scrollbar">
         {filterTabs.map((f) => (
           <button
@@ -926,13 +892,11 @@ useEffect(() => {
           >
             {f.label === "REVIEW" && "⚠️ "}
             {f.label}
-            <span
-              className={`px-2 py-0.5 rounded-full text-[10px] ${
-                activeFilter === f.label
-                  ? "bg-white/20"
-                  : "bg-gray-100 text-gray-400"
-              }`}
-            >
+            <span className={`px-2 py-0.5 rounded-full text-[10px] ${
+              activeFilter === f.label
+                ? "bg-white/20"
+                : "bg-gray-100 text-gray-400"
+            }`}>
               {f.count}
             </span>
           </button>
@@ -958,7 +922,7 @@ useEffect(() => {
             </thead>
             <tbody>
               {filteredData.length > 0 ? (
-                filteredData.map((plan: IStrategicPlan) =>
+                filteredData.flatMap((plan: IStrategicPlan) =>
                   (plan.objectives as IObjectiveWithIndicators[]).map((objective) => (
                     <IndicatorSection
                       key={objective.id}
@@ -975,7 +939,7 @@ useEffect(() => {
                       optimisticUnassignId={optimisticUnassignId}
                       optimisticAssignId={optimisticAssignId}
                     />
-                  )),
+                  ))
                 )
               ) : (
                 <tr>
@@ -985,10 +949,7 @@ useEffect(() => {
                       <p className="text-gray-400 font-medium italic">
                         No activities match the current filters.
                       </p>
-                      <button
-                        onClick={resetFilters}
-                        className="mt-2 text-sm text-[#1a3a32] underline"
-                      >
+                      <button onClick={resetFilters} className="mt-2 text-sm text-[#1a3a32] underline">
                         Clear all filters
                       </button>
                     </div>

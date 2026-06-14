@@ -1,3 +1,4 @@
+// SuperAdminAssign.tsx (fixed version)
 import { useState, useMemo, useEffect } from "react";
 import {
   X,
@@ -22,7 +23,7 @@ import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import { fetchTeams, createTeam } from "../../store/slices/teamSlice";
 import {
   createIndicator,
-  type IIndicator,
+  type ICreateIndicatorPayload, // ✅ import the correct payload type
 } from "../../store/slices/indicatorSlice";
 import toast from "react-hot-toast";
 import type {
@@ -112,7 +113,7 @@ const UserMultiSelect = ({
       allUsers.filter(
         (u) =>
           u.isActive &&
-          !excludeIds.includes((u.id ?? u.id) as string) &&
+          !excludeIds.includes((u.id ?? u._id) as string) &&
           (u.name.toLowerCase().includes(search.toLowerCase()) ||
             u.email?.toLowerCase().includes(search.toLowerCase())),
       ),
@@ -132,7 +133,6 @@ const UserMultiSelect = ({
         {label}
       </label>
 
-      {/* FIX: type="button" prevents any parent form submission */}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
@@ -248,7 +248,6 @@ const InlineCreateTeam = ({
   const [teamLead, setTeamLead] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
 
-  // FIX: async handler is not triggered by any form submit — purely onClick
   const handleCreate = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -277,7 +276,7 @@ const InlineCreateTeam = ({
   return (
     <div
       className="mt-4 p-5 bg-emerald-50 border border-emerald-100 rounded-2xl space-y-4"
-      onClick={(e) => e.stopPropagation()} // FIX: prevent clicks bubbling to parent
+      onClick={(e) => e.stopPropagation()}
     >
       <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest flex items-center gap-2">
         <Users size={12} /> New Team
@@ -355,7 +354,7 @@ const InlineCreateTeam = ({
   );
 };
 
-/* ─── SuperAdminAssign ───────────────────────────────────────────────── */
+/* ─── SuperAdminAssign (fixed) ───────────────────────────────────────── */
 
 const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
   const dispatch = useAppDispatch();
@@ -472,28 +471,29 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
     setShowCreateTeam(false);
   };
 
+  // ✅ Fixed payload construction using ICreateIndicatorPayload
   const handleAssign = async (e: React.MouseEvent) => {
-    // FIX: always stop propagation on the submit action
     e.preventDefault();
     e.stopPropagation();
 
+    if (!selectedPlanId) return toast.error("Please select a perspective");
+    if (!selectedObjectiveId) return toast.error("Please select an objective");
+    if (!selectedActivityId) return toast.error("Please select an activity");
     if (!isAssigneeSelected) return toast.error("Please select an assignee");
     if (!deadline) return toast.error("Deadline required");
-    if (!selectedActivityId) return toast.error("Please select an activity");
 
-    const payload: Partial<IIndicator> = {
+    // Build payload with required fields only
+    const payload: ICreateIndicatorPayload = {
       strategicPlanId: selectedPlanId,
       objectiveId: selectedObjectiveId,
       activityId: selectedActivityId,
-      assignee:
-        assignmentType === "Individual" ? selectedUserId : selectedTeamId,
+      assignee: assignmentType === "Individual" ? selectedUserId : selectedTeamId,
       assignmentType: assignmentType === "Individual" ? "User" : "Team",
       reportingCycle,
-      status: "Pending",
       weight: displayWeight,
       unit: displayUnit,
       deadline,
-      instructions: "",
+      instructions: "", // optional but include
     };
 
     try {
@@ -507,26 +507,22 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
     }
   };
 
-  // FIX: clicking the backdrop overlay calls onClose, but
-  // clicks on the modal panel itself must not bubble up to the backdrop
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
   };
 
   return (
-    // FIX: backdrop click handler only fires when clicking the overlay itself
     <div
       className="fixed inset-0 flex items-center justify-center bg-[#0d1a17]/60 z-[500] backdrop-blur-md p-4 animate-in fade-in duration-300"
       onClick={handleBackdropClick}
     >
-      {/* FIX: stop all click propagation at the modal panel level */}
       <div
         className="bg-[#f8fafb] w-full max-w-4xl h-[90vh] rounded-[1rem] shadow-2xl flex overflow-hidden border border-white/20"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
 
-          {/* ── Header ── */}
+          {/* ── Header (unchanged) ── */}
           <div className="px-10 py-6 border-b border-slate-100 flex justify-between items-center">
             <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
               <span>Strategic Registry</span>
@@ -552,7 +548,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
             </button>
           </div>
 
-          {/* ── Prefill notice ── */}
           {hasPrefill && (
             <div className="mx-10 mt-6 p-3 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3">
               <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
@@ -563,10 +558,9 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
             </div>
           )}
 
-          {/* ── Scrollable body ── */}
+          {/* Scrollable body (same as before) */}
           <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
-
-            {/* ── 01: Strategic Mapping ── */}
+            {/* ── 01: Strategic Mapping (unchanged) ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
                 <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
@@ -576,7 +570,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               </h3>
 
               <div className="grid gap-4">
-                {/* Plan */}
                 <div className="relative">
                   {prefill?.strategicPlanId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -606,7 +599,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   </select>
                 </div>
 
-                {/* Objective */}
                 <div className="relative">
                   {prefill?.objectiveId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -636,7 +628,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   </select>
                 </div>
 
-                {/* Activity */}
                 <div className="relative">
                   {prefill?.activityId && (
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -682,7 +673,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               </div>
             </div>
 
-            {/* ── 02: Deployment Logistics ── */}
+            {/* ── 02: Deployment Logistics (unchanged) ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
                 <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
@@ -726,7 +717,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {/* Review Cycle */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                     Review Cycle
@@ -740,7 +730,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                     ).map((opt) => (
                       <button
                         key={opt.id}
-                        type="button" // FIX: explicit type="button"
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); setReportingCycle(opt.id); }}
                         className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${
                           reportingCycle === opt.id
@@ -754,7 +744,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                   </div>
                 </div>
 
-                {/* Command Mode */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                     Command Mode
@@ -768,7 +757,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                     ).map((opt) => (
                       <button
                         key={opt.id}
-                        type="button" // FIX: explicit type="button"
+                        type="button"
                         onClick={(e) => { e.stopPropagation(); handleModeSwitch(opt.id); }}
                         className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold transition-all ${
                           assignmentType === opt.id
@@ -783,7 +772,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                 </div>
               </div>
 
-              {/* Individual picker */}
+              {/* Individual picker (unchanged) */}
               {assignmentType === "Individual" && (
                 <div className="relative">
                   <div className="absolute right-4 top-9 z-10">
@@ -864,7 +853,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                 </div>
               )}
 
-              {/* Team picker */}
+              {/* Team picker (unchanged) */}
               {assignmentType === "Team" && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -873,15 +862,15 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                     </label>
                     {!showCreateTeam && (
                       <button
-  type="button" // Ensure this is explicitly "button"
-  onClick={(e) => { 
-    e.preventDefault(); 
-    e.stopPropagation(); 
-    setSelectedTeamId(""); 
-  }}
->
-  <X size={14} />
-</button>
+                        type="button"
+                        onClick={(e) => { 
+                          e.preventDefault(); 
+                          e.stopPropagation(); 
+                          setSelectedTeamId(""); 
+                        }}
+                      >
+                        <X size={14} />
+                      </button>
                     )}
                   </div>
 
@@ -909,7 +898,6 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
                       </button>
                     </div>
                   ) : !showCreateTeam ? (
-                    // FIX: this is the key fix — stopPropagation on the team select onChange
                     <select
                       className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-sm font-bold text-[#1a3a32] outline-none"
                       value={selectedTeamId}
@@ -1000,7 +988,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               )}
             </div>
 
-            {/* ── 03: Authorization ── */}
+            {/* ── 03: Authorization (unchanged) ── */}
             <div className="space-y-6">
               <h3 className="text-sm font-black text-[#1a3a32] uppercase tracking-widest flex items-center gap-3">
                 <span className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-[10px]">
@@ -1025,7 +1013,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
             </div>
           </div>
 
-          {/* ── Footer ── */}
+          {/* Footer (unchanged) */}
           <div className="p-8 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
             <button
               type="button"
@@ -1035,7 +1023,7 @@ const SuperAdminAssign = ({ onClose, prefill }: SuperAdminAssignProps) => {
               Discard
             </button>
             <button
-              type="button" // FIX: explicit type="button" on the submit action
+              type="button"
               disabled={
                 !selectedActivityId ||
                 !isAssigneeSelected ||
