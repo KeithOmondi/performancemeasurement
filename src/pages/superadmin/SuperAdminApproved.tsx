@@ -14,8 +14,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { fetchSuperAdminApprovedIndicators } from "../../store/slices/indicatorSlice";
+//import { fetchSuperAdminApprovedIndicators } from "../../store/slices/indicatorSlice";
 import SuperAdminApprovedModal from "./SuperAdminApprovedModal";
+import { fetchSuperAdminApprovedIndicators } from "../../store/slices/indicatorSlice";
 
 const SuperAdminApproved = () => {
   const dispatch = useAppDispatch();
@@ -28,7 +29,7 @@ const SuperAdminApproved = () => {
 
   useEffect(() => {
     // Fetch ALL approved indicators (including partial approvals)
-    dispatch(fetchSuperAdminApprovedIndicators());
+    dispatch(fetchSuperAdminApprovedIndicators(true));
   }, [dispatch]);
 
   const approvedItems = useMemo(() => {

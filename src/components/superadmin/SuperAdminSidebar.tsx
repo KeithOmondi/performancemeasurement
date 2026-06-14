@@ -254,7 +254,7 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
                 C. Otieno-Omondi
               </p>
               <p className="text-[9px] opacity-60 uppercase tracking-tighter">
-                Registrar - Admin
+                Registrar - Super Admin
               </p>
             </div>
           </div>

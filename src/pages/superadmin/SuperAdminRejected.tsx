@@ -19,13 +19,21 @@ import {
   fetchRejectedByAdmin,
   deleteSubmission,
   type IIndicator,
+  type ISubmission,
 } from "../../store/slices/indicatorSlice";
 
-interface RejectedIndicator extends IIndicator {
+interface RejectedSubmission {
+  id: string;
+  indicatorId: string;
+  indicator: IIndicator;
   rejectionType: "Admin" | "Super Admin";
-  rejectionReason?: string;
-  rejectedAt?: string;
-  rejectedQuarter?: string;
+  rejectionReason: string;
+  rejectedAt: string;
+  quarter: number;
+  year: number;
+  achievedValue: number;
+  documentsCount: number;
+  resubmissionCount: number;
 }
 
 const SuperAdminRejected = () => {
@@ -40,110 +48,189 @@ const SuperAdminRejected = () => {
   );
 
   useEffect(() => {
-    // Fetch all indicators and rejected by admin specifically
     dispatch(fetchIndicators());
     dispatch(fetchRejectedByAdmin());
   }, [dispatch]);
 
-  // Combine and process rejected indicators from both sources
-  const rejectedIndicators = useMemo<RejectedIndicator[]>(() => {
-    const allRejected: RejectedIndicator[] = [];
+  // Extract rejection info from an indicator, optionally using a specific submission
+  const extractRejection = (
+    indicator: IIndicator,
+    submission?: ISubmission
+  ): RejectedSubmission | null => {
+    let rejectionType: "Admin" | "Super Admin" | null = null;
+    let rejectionReason = "";
+    let rejectedAt = "";
+    const targetSubmission = submission; // ✅ const, not let
+    let quarter = 0;
+    let year = new Date().getFullYear();
+    let achievedValue = 0;
+    let documentsCount = 0;
+    let resubmissionCount = 0;
 
-    // Process indicators rejected by admin
-    rejectedByAdmin.forEach((ind) => {
-      // Find the latest rejection from review history
-      const rejectionEvent = ind.reviewHistory?.find(
-        (h) => h.action === "Correction Requested" && h.reviewerRole === "admin"
-      );
-      
-      // Find the rejected submission
-      const rejectedSubmission = ind.submissions?.find(
-        (s) => s.reviewStatus === "Rejected"
-      );
+    const history = indicator.reviewHistory || [];
 
-      allRejected.push({
-        ...ind,
-        rejectionType: "Admin",
-        rejectionReason: rejectionEvent?.reason || ind.adminOverallComments,
-        rejectedAt: rejectionEvent?.at || ind.updatedAt,
-        rejectedQuarter: rejectedSubmission 
-          ? `Q${rejectedSubmission.quarter} ${new Date().getFullYear()}`
-          : undefined,
-      });
-    });
+    // 1. Look for Super Admin rejection in history
+    const superRejection = [...history]
+      .filter((h) => h.action === "Rejected" && h.reviewerRole === "superadmin")
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
 
-    // Process indicators rejected by super admin (from main indicators list)
-    indicators.forEach((ind) => {
-      if (ind.status === "Rejected by Super Admin") {
-        // Check if already added from rejectedByAdmin
-        if (!allRejected.some((r) => r.id === ind.id)) {
-          const rejectionEvent = ind.reviewHistory?.find(
-            (h) => h.action === "Rejected" && h.reviewerRole === "superadmin"
-          );
-          
-          const rejectedSubmission = ind.submissions?.find(
-            (s) => s.reviewStatus === "Rejected"
-          );
+    // 2. Look for Admin correction request in history
+    const adminCorrection = [...history]
+      .filter((h) => h.action === "Correction Requested" && h.reviewerRole === "admin")
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
 
-          allRejected.push({
-            ...ind,
-            rejectionType: "Super Admin",
-            rejectionReason: rejectionEvent?.reason || ind.adminOverallComments,
-            rejectedAt: rejectionEvent?.at || ind.updatedAt,
-            rejectedQuarter: rejectedSubmission 
-              ? `Q${rejectedSubmission.quarter} ${new Date().getFullYear()}`
-              : undefined,
-          });
-        }
+    if (superRejection) {
+      rejectionType = "Super Admin";
+      rejectionReason = superRejection.reason || "No reason provided";
+      rejectedAt = superRejection.at;
+      if (targetSubmission) {
+        quarter = targetSubmission.quarter;
+        year = targetSubmission.year;
+        achievedValue = targetSubmission.achievedValue;
+        documentsCount = targetSubmission.documents?.length || 0;
+        resubmissionCount = targetSubmission.resubmissionCount || 0;
+      } else {
+        quarter = superRejection.quarter || indicator.activeQuarter || 1;
+        year = superRejection.year || new Date().getFullYear();
+      }
+    } else if (adminCorrection) {
+      rejectionType = "Admin";
+      rejectionReason = adminCorrection.reason || "Correction requested";
+      rejectedAt = adminCorrection.at;
+      if (targetSubmission) {
+        quarter = targetSubmission.quarter;
+        year = targetSubmission.year;
+        achievedValue = targetSubmission.achievedValue;
+        documentsCount = targetSubmission.documents?.length || 0;
+        resubmissionCount = targetSubmission.resubmissionCount || 0;
+      } else {
+        quarter = adminCorrection.quarter || indicator.activeQuarter || 1;
+        year = adminCorrection.year || new Date().getFullYear();
+      }
+    }
+    // 3. Fallback: if submission is marked as Rejected but no history entry
+    else if (targetSubmission?.reviewStatus === "Rejected") {
+      rejectionType = "Admin";
+      rejectionReason = targetSubmission.adminComment || "No reason provided";
+      rejectedAt = targetSubmission.submittedAt;
+      quarter = targetSubmission.quarter;
+      year = targetSubmission.year;
+      achievedValue = targetSubmission.achievedValue;
+      documentsCount = targetSubmission.documents?.length || 0;
+      resubmissionCount = targetSubmission.resubmissionCount || 0;
+    }
+
+    if (!rejectionType) return null;
+
+    const submissionId = targetSubmission?.id || `history-${indicator.id}-${rejectedAt}`;
+    return {
+      id: submissionId,
+      indicatorId: indicator.id,
+      indicator,
+      rejectionType,
+      rejectionReason,
+      rejectedAt,
+      quarter,
+      year,
+      achievedValue,
+      documentsCount,
+      resubmissionCount,
+    };
+  };
+
+  // Build complete list using both rejectedByAdmin and all indicators
+  const rejectedSubmissions = useMemo<RejectedSubmission[]>(() => {
+    const results: RejectedSubmission[] = [];
+    const processed = new Set<string>();
+
+    // 1. Process rejectedByAdmin (trusted source for Admin rejections)
+    rejectedByAdmin.forEach((indicator) => {
+      processed.add(indicator.id);
+      const submissions = indicator.submissions || [];
+      if (submissions.length === 0) {
+        const extracted = extractRejection(indicator);
+        if (extracted) results.push(extracted);
+      } else {
+        submissions.forEach((sub) => {
+          const extracted = extractRejection(indicator, sub);
+          if (extracted) results.push(extracted);
+        });
       }
     });
 
-    // Sort by most recent first
-    return allRejected.sort(
-      (a, b) => new Date(b.rejectedAt || "").getTime() - new Date(a.rejectedAt || "").getTime()
+    // 2. Process all indicators for Super Admin rejections and any missed Admin ones
+    indicators.forEach((indicator) => {
+      if (processed.has(indicator.id)) return;
+
+      // Check indicator status for Super Admin rejection
+      if (indicator.status === "Rejected by Super Admin") {
+        const extracted = extractRejection(indicator);
+        if (extracted) results.push(extracted);
+        return;
+      }
+
+      // Check submissions for explicit Rejected status
+      const submissions = indicator.submissions || [];
+      submissions.forEach((sub) => {
+        if (sub.reviewStatus === "Rejected") {
+          const extracted = extractRejection(indicator, sub);
+          if (extracted) results.push(extracted);
+        }
+      });
+    });
+
+    // Sort by most recent rejection
+    return results.sort(
+      (a, b) => new Date(b.rejectedAt).getTime() - new Date(a.rejectedAt).getTime()
     );
   }, [indicators, rejectedByAdmin]);
 
-  // Filter based on search and type
+  // Apply search and type filters
   const filteredRejected = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
-    
-    return rejectedIndicators.filter((ind) => {
-      // Apply type filter
-      if (filterType === "admin" && ind.rejectionType !== "Admin") return false;
-      if (filterType === "super-admin" && ind.rejectionType !== "Super Admin") return false;
-      
-      // Apply search filter
+    return rejectedSubmissions.filter((item) => {
+      if (filterType === "admin" && item.rejectionType !== "Admin") return false;
+      if (filterType === "super-admin" && item.rejectionType !== "Super Admin") return false;
       if (!searchTerm) return true;
-      
+
+      const ind = item.indicator;
       return (
         ind.activityDescription?.toLowerCase().includes(searchLower) ||
         ind.objectiveTitle?.toLowerCase().includes(searchLower) ||
         ind.assigneeDisplayName?.toLowerCase().includes(searchLower) ||
-        ind.rejectionReason?.toLowerCase().includes(searchLower)
+        item.rejectionReason.toLowerCase().includes(searchLower)
       );
     });
-  }, [rejectedIndicators, searchTerm, filterType]);
+  }, [rejectedSubmissions, searchTerm, filterType]);
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
-    await dispatch(deleteSubmission({
-      submissionId: deleteTarget.submissionId,
-      indicatorId: deleteTarget.indicatorId,
-    }));
+    await dispatch(
+      deleteSubmission({
+        submissionId: deleteTarget.submissionId,
+        indicatorId: deleteTarget.indicatorId,
+      })
+    );
     setDeleteTarget(null);
-    // Refresh data
     dispatch(fetchIndicators());
     dispatch(fetchRejectedByAdmin());
   };
 
-  const formatDate = (dateStr?: string) => {
+  const formatDateTime = (dateStr?: string) => {
     if (!dateStr) return "N/A";
     const date = new Date(dateStr);
-    return isNaN(date.getTime()) ? "N/A" : date.toLocaleDateString();
+    if (isNaN(date.getTime())) return "N/A";
+    return date.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
   };
 
-  if (loading && rejectedIndicators.length === 0) {
+  if (loading && indicators.length === 0 && rejectedByAdmin.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#fdfcfc]">
         <Loader2 className="animate-spin text-red-900 mb-4" size={40} />
@@ -167,7 +254,7 @@ const SuperAdminRejected = () => {
               </span>
             </h1>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em] mt-2">
-              Complete record of all rejected submissions across all cycles
+              Complete audit trail of every rejected submission (Admin & Super Admin)
             </p>
           </div>
 
@@ -193,7 +280,7 @@ const SuperAdminRejected = () => {
                 : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
             }`}
           >
-            All ({rejectedIndicators.length})
+            All ({rejectedSubmissions.length})
           </button>
           <button
             onClick={() => setFilterType("admin")}
@@ -204,7 +291,7 @@ const SuperAdminRejected = () => {
             }`}
           >
             <AlertOctagon size={12} />
-            Rejected by Admin ({rejectedIndicators.filter(i => i.rejectionType === "Admin").length})
+            Admin Rejections ({rejectedSubmissions.filter((i) => i.rejectionType === "Admin").length})
           </button>
           <button
             onClick={() => setFilterType("super-admin")}
@@ -215,7 +302,7 @@ const SuperAdminRejected = () => {
             }`}
           >
             <ShieldAlert size={12} />
-            Rejected by Super Admin ({rejectedIndicators.filter(i => i.rejectionType === "Super Admin").length})
+            Super Admin Rejections ({rejectedSubmissions.filter((i) => i.rejectionType === "Super Admin").length})
           </button>
         </div>
       </div>
@@ -243,20 +330,22 @@ const SuperAdminRejected = () => {
                 No Rejections Found
               </h2>
               <p className="text-[10px] text-slate-400 mt-2">
-                All submissions have been properly reviewed and approved
+                Every submission has been properly reviewed and approved
               </p>
             </>
           )}
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredRejected.map((indicator) => {
-            const isAdminRejection = indicator.rejectionType === "Admin";
+          {filteredRejected.map((item) => {
+            const indicator = item.indicator;
+            const isAdminRejection = item.rejectionType === "Admin";
             const isAnnual = indicator.reportingCycle === "Annual";
-            
+            const isResubmission = item.resubmissionCount > 0;
+
             return (
               <div
-                key={indicator.id}
+                key={item.id}
                 className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden hover:shadow-lg ${
                   isAdminRejection
                     ? "border-orange-200 hover:border-orange-300"
@@ -267,7 +356,7 @@ const SuperAdminRejected = () => {
                   <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                     {/* Left Section - Main Info */}
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-3">
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${
                             isAdminRejection
@@ -275,14 +364,10 @@ const SuperAdminRejected = () => {
                               : "bg-red-100 text-red-700 border border-red-200"
                           }`}
                         >
-                          {isAdminRejection ? (
-                            <AlertOctagon size={10} />
-                          ) : (
-                            <ShieldAlert size={10} />
-                          )}
-                          Rejected by {indicator.rejectionType}
+                          {isAdminRejection ? <AlertOctagon size={10} /> : <ShieldAlert size={10} />}
+                          Rejected by {item.rejectionType}
                         </span>
-                        
+
                         <span
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[8px] font-black uppercase ${
                             isAnnual
@@ -291,14 +376,22 @@ const SuperAdminRejected = () => {
                           }`}
                         >
                           {isAnnual ? <CalendarDays size={10} /> : <Layers size={10} />}
-                          {indicator.reportingCycle}
+                          {indicator.reportingCycle} {!isAnnual && `Q${item.quarter}`}
                         </span>
+
+                        {isResubmission && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[8px] font-black uppercase bg-purple-50 text-purple-700 border border-purple-100">
+                            🔁 Resubmission #{item.resubmissionCount}
+                          </span>
+                        )}
                       </div>
 
                       <h3 className="text-base font-bold text-[#1d3331] leading-tight mb-2">
-                        {indicator.activityDescription || indicator.objectiveTitle || "Untitled Activity"}
+                        {indicator.activityDescription ||
+                          indicator.objectiveTitle ||
+                          "Untitled Activity"}
                       </h3>
-                      
+
                       <p className="text-[11px] text-slate-500 mb-3 line-clamp-2">
                         {indicator.instructions || "No additional instructions provided"}
                       </p>
@@ -313,34 +406,40 @@ const SuperAdminRejected = () => {
                         <div className="flex items-center gap-1.5">
                           <Clock size={12} className="text-slate-400" />
                           <span className="text-slate-500">
-                            Rejected: {formatDate(indicator.rejectedAt)}
+                            Rejected: {formatDateTime(item.rejectedAt)}
                           </span>
                         </div>
-                        {indicator.rejectedQuarter && (
+                        <div className="flex items-center gap-1.5">
+                          <CalendarDays size={12} className="text-slate-400" />
+                          <span className="text-slate-500">
+                            Q{item.quarter} {item.year}
+                          </span>
+                        </div>
+                        {item.documentsCount > 0 && (
                           <div className="flex items-center gap-1.5">
-                            <CalendarDays size={12} className="text-slate-400" />
+                            <FileSearch size={12} className="text-slate-400" />
                             <span className="text-slate-500">
-                              {indicator.rejectedQuarter}
+                              {item.documentsCount} document{item.documentsCount !== 1 ? "s" : ""}
                             </span>
                           </div>
                         )}
                       </div>
 
                       {/* Rejection Reason */}
-                      {indicator.rejectionReason && (
-                        <div className={`mt-4 p-3 rounded-xl border-l-4 ${
+                      <div
+                        className={`mt-4 p-3 rounded-xl border-l-4 ${
                           isAdminRejection
                             ? "bg-orange-50 border-orange-400"
                             : "bg-red-50 border-red-400"
-                        }`}>
-                          <p className="text-[9px] font-bold uppercase tracking-wider mb-1 text-slate-500">
-                            Rejection Reason:
-                          </p>
-                          <p className="text-[11px] font-medium text-slate-700">
-                            "{indicator.rejectionReason}"
-                          </p>
-                        </div>
-                      )}
+                        }`}
+                      >
+                        <p className="text-[9px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                          Rejection Reason:
+                        </p>
+                        <p className="text-[11px] font-medium text-slate-700">
+                          "{item.rejectionReason}"
+                        </p>
+                      </div>
                     </div>
 
                     {/* Right Section - Actions */}
@@ -351,19 +450,22 @@ const SuperAdminRejected = () => {
                       >
                         <Eye size={14} /> View Dossier
                       </button>
-                      
+
                       <button
                         onClick={() => {
-                          const submissionId = indicator.submissions?.[0]?.id;
-                          if (submissionId) {
+                          if (item.id && !item.id.startsWith("history-")) {
                             setDeleteTarget({
-                              submissionId,
+                              submissionId: item.id,
                               indicatorId: indicator.id,
                               title: indicator.activityDescription || "Submission",
                             });
+                          } else {
+                            alert(
+                              "This rejection record is based on history only; the underlying submission may have been deleted."
+                            );
                           }
                         }}
-                        disabled={!indicator.submissions?.length}
+                        disabled={item.id.startsWith("history-")}
                         className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-red-200 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:border-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Trash2 size={12} /> Delete Submission
@@ -393,13 +495,16 @@ const SuperAdminRejected = () => {
                     Delete Submission
                   </h3>
                   <p className="text-[11px] text-slate-400 font-medium leading-relaxed">
-                    This will permanently remove the submission and all its attached documents. This action cannot be undone.
+                    This will permanently remove the submission and all its attached documents.
+                    This action cannot be undone.
                   </p>
                 </div>
               </div>
 
               <div className="bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 mb-6">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Submission</p>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                  Submission
+                </p>
                 <p className="text-sm font-bold text-[#1d3331] line-clamp-2">{deleteTarget.title}</p>
               </div>
 

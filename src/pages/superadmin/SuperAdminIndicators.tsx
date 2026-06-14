@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+// SuperAdminIndicators.tsx
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil } from "lucide-react";
+import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, Search, Filter, ChevronDown, ChevronUp } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
@@ -12,7 +13,6 @@ import {
   unassignIndicator,
   fetchIndicatorCounts,
   optimisticUnassign,
-  //optimisticAssign,
   type IIndicator,
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
@@ -56,6 +56,13 @@ interface IndicatorSectionProps {
   activeFilter: string;
   optimisticUnassignId?: string | null;
   optimisticAssignId?: string | null;
+  // 🆕 Additional filters passed down for display (not used in filtering at this level)
+  searchTerm?: string;
+  statusFilter?: string;
+  assigneeFilter?: string;
+  cycleFilter?: string;
+  progressMin?: number;
+  progressMax?: number;
 }
 
 /* ─── SERVER COUNTS SHAPE ────────────────────────────────────────────────── */
@@ -101,6 +108,22 @@ const PERSPECTIVE_ORDER: Record<string, number> = {
   INNOVATION:             4,
   "INTERNAL PROCESS":     5,
 };
+
+// 🆕 Status options for filtering
+const STATUS_OPTIONS = [
+  { value: "ALL", label: "All statuses" },
+  { value: "Active", label: "Active" },
+  { value: "Completed", label: "Completed" },
+  { value: "Needs review", label: "Needs review" },
+  { value: "Rejected", label: "Rejected" },
+];
+
+// 🆕 Reporting cycle options
+const CYCLE_OPTIONS = [
+  { value: "ALL", label: "All cycles" },
+  { value: "Quarterly", label: "Quarterly" },
+  { value: "Annual", label: "Annual" },
+];
 
 /* ─── INDICATOR SECTION ──────────────────────────────────────────────────── */
 
@@ -152,11 +175,9 @@ const IndicatorSection = ({
           matchId(ind.activityId, activityId),
         );
         
-        // Check for optimistic updates
         const isOptimisticallyUnassigning = optimisticUnassignId === assignment?.id;
         const isOptimisticallyAssigning = optimisticAssignId === activityId;
         
-        // Skip showing assignment if it's being optimistically unassigned
         if (isOptimisticallyUnassigning) {
           assignment = undefined;
         }
@@ -194,7 +215,6 @@ const IndicatorSection = ({
               isOptimisticallyAssigning ? "opacity-60" : ""
             }`}
           >
-            {/* Activity description */}
             <td className="p-4 pl-12">
               <div className="flex items-start gap-3">
                 <span className="text-amber-400 text-lg leading-none">↳</span>
@@ -213,7 +233,6 @@ const IndicatorSection = ({
 
             <td />
 
-            {/* Weight */}
             <td className="p-4 text-center">
               {assignment ? (
                 <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-[11px] font-bold border border-amber-100">
@@ -224,12 +243,10 @@ const IndicatorSection = ({
               )}
             </td>
 
-            {/* Unit */}
             <td className="p-4 text-center text-[12px] font-bold text-gray-500">
               {assignment?.unit || "—"}
             </td>
 
-            {/* Assignee */}
             <td className="p-4">
               {isAssigned ? (
                 <div className="flex items-center gap-2">
@@ -247,7 +264,6 @@ const IndicatorSection = ({
               )}
             </td>
 
-            {/* Deadline */}
             <td className="p-4">
               {assignment?.deadline && isAssigned ? (
                 <div className="flex items-center gap-2 text-slate-500">
@@ -265,7 +281,6 @@ const IndicatorSection = ({
               )}
             </td>
 
-            {/* Progress */}
             <td className="p-4 text-center">
               <div className="flex items-center justify-center gap-2">
                 <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
@@ -280,7 +295,6 @@ const IndicatorSection = ({
               </div>
             </td>
 
-            {/* Status */}
             <td className="p-4">
               {isOptimisticallyAssigning ? (
                 <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[9px] font-bold uppercase border border-blue-100">
@@ -302,7 +316,6 @@ const IndicatorSection = ({
               )}
             </td>
 
-            {/* Actions */}
             <td className="p-4 text-center">
               {isAssigned && assignment && !isOptimisticallyAssigning ? (
                 <div className="flex items-center justify-center gap-1.5">
@@ -372,6 +385,40 @@ const SuperAdminIndicators = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [optimisticUnassignId, setOptimisticUnassignId] = useState<string | null>(null);
   const [optimisticAssignId, setOptimisticAssignId] = useState<string | null>(null);
+
+  // 🆕 Filter state
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [assigneeFilter, setAssigneeFilter] = useState("ALL");
+  const [cycleFilter, setCycleFilter] = useState("ALL");
+  const [progressMin, setProgressMin] = useState<number>(0);
+  const [progressMax, setProgressMax] = useState<number>(100);
+
+  // Debounce search input
+ const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+useEffect(() => {
+  if (debounceTimer.current) clearTimeout(debounceTimer.current);
+  debounceTimer.current = setTimeout(() => {
+    setDebouncedSearch(searchTerm);
+  }, 300);
+  return () => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+  };
+}, [searchTerm]);
+
+  // Reset all extra filters
+  const resetFilters = () => {
+    setSearchTerm("");
+    setDebouncedSearch("");
+    setStatusFilter("ALL");
+    setAssigneeFilter("ALL");
+    setCycleFilter("ALL");
+    setProgressMin(0);
+    setProgressMax(100);
+  };
 
   /* ── Server-side counts ── */
   const [serverCounts, setServerCounts] = useState<IIndicatorCounts | null>(null);
@@ -466,7 +513,6 @@ const SuperAdminIndicators = () => {
       console.error("Failed to refresh indicators:", error);
     } finally {
       setIsRefreshing(false);
-      // Clear optimistic states after refresh
       setOptimisticUnassignId(null);
       setOptimisticAssignId(null);
     }
@@ -496,7 +542,6 @@ const SuperAdminIndicators = () => {
   const handleUnassign = useCallback(async (indicatorId: string) => {
     if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
     
-    // Optimistic update
     setOptimisticUnassignId(indicatorId);
     dispatch(optimisticUnassign({ id: indicatorId }));
     
@@ -507,7 +552,6 @@ const SuperAdminIndicators = () => {
     } catch (error) {
       console.error("Unassign failed:", error);
       toast.error("Failed to unassign. Please try again.");
-      // Refresh to revert optimistic update
       await refreshAllLists();
     } finally {
       setOptimisticUnassignId(null);
@@ -523,7 +567,69 @@ const SuperAdminIndicators = () => {
     return map;
   }, [users]);
 
-  /* ── Filtered table data ── */
+  /* 🆕 Helper to check if an activity+indicator matches all filters */
+  const matchesAllFilters = useCallback((
+    activity: IActivity,
+    indicator: IIndicator | undefined,
+    objective: IObjective,
+    planPerspective: string
+  ): boolean => {
+    // Search term: matches activity description, objective title, perspective, assignee name, indicator title
+    if (debouncedSearch) {
+      const searchLower = debouncedSearch.toLowerCase();
+      const activityMatch = activity.description?.toLowerCase().includes(searchLower);
+      const objectiveMatch = objective.title?.toLowerCase().includes(searchLower);
+      const perspectiveMatch = planPerspective?.toLowerCase().includes(searchLower);
+      const assigneeName = indicator ? (userMap[indicator.assigneeId || '']?.name || indicator.assigneeDisplayName || '') : '';
+      const assigneeMatch = assigneeName.toLowerCase().includes(searchLower);
+      const indicatorTitleMatch = indicator?.activityDescription?.toLowerCase().includes(searchLower);
+      if (!(activityMatch || objectiveMatch || perspectiveMatch || assigneeMatch || indicatorTitleMatch)) {
+        return false;
+      }
+    }
+
+    // Status filter
+    if (statusFilter !== "ALL") {
+      if (!indicator) return false;
+      let indicatorStatus = "";
+      if (indicator.needsAction || indicator.status === "Awaiting Admin Approval" || indicator.status === "Awaiting Super Admin") {
+        indicatorStatus = "Needs review";
+      } else if (indicator.status === "Completed") {
+        indicatorStatus = "Completed";
+      } else if (indicator.status?.toLowerCase().includes("rejected")) {
+        indicatorStatus = "Rejected";
+      } else {
+        indicatorStatus = "Active";
+      }
+      if (indicatorStatus !== statusFilter) return false;
+    }
+
+    // Assignee filter
+    if (assigneeFilter !== "ALL") {
+      if (!indicator) return false;
+      const assigneeId = indicator.assigneeId;
+      if (String(assigneeId) !== String(assigneeFilter)) return false;
+    }
+
+    // Reporting cycle filter
+    if (cycleFilter !== "ALL") {
+      if (!indicator) return false;
+      if (indicator.reportingCycle !== cycleFilter) return false;
+    }
+
+    // Progress range filter
+    if (indicator) {
+      const progress = indicator.progress ?? 0;
+      if (progress < progressMin || progress > progressMax) return false;
+    } else {
+      // Unassigned activities have no progress – include only if progress range includes 0 (default)
+      if (progressMin > 0) return false;
+    }
+
+    return true;
+  }, [debouncedSearch, statusFilter, assigneeFilter, cycleFilter, progressMin, progressMax, userMap]);
+
+  /* ─── Filtered table data (integrates tab filter + extra filters) ─── */
   const filteredData = useMemo(() => {
     const getIndicatorsForFilter = () => {
       if (activeFilter === "ASSIGNED")   return assignedIndicators;
@@ -540,6 +646,7 @@ const SuperAdminIndicators = () => {
       return orderA - orderB;
     });
 
+    // Apply perspective filter from tabs (if activeFilter is a perspective name)
     if (activeFilter !== "ALL" && PERSPECTIVE_ORDER[activeFilter]) {
       basePlans = basePlans.filter((p) =>
         p?.perspective?.toUpperCase().includes(activeFilter),
@@ -548,34 +655,43 @@ const SuperAdminIndicators = () => {
 
     const currentIndicators = getIndicatorsForFilter();
 
+    // Build the tree with additional filters applied
     return basePlans
       .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
           .map((obj: IObjective): IObjectiveWithIndicators => {
-            const filteredActivities = getActivities(obj).filter(
-              (act: IActivity) => {
-                const actId = act.id;
-                const isActAssigned = (currentIndicators ?? []).some((ind) =>
-                  matchId(ind.activityId, actId),
-                );
+            // First filter activities by the tab filter (assigned/unassigned/review)
+            let filteredActivities = getActivities(obj).filter((act: IActivity) => {
+              const actId = act.id;
+              const indicator = (currentIndicators ?? []).find((ind) =>
+                matchId(ind.activityId, actId),
+              );
+              const hasIndicator = !!indicator;
 
-                if (activeFilter === "ASSIGNED")   return isActAssigned;
-                if (activeFilter === "UNASSIGNED") return !isActAssigned;
-                if (activeFilter === "REVIEW") {
-                  return (currentIndicators ?? []).some(
-                    (ind) =>
-                      matchId(ind.activityId, actId) &&
-                      (ind.needsAction ||
-                        ind.status === "Awaiting Admin Approval" ||
-                        ind.status === "Awaiting Super Admin"),
-                  );
-                }
-                return true;
-              },
-            );
+              if (activeFilter === "ASSIGNED")   return hasIndicator;
+              if (activeFilter === "UNASSIGNED") return !hasIndicator;
+              if (activeFilter === "REVIEW") {
+                return hasIndicator && (
+                  indicator.needsAction ||
+                  indicator.status === "Awaiting Admin Approval" ||
+                  indicator.status === "Awaiting Super Admin"
+                );
+              }
+              return true;
+            });
+
+            // Now apply extra filters (search, status, assignee, cycle, progress)
+            filteredActivities = filteredActivities.filter((act) => {
+              const actId = act.id;
+              const indicator = (currentIndicators ?? []).find((ind) =>
+                matchId(ind.activityId, actId),
+              );
+              return matchesAllFilters(act, indicator, obj, plan.perspective);
+            });
 
             const objectiveIndicators = (currentIndicators ?? []).filter((ind) =>
-              matchId(ind.objectiveId, obj.id),
+              matchId(ind.objectiveId, obj.id) && 
+              filteredActivities.some(act => matchId(act.id, ind.activityId))
             );
 
             return { ...obj, activities: filteredActivities, objectiveIndicators };
@@ -592,9 +708,10 @@ const SuperAdminIndicators = () => {
     unassignedIndicators,
     reviewIndicators,
     allIndicators,
+    matchesAllFilters,
   ]);
 
-  /* ── Tab counts ── */
+  /* ── Tab counts (still reflect server or raw counts, not affected by extra filters) ── */
   const counts = serverCounts ?? {
     total:        allIndicators.length,
     assigned:     assignedIndicators.length,
@@ -633,7 +750,6 @@ const SuperAdminIndicators = () => {
   ];
 
   /* ─── LOADING ─────────────────────────────────────────────────────────── */
-
   if (
     (plansLoading || indicatorsLoading || usersLoading) &&
     (plans ?? []).length === 0
@@ -649,12 +765,11 @@ const SuperAdminIndicators = () => {
   }
 
   /* ─── RENDER ──────────────────────────────────────────────────────────── */
-
   return (
     <div className="p-4 md:p-10 bg-[#fcfdfb] min-h-screen font-sans">
 
       {/* Page header */}
-      <div className="flex flex-col md:flex-row justify-between items-start mb-8 gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-serif font-bold text-[#1a3a32] tracking-tight">
             PMMU Indicators — 2025/2026
@@ -666,23 +781,134 @@ const SuperAdminIndicators = () => {
             {activeFilter === "ALL"        && `Monitoring ${counts.total} total activities`}
             {!["ASSIGNED", "UNASSIGNED", "REVIEW", "ALL"].includes(activeFilter) &&
               `Viewing ${activeFilter.toLowerCase()}`}
+            {(debouncedSearch || statusFilter !== "ALL" || assigneeFilter !== "ALL" || cycleFilter !== "ALL" || progressMin > 0 || progressMax < 100) && (
+              <span className="ml-2 text-amber-600">(filtered)</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2 items-center">
+          {/* 🆕 Toggle filters button */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:bg-gray-50 transition-all"
+          >
+            <Filter size={14} />
+            Filters
+            {showFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
           {(actionLoading || isRefreshing) && (
             <Loader2 className="animate-spin text-[#1a3a32]" size={20} />
           )}
           <button
             onClick={() => handleOpenAssign()}
             disabled={isRefreshing}
-            className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all shadow-md shadow-[#1a3a32]/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-[#1a3a32] text-white px-5 py-2.5 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:opacity-90 transition-all shadow-md shadow-[#1a3a32]/10 disabled:opacity-50"
           >
             <Plus size={16} strokeWidth={3} /> Assign KPI
           </button>
         </div>
       </div>
 
-      {/* Filter tabs */}
+      {/* 🆕 Expanded filter panel */}
+      {showFilters && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            {/* Search */}
+            <div className="col-span-1 md:col-span-2">
+              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Search</label>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Activity, objective, perspective, assignee..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[#1a3a32]"
+                />
+              </div>
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a3a32]"
+              >
+                {STATUS_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Assignee */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Assignee</label>
+              <select
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a3a32]"
+              >
+                <option value="ALL">All assignees</option>
+                {Object.values(userMap).map(user => (
+                  <option key={user.id} value={user.id}>{user.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Reporting Cycle */}
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Reporting Cycle</label>
+              <select
+                value={cycleFilter}
+                onChange={(e) => setCycleFilter(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a3a32]"
+              >
+                {CYCLE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Progress range */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-[10px] font-bold uppercase text-gray-500">Progress Range (%)</label>
+              <span className="text-xs text-gray-500">{progressMin}% – {progressMax}%</span>
+            </div>
+            <div className="flex gap-4 items-center">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={progressMin}
+                onChange={(e) => setProgressMin(Number(e.target.value))}
+                className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={progressMax}
+                onChange={(e) => setProgressMax(Number(e.target.value))}
+                className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+            <div className="flex justify-end mt-3">
+              <button
+                onClick={resetFilters}
+                className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1"
+              >
+                <X size={12} /> Clear all filters
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filter tabs (existing) */}
       <div className="flex overflow-x-auto pb-4 gap-2 mb-8 no-scrollbar">
         {filterTabs.map((f) => (
           <button
@@ -757,12 +983,14 @@ const SuperAdminIndicators = () => {
                     <div className="flex flex-col items-center gap-2">
                       <AlertCircle className="text-gray-200" size={48} />
                       <p className="text-gray-400 font-medium italic">
-                        {activeFilter === "ASSIGNED"   && "No assigned indicators found"}
-                        {activeFilter === "UNASSIGNED" && "No unassigned indicators found"}
-                        {activeFilter === "REVIEW"     && "No pending reviews"}
-                        {!["ASSIGNED", "UNASSIGNED", "REVIEW"].includes(activeFilter) &&
-                          "No indicators found"}
+                        No activities match the current filters.
                       </p>
+                      <button
+                        onClick={resetFilters}
+                        className="mt-2 text-sm text-[#1a3a32] underline"
+                      >
+                        Clear all filters
+                      </button>
                     </div>
                   </td>
                 </tr>

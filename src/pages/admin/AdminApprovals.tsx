@@ -1,3 +1,4 @@
+// AdminApprovals.tsx (updated)
 import { useEffect, useState, useMemo } from "react";
 import { 
   Search, 
@@ -16,6 +17,22 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchAdminApprovedIndicators } from "../../store/slices/adminIndicatorSlice";
 import ApprovedIndicatorModal from "./ApprovedIndicatorModal";
 
+// ─── Helper: format date/time ──────────────────────────────────────────────
+const formatDateTime = (dateString?: string): string => {
+  if (!dateString) return "—";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
+// ─── Component ──────────────────────────────────────────────────────────────
 const AdminApprovals = () => {
   const dispatch = useAppDispatch();
   const { approvedIndicators, isLoading } = useAppSelector((state) => state.adminIndicators);
@@ -27,13 +44,11 @@ const AdminApprovals = () => {
   }, [dispatch]);
 
   const approvedItems = useMemo(() => {
-    // No status filtering needed; the endpoint returns only indicators ever approved by admin
     return approvedIndicators.filter((ind) => {
       const matchesSearch = 
         ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
-      
       return matchesSearch;
     });
   }, [approvedIndicators, searchTerm]);
@@ -107,7 +122,7 @@ const AdminApprovals = () => {
       ) : (
         <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left min-w-[1300px]">
+            <table className="w-full border-collapse text-left min-w-[1400px]">
               <thead>
                 <tr className="bg-slate-50/50 border-b border-slate-100">
                   <th className="px-10 py-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Activity Dossier</th>
@@ -120,8 +135,19 @@ const AdminApprovals = () => {
                   const isCompleted = indicator.status === "Completed";
                   const history = indicator.reviewHistory || [];
                   
-                  const adminEntry = [...history].reverse().find(h => h.reviewerRole === 'admin' && h.action === "Verified");
-                  const superEntry = [...history].reverse().find(h => h.reviewerRole === 'superadmin' && h.action === "Approved");
+                  // Get the latest admin Verified entry (most recent 'at')
+                  const adminEntry = [...history]
+                    .filter(h => h.reviewerRole === 'admin' && h.action === "Verified")
+                    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+                  // Get the latest superadmin Approved entry
+                  const superEntry = [...history]
+                    .filter(h => h.reviewerRole === 'superadmin' && h.action === "Approved")
+                    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+                  
+                  const adminDate = adminEntry?.at;
+                  const superDate = superEntry?.at;
+                  const formattedAdmin = formatDateTime(adminDate);
+                  const formattedSuper = formatDateTime(superDate);
                   
                   return (
                     <tr 
@@ -162,14 +188,19 @@ const AdminApprovals = () => {
 
                       <td className="px-6 py-7">
                         <div className="flex items-center justify-center gap-4">
-                          {/* Registry Node */}
-                          <div className="flex flex-col items-center gap-2">
+                          {/* Registry Node (Admin) */}
+                          <div className="flex flex-col items-center gap-1">
                             <div className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all border ${
                               adminEntry ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-slate-50 border-slate-100 text-slate-300'
                             }`}>
                               <ShieldCheck size={16} />
                             </div>
                             <span className={`text-[8px] font-black uppercase tracking-widest ${adminEntry ? 'text-emerald-700' : 'text-slate-400'}`}>Registry</span>
+                            {adminEntry && (
+                              <span className="text-[7px] font-mono text-emerald-600/70 whitespace-nowrap">
+                                {formattedAdmin}
+                              </span>
+                            )}
                           </div>
 
                           {/* Connector */}
@@ -178,14 +209,19 @@ const AdminApprovals = () => {
                              <ArrowRight size={10} className={superEntry ? 'text-emerald-500' : 'text-slate-200'} />
                           </div>
 
-                          {/* Super Admin Node */}
-                          <div className="flex flex-col items-center gap-2">
+                          {/* Super Admin Node (Certification) */}
+                          <div className="flex flex-col items-center gap-1">
                             <div className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all border ${
                               superEntry ? 'bg-emerald-50 border-emerald-100 text-emerald-600 shadow-lg shadow-emerald-500/10' : 'bg-slate-50 border-slate-100 text-slate-300'
                             }`}>
                               <ShieldAlert size={16} />
                             </div>
                             <span className={`text-[8px] font-black uppercase tracking-widest ${superEntry ? 'text-emerald-700' : 'text-slate-400'}`}>Certification</span>
+                            {superEntry && (
+                              <span className="text-[7px] font-mono text-emerald-600/70 whitespace-nowrap">
+                                {formattedSuper}
+                              </span>
+                            )}
                           </div>
 
                           {/* Status Badge */}

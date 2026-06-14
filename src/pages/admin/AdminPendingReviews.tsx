@@ -1,3 +1,4 @@
+// AdminPendingReviews.tsx (updated)
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -14,6 +15,7 @@ import {
   FileText,
   Filter,
   X,
+  Clock,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -36,8 +38,14 @@ const hasResubmission = (indicator: IAdminIndicator): boolean =>
     (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
   );
 
-const getLatestSubmission = (indicator: IAdminIndicator) => {
-  const submissions = flattenSubmissions(indicator.submissions);
+/**
+ * Returns the latest pending submission (by submittedAt date).
+ * If none, returns null.
+ */
+const getLatestPendingSubmission = (indicator: IAdminIndicator) => {
+  const submissions = flattenSubmissions(indicator.submissions)
+    .filter((s) => s.reviewStatus === "Pending")
+    .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
   return submissions.length > 0 ? submissions[0] : null;
 };
 
@@ -68,6 +76,23 @@ const hasPendingDocuments = (indicator: IAdminIndicator): boolean => {
   return submissions
     .filter((s) => s.reviewStatus === "Pending")
     .some((s) => (s.documents?.length ?? 0) > 0);
+};
+
+/**
+ * Format submission date: "DD MMM YYYY, HH:mm"
+ */
+const formatSubmissionDate = (dateString?: string): string => {
+  if (!dateString) return "—";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -291,7 +316,7 @@ const AdminPendingReviews = () => {
       {/* TABLE */}
       <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1100px]">
+          <table className="w-full text-left border-collapse min-w-[1250px]">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-100">
                 <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
@@ -302,6 +327,10 @@ const AdminPendingReviews = () => {
                 </th>
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Performance
+                </th>
+                {/* NEW COLUMN: Submitted On */}
+                <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                  Submitted On
                 </th>
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Documents
@@ -318,7 +347,7 @@ const AdminPendingReviews = () => {
             <tbody className="divide-y divide-slate-50">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-32 text-center">
+                  <td colSpan={7} className="py-32 text-center">
                     <div className="flex flex-col items-center">
                       <CheckCircle2 size={48} className="text-emerald-100 mb-4" />
                       <p className="text-sm font-black text-[#1a3a32] uppercase tracking-widest">
@@ -342,10 +371,12 @@ const AdminPendingReviews = () => {
                   const isResub = hasResubmission(indicator);
                   const isAnnual = indicator.reportingCycle === "Annual";
                   const isOpening = openingId === indicator.id;
-                  const latestSubmission = getLatestSubmission(indicator);
+                  const latestPending = getLatestPendingSubmission(indicator);
+                  const submittedDate = latestPending?.submittedAt;
+                  const formattedDate = formatSubmissionDate(submittedDate);
                   const documentCount = getDocumentCount(indicator);
                   const documentNames = getDocumentNames(indicator);
-                  const latestDocuments = latestSubmission?.documents ?? [];
+                  const latestDocuments = latestPending?.documents ?? [];
 
                   return (
                     <tr
@@ -377,7 +408,7 @@ const AdminPendingReviews = () => {
                             </span>
                           </div>
                         </div>
-                      </td>
+                       </td>
 
                       {/* Cycle Type */}
                       <td className="px-6 py-6 text-center">
@@ -402,7 +433,7 @@ const AdminPendingReviews = () => {
                             </div>
                           )}
                         </div>
-                      </td>
+                       </td>
 
                       {/* Performance */}
                       <td className="px-6 py-6">
@@ -423,16 +454,41 @@ const AdminPendingReviews = () => {
                               style={{ width: `${indicator.progress}%` }}
                             />
                           </div>
-                          {latestSubmission && (
+                          {latestPending && (
                             <div className="mt-2 pt-2 border-t border-slate-100">
                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                Reported: {latestSubmission.achievedValue}{" "}
-                                {indicator.unit}
+                                Reported: {latestPending.achievedValue} {indicator.unit}
                               </p>
                             </div>
                           )}
                         </div>
-                      </td>
+                       </td>
+
+                      {/* NEW CELL: Submitted On */}
+                      <td className="px-6 py-6">
+                        <div className="flex flex-col gap-1.5">
+                          {submittedDate ? (
+                            <>
+                              <div className="flex items-center gap-1.5">
+                                <Clock size={12} className="text-slate-400" />
+                                <span className="text-[10px] font-mono font-medium text-slate-600">
+                                  {formattedDate}
+                                </span>
+                              </div>
+                              {latestPending?.resubmissionCount > 0 && (
+                                <div className="flex items-center gap-1 text-amber-600 bg-amber-50 w-fit px-2 py-0.5 rounded-full">
+                                  <History size={10} />
+                                  <span className="text-[8px] font-black uppercase">
+                                    Resubmission #{latestPending.resubmissionCount}
+                                  </span>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-[9px] text-slate-400 italic">—</span>
+                          )}
+                        </div>
+                       </td>
 
                       {/* Documents */}
                       <td className="px-6 py-6">
@@ -477,7 +533,7 @@ const AdminPendingReviews = () => {
                               </div>
                             )}
                         </div>
-                      </td>
+                       </td>
 
                       {/* Status */}
                       <td className="px-6 py-6">
@@ -496,7 +552,7 @@ const AdminPendingReviews = () => {
                             </span>
                           </div>
                         )}
-                      </td>
+                       </td>
 
                       {/* Action */}
                       <td className="px-8 py-6 text-right">
@@ -521,13 +577,13 @@ const AdminPendingReviews = () => {
                             </>
                           )}
                         </button>
-                      </td>
+                       </td>
                     </tr>
                   );
                 })
               )}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
     </div>

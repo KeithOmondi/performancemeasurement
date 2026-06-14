@@ -1,3 +1,28 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   indicatorSlice.ts
+   Redux slice for the indicator domain (super-admin surface).
+
+   Endpoints consumed  (all under /indicators, all require superadmin role):
+     GET    /                          getAllIndicators
+     POST   /                          createIndicator
+     GET    /assigned                  getAssignedIndicators
+     GET    /unassigned                getUnassignedIndicators
+     GET    /review                    getReviewIndicators
+     GET    /counts                    getIndicatorCounts
+     GET    /rejected-by-admin         getRejectedByAdmin
+     GET    /approved-by-superadmin    getSuperAdminApprovedIndicators
+     GET    /submissions/queue         getAllSubmissions  (queue)
+     DELETE /submissions/:id           deleteSubmission
+     GET    /:id                       getIndicatorById
+     PATCH  /:id                       updateIndicator
+     DELETE /:id                       deleteIndicator
+     PATCH  /:id/review                superAdminReviewProcess
+     PATCH  /:id/reopen                reopenIndicator
+     PATCH  /:id/assign                assignIndicator
+     DELETE /:id/unassign              unassignIndicator
+     GET    /:id/partial-approvals     getPartialApprovalsHistory
+───────────────────────────────────────────────────────────────────────────── */
+
 import {
   createSlice,
   createAsyncThunk,
@@ -6,170 +31,68 @@ import {
 import { apiPrivate } from "../../api/axios";
 import axios from "axios";
 
-/* ─── TYPES ──────────────────────────────────────────────────────────── */
+import type {
+  IIndicator,
+  IQueueItem,
+  IIndicatorCounts,
+  IPartialApproval,
+  ISuperAdminReviewPayload,
+  IAssignPayload,
+  ICreateIndicatorPayload,
+  IUpdateIndicatorPayload,
+} from "../../types/Indicatortypes";
 
-export interface IDocument {
-  id?: string;
-  submissionId?: string;
-  evidenceUrl: string;
-  evidencePublicId: string;
-  fileType: "image" | "video" | "raw";
-  fileName?: string;
-  uploadedAt?: string;
-  description?: string;
-  status?: "Accepted" | "Rejected" | "Pending";
-}
+/* ─── RE-EXPORT TYPES (so existing imports don't break) ─────────────────── */
+export type {
+  IIndicator,
+  IDocument,
+  ISubmission,
+  IReviewHistory,
+  IPartialApproval,
+  IQueueItem,
+  IIndicatorCounts,
+  ISuperAdminReviewPayload,
+  IAssignPayload,
+  ICreateIndicatorPayload,
+  IUpdateIndicatorPayload,
+  IndicatorStatus,
+  ReviewAction,
+  ReviewerRole,
+  AssignmentType,
+  ReportingCycle,
+  DocumentStatus,
+  SubmissionReviewStatus,
+  Quarter,
+} from "../../types/Indicatortypes";
 
-export interface ISubmission {
-  id: string;
-  indicatorId?: string;
-  quarter: 1 | 2 | 3 | 4 | 0;
-  year: number;
-  documents: IDocument[];
-  notes: string;
-  adminDescriptionEdit?: string;
-  submittedAt: string;
-  achievedValue: number;
-  isReviewed: boolean;
-  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected" | "Partially Approved";
-  adminComment?: string;
-  resubmissionCount: number;
-  approvedAmount?: number;
-  reviewedAt?: string;
-}
-
-export interface IReviewHistory {
-  id?: string;
-  action:
-    | "Approved"
-    | "Rejected"
-    | "Verified"
-    | "Resubmitted"
-    | "Correction Requested"
-    | "Partially Approved";
-  reason: string;
-  reviewerRole: "admin" | "superadmin" | "user";
-  reviewedBy: string;
-  reviewedByName?: string;
-  at: string;
-  nextDeadline?: string;
-  approvedAmount?: number;
-  isPartial?: boolean;
-  quarter?: number;
-  year?: number;
-}
-
-export type PerformanceStatus =
-  | "Pending"
-  | "Awaiting Admin Approval"
-  | "Rejected by Admin"
-  | "Awaiting Super Admin"
-  | "Rejected by Super Admin"
-  | "Completed"
-  | "Unassigned";
-
-export interface IIndicator {
-  id: string;
-  status: PerformanceStatus;
-  weight: number;
-  unit: string;
-  target: number;
-  progress: number;
-  deadline: string;
-  instructions?: string;
-  currentTotalAchieved: number;
-  activeQuarter: 1 | 2 | 3 | 4;
-  reportingCycle: "Quarterly" | "Annual";
-  assignmentType: "User" | "Team";
-  assignee: string;
-  assigneeId?: string;
-  assignedBy: string;
-  strategicPlanId: string;
-  objectiveId: string;
-  activityId: string;
-  assigneeDisplayName?: string;
-  assignedByName?: string;
-  perspective?: string;
-  objectiveTitle?: string;
-  activityDescription?: string;
-  assigneePjNumber?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  submissions?: ISubmission[];
-  reviewHistory?: IReviewHistory[];
-  needsAction?: boolean;
-  isOverdue?: boolean;
-  adminOverallComments?: string;
-  assignedDate?: string | null;
-  completionPercentage?: number;
-}
-
-export interface IQueueItem {
-  id: string;
-  submissionId: string;
-  indicatorId: string;
-  indicatorTitle: string;
-  submittedBy: string;
-  year?: number;
-  submittedOn: string;
-  status: string;
-  quarter: string;
-  achievedValue: number;
-  isReviewed: boolean;
-  reviewStatus: string;
-  adminComment?: string;
-  notes?: string;
-  documentsCount: number;
-  documents: IDocument[];
-}
-
-export interface IPartialApproval {
-  id: string;
-  action: string;
-  reason: string;
-  approvedAmount: number;
-  quarter: number;
-  year: number;
-  approvedAt: string;
-  approvedBy: string;
-  isPartial: boolean;
-}
-
-export interface ISuperAdminReviewPayload {
-  decision: "Approved" | "Rejected";
-  reason?: string;
-  progressOverride: number;
-  isPartialApproval?: boolean;
-  year?: number;
-  quarter?: number;
-}
-
-export interface ICounts {
-  total: number;
-  assigned: number;
-  unassigned: number;
-  review: number;
-  overdue: number;
-  perspectives: Record<string, number>;
-}
-
-/* ─── STATE ──────────────────────────────────────────────────────────── */
+/* ─── STATE ──────────────────────────────────────────────────────────────── */
 
 interface IndicatorState {
+  /** Full unfiltered list returned by GET / */
   indicators: IIndicator[];
+  /** Derived: indicators with an assignee */
   assignedIndicators: IIndicator[];
+  /** Derived: indicators without an assignee */
   unassignedIndicators: IIndicator[];
+  /** Derived: indicators awaiting any review step */
   reviewIndicators: IIndicator[];
+  /** Currently open indicator (detail view) */
   selectedIndicator: IIndicator | null;
+  /** Indicators that have ever been rejected/returned */
   rejectedByAdmin: IIndicator[];
+  /** Indicators approved by super admin */
+  superAdminApprovedIndicators: IIndicator[];
+  /** Submissions queue */
   queue: IQueueItem[];
+  /** Partial approval history for the selected indicator */
+  partialApprovals: IPartialApproval[];
+  /** Server-side counts */
+  counts: IIndicatorCounts | null;
+  /* Loading flags */
   loading: boolean;
   detailLoading: boolean;
   actionLoading: boolean;
   error: string | null;
-  counts: ICounts | null;
-  superAdminApprovedIndicators: IIndicator[];
-  partialApprovals: IPartialApproval[];
 }
 
 const initialState: IndicatorState = {
@@ -179,119 +102,118 @@ const initialState: IndicatorState = {
   reviewIndicators: [],
   selectedIndicator: null,
   rejectedByAdmin: [],
+  superAdminApprovedIndicators: [],
   queue: [],
+  partialApprovals: [],
+  counts: null,
   loading: false,
   detailLoading: false,
   actionLoading: false,
   error: null,
-  counts: null,
-  superAdminApprovedIndicators: [],
-  partialApprovals: [],
 };
 
-/* ─── HELPERS ─────────────────────────────────────────────────────────── */
+/* ─── HELPERS ────────────────────────────────────────────────────────────── */
 
-const getErrorMessage = (error: unknown): string => {
+const extractError = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
     return error.response?.data?.message ?? error.message;
   }
-  if (error instanceof Error) {
-    return error.message;
-  }
+  if (error instanceof Error) return error.message;
   return "An unexpected error occurred";
 };
 
-const categorizeIndicators = (indicators: IIndicator[]) => {
+/**
+ * Derive the three categorised lists from the master indicators array.
+ * Called any time `state.indicators` changes.
+ */
+const deriveCategories = (indicators: IIndicator[]) => {
   const assigned: IIndicator[] = [];
   const unassigned: IIndicator[] = [];
   const review: IIndicator[] = [];
 
-  indicators.forEach((indicator) => {
-    // ✅ Fix: Check assigneeId instead of assignee string
-    const hasAssignee = indicator.assigneeId && indicator.assigneeId.trim() !== "";
-    
+  for (const ind of indicators) {
+    const hasAssignee = !!ind.assigneeId?.trim();
+
     if (hasAssignee) {
-      assigned.push(indicator);
+      assigned.push(ind);
     } else {
-      unassigned.push(indicator);
+      unassigned.push(ind);
     }
 
     if (
-      indicator.status === "Awaiting Admin Approval" ||
-      indicator.status === "Awaiting Super Admin" ||
-      indicator.submissions?.some((s) => s.reviewStatus === "Pending")
+      ind.status === "Awaiting Admin Approval" ||
+      ind.status === "Awaiting Super Admin" ||
+      ind.submissions?.some((s) => s.reviewStatus === "Pending")
     ) {
-      review.push(indicator);
+      review.push(ind);
     }
-  });
+  }
 
   return { assigned, unassigned, review };
 };
 
-const syncCategorizedLists = (state: IndicatorState) => {
-  const { assigned, unassigned, review } = categorizeIndicators(
-    state.indicators
-  );
+const applyCategories = (state: IndicatorState) => {
+  const { assigned, unassigned, review } = deriveCategories(state.indicators);
   state.assignedIndicators = assigned;
   state.unassignedIndicators = unassigned;
   state.reviewIndicators = review;
 };
 
-const upsertIndicator = (state: IndicatorState, updated: IIndicator) => {
-  const replace = (list: IIndicator[]) => {
-    const idx = list.findIndex((i) => String(i.id) === String(updated.id));
-    if (idx !== -1) {
-      list[idx] = updated;
-    } else {
-      list.push(updated);
-    }
+/**
+ * Upsert a single indicator into every list it belongs to.
+ * Also refreshes derived categories afterwards.
+ */
+const upsertOne = (state: IndicatorState, updated: IIndicator) => {
+  const replaceIn = (list: IIndicator[]) => {
+    const idx = list.findIndex((i) => i.id === updated.id);
+    if (idx !== -1) list[idx] = updated;
+    else list.push(updated);
   };
 
-  replace(state.indicators);
-  replace(state.rejectedByAdmin);
-  replace(state.assignedIndicators);
-  replace(state.unassignedIndicators);
-  replace(state.reviewIndicators);
-  replace(state.superAdminApprovedIndicators);
+  replaceIn(state.indicators);
+  replaceIn(state.rejectedByAdmin);
+  replaceIn(state.superAdminApprovedIndicators);
 
-  if (
-    state.selectedIndicator &&
-    String(state.selectedIndicator.id) === String(updated.id)
-  ) {
-    state.selectedIndicator = updated;
+  if (state.selectedIndicator?.id === updated.id) {
+    // Preserve relations that are only loaded via fetchById
+    state.selectedIndicator = {
+      submissions: state.selectedIndicator.submissions,
+      reviewHistory: state.selectedIndicator.reviewHistory,
+      ...updated,
+    };
   }
 
-  syncCategorizedLists(state);
+  applyCategories(state);
 };
 
-const removeIndicatorById = (state: IndicatorState, id: string) => {
-  state.indicators = state.indicators.filter((i) => String(i.id) !== id);
-  state.rejectedByAdmin = state.rejectedByAdmin.filter(
-    (i) => String(i.id) !== id
-  );
-  state.queue = state.queue.filter((q) => String(q.indicatorId) !== id);
-  state.assignedIndicators = state.assignedIndicators.filter(
-    (i) => String(i.id) !== id
-  );
-  state.unassignedIndicators = state.unassignedIndicators.filter(
-    (i) => String(i.id) !== id
-  );
-  state.reviewIndicators = state.reviewIndicators.filter(
-    (i) => String(i.id) !== id
-  );
-  state.superAdminApprovedIndicators = state.superAdminApprovedIndicators.filter(
-    (i) => String(i.id) !== id
-  );
+/**
+ * Remove a single indicator from every list.
+ */
+const removeOne = (state: IndicatorState, id: string) => {
+  const without = (list: IIndicator[]) => list.filter((i) => i.id !== id);
 
-  if (
-    state.selectedIndicator &&
-    String(state.selectedIndicator.id) === id
-  ) {
+  state.indicators = without(state.indicators);
+  state.rejectedByAdmin = without(state.rejectedByAdmin);
+  state.superAdminApprovedIndicators = without(state.superAdminApprovedIndicators);
+  state.assignedIndicators = without(state.assignedIndicators);
+  state.unassignedIndicators = without(state.unassignedIndicators);
+  state.reviewIndicators = without(state.reviewIndicators);
+  state.queue = state.queue.filter((q) => q.indicatorId !== id);
+
+  if (state.selectedIndicator?.id === id) {
     state.selectedIndicator = null;
   }
 };
 
-/* ─── THUNKS ──────────────────────────────────────────────────────────── */
+/** Whether an indicator belongs in the rejection registry */
+const isRejected = (indicator: IIndicator): boolean =>
+  indicator.status === "Rejected by Admin" ||
+  indicator.status === "Rejected by Super Admin" ||
+  indicator.status === "Correction Needed";
+
+/* ─── THUNKS ─────────────────────────────────────────────────────────────── */
+
+// ── Lists ──────────────────────────────────────────────────────────────────
 
 export const fetchIndicators = createAsyncThunk(
   "indicators/fetchAll",
@@ -300,7 +222,7 @@ export const fetchIndicators = createAsyncThunk(
       const res = await apiPrivate.get("/indicators");
       return res.data.data as IIndicator[];
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -312,7 +234,7 @@ export const fetchAssignedIndicators = createAsyncThunk(
       const res = await apiPrivate.get("/indicators/assigned");
       return res.data.data as IIndicator[];
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -324,7 +246,7 @@ export const fetchUnassignedIndicators = createAsyncThunk(
       const res = await apiPrivate.get("/indicators/unassigned");
       return res.data.data as IIndicator[];
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -336,31 +258,7 @@ export const fetchReviewIndicators = createAsyncThunk(
       const res = await apiPrivate.get("/indicators/review");
       return res.data.data as IIndicator[];
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
-  }
-);
-
-export const fetchIndicatorById = createAsyncThunk(
-  "indicators/fetchById",
-  async (id: string, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get(`/indicators/${id}`);
-      return res.data.data as IIndicator;
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
-  }
-);
-
-export const fetchSubmissionsQueue = createAsyncThunk(
-  "indicators/fetchQueue",
-  async (_, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get("/indicators/submissions/queue");
-      return res.data.data as IQueueItem[];
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -372,7 +270,21 @@ export const fetchRejectedByAdmin = createAsyncThunk(
       const res = await apiPrivate.get("/indicators/rejected-by-admin");
       return res.data.data as IIndicator[];
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+export const fetchSuperAdminApprovedIndicators = createAsyncThunk(
+  "indicators/fetchSuperAdminApproved",
+  async (includePending: boolean, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get("/indicators/approved-by-superadmin", {
+        params: { includePending: String(includePending) },
+      });
+      return res.data.data as IIndicator[];
+    } catch (err) {
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -382,50 +294,36 @@ export const fetchIndicatorCounts = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const res = await apiPrivate.get("/indicators/counts");
-      return res.data.data as ICounts;
+      return res.data.data as IIndicatorCounts;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
 
-export const fetchSuperAdminApprovedIndicators = createAsyncThunk(
-  "indicators/fetchSuperAdminApproved",
-  async (_, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get("/indicators/approved-by-superadmin", {
-        params: { includePending: "true" }
-      });
-      return res.data.data as IIndicator[];
-    } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
-    }
-  }
-);
+// ── Single indicator ───────────────────────────────────────────────────────
 
-export const fetchPartialApprovalsHistory = createAsyncThunk(
-  "indicators/fetchPartialApprovals",
-  async (indicatorId: string, { rejectWithValue }) => {
+export const fetchIndicatorById = createAsyncThunk(
+  "indicators/fetchById",
+  async (id: string, { rejectWithValue }) => {
     try {
-      const res = await apiPrivate.get(`/indicators/${indicatorId}/partial-approvals`);
-      return { indicatorId, data: res.data.data as IPartialApproval[] };
+      const res = await apiPrivate.get(`/indicators/${id}`);
+      return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
 
 export const createIndicator = createAsyncThunk(
   "indicators/create",
-  async (data: Partial<IIndicator>, { rejectWithValue, dispatch }) => {
+  async (payload: ICreateIndicatorPayload, { rejectWithValue, dispatch }) => {
     try {
-      const res = await apiPrivate.post("/indicators", data);
-      const result = res.data.data as IIndicator;
-      // Refresh counts after creation
-      await dispatch(fetchIndicatorCounts());
-      return result;
+      const res = await apiPrivate.post("/indicators", payload);
+      dispatch(fetchIndicatorCounts());
+      return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -433,17 +331,15 @@ export const createIndicator = createAsyncThunk(
 export const updateIndicator = createAsyncThunk(
   "indicators/update",
   async (
-    arg: { id: string; data: Partial<IIndicator> },
+    arg: { id: string; data: IUpdateIndicatorPayload },
     { rejectWithValue, dispatch }
   ) => {
     try {
       const res = await apiPrivate.patch(`/indicators/${arg.id}`, arg.data);
-      const result = res.data.data as IIndicator;
-      // Refresh counts after update
-      await dispatch(fetchIndicatorCounts());
-      return result;
+      dispatch(fetchIndicatorCounts());
+      return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -453,30 +349,29 @@ export const deleteIndicator = createAsyncThunk(
   async (id: string, { rejectWithValue, dispatch }) => {
     try {
       await apiPrivate.delete(`/indicators/${id}`);
-      // Refresh counts after delete
-      await dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicatorCounts());
       return id;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
 
+// ── Assignment ─────────────────────────────────────────────────────────────
+
 export const assignIndicator = createAsyncThunk(
   "indicators/assign",
-  async (arg: { id: string; assigneeId: string; assigneeModel?: string }, { rejectWithValue, dispatch }) => {
+  async (arg: IAssignPayload, { rejectWithValue, dispatch }) => {
     try {
       const res = await apiPrivate.patch(`/indicators/${arg.id}/assign`, {
         assigneeId: arg.assigneeId,
-        assigneeModel: arg.assigneeModel || "User"
+        assigneeModel: arg.assigneeModel ?? "User",
       });
-      const result = res.data.data as IIndicator;
-      // Refresh counts and lists after assignment
-      await dispatch(fetchIndicatorCounts());
-      await dispatch(fetchIndicators());
-      return result;
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -486,16 +381,16 @@ export const unassignIndicator = createAsyncThunk(
   async (id: string, { rejectWithValue, dispatch }) => {
     try {
       const res = await apiPrivate.delete(`/indicators/${id}/unassign`);
-      const result = res.data.data as IIndicator;
-      // Refresh counts and lists after unassignment
-      await dispatch(fetchIndicatorCounts());
-      await dispatch(fetchIndicators());
-      return result;
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
+
+// ── Review & reopen ────────────────────────────────────────────────────────
 
 export const superAdminReview = createAsyncThunk(
   "indicators/superAdminReview",
@@ -508,14 +403,45 @@ export const superAdminReview = createAsyncThunk(
         `/indicators/${arg.id}/review`,
         arg.reviewData
       );
-      
-      await dispatch(fetchPartialApprovalsHistory(arg.id));
-      await dispatch(fetchIndicatorCounts());
-      await dispatch(fetchIndicators());
-      
+      dispatch(fetchPartialApprovalsHistory(arg.id));
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
       return res.data.data as IIndicator;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+export const reopenIndicator = createAsyncThunk(
+  "indicators/reopen",
+  async (
+    arg: { id: string; newDeadline: string; reason?: string },
+    { rejectWithValue, dispatch }
+  ) => {
+    try {
+      const res = await apiPrivate.patch(`/indicators/${arg.id}/reopen`, {
+        newDeadline: arg.newDeadline,
+        reason: arg.reason,
+      });
+      dispatch(fetchIndicatorCounts());
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+// ── Submissions ────────────────────────────────────────────────────────────
+
+export const fetchSubmissionsQueue = createAsyncThunk(
+  "indicators/fetchQueue",
+  async (_, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get("/indicators/submissions/queue");
+      return res.data.data as IQueueItem[];
+    } catch (err) {
+      return rejectWithValue(extractError(err));
     }
   }
 );
@@ -528,197 +454,332 @@ export const deleteSubmission = createAsyncThunk(
   ) => {
     try {
       await apiPrivate.delete(`/indicators/submissions/${arg.submissionId}`);
-      await dispatch(fetchIndicatorById(arg.indicatorId));
+      // Refresh the parent indicator so the detail view is up-to-date
+      dispatch(fetchIndicatorById(arg.indicatorId));
       return arg;
     } catch (err) {
-      return rejectWithValue(getErrorMessage(err));
+      return rejectWithValue(extractError(err));
     }
   }
 );
 
-/* ─── SLICE ───────────────────────────────────────────────────────────── */
+// ── Partial approvals ──────────────────────────────────────────────────────
+
+export const fetchPartialApprovalsHistory = createAsyncThunk(
+  "indicators/fetchPartialApprovals",
+  async (indicatorId: string, { rejectWithValue }) => {
+    try {
+      const res = await apiPrivate.get(
+        `/indicators/${indicatorId}/partial-approvals`
+      );
+      return res.data.data as IPartialApproval[];
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+/* ─── SLICE ──────────────────────────────────────────────────────────────── */
 
 const indicatorSlice = createSlice({
   name: "indicators",
   initialState,
   reducers: {
-    clearIndicatorError: (state) => {
+    clearIndicatorError(state) {
       state.error = null;
     },
-    clearSelectedIndicator: (state) => {
+    clearSelectedIndicator(state) {
       state.selectedIndicator = null;
     },
-    refreshCategorizedLists: (state) => {
-      syncCategorizedLists(state);
-    },
-    clearPartialApprovals: (state) => {
+    clearPartialApprovals(state) {
       state.partialApprovals = [];
     },
-    // ✅ NEW - Optimistic update for assign/unassign
-    optimisticAssign: (state, action: PayloadAction<{ id: string; assigneeId: string; assigneeDisplayName: string }>) => {
+    refreshCategorizedLists(state) {
+      applyCategories(state);
+    },
+
+    /**
+     * Optimistically mark an indicator as assigned in the UI before the
+     * server round-trip completes. Roll back automatically if the thunk rejects.
+     */
+    optimisticAssign(
+      state,
+      action: PayloadAction<{
+        id: string;
+        assigneeId: string;
+        assigneeDisplayName: string;
+      }>
+    ) {
       const { id, assigneeId, assigneeDisplayName } = action.payload;
-      const indicator = state.indicators.find(i => i.id === id);
+      const indicator = state.indicators.find((i) => i.id === id);
       if (indicator) {
         indicator.assigneeId = assigneeId;
         indicator.assignee = assigneeId;
         indicator.assigneeDisplayName = assigneeDisplayName;
         indicator.status = "Pending";
       }
-      syncCategorizedLists(state);
+      applyCategories(state);
     },
-    optimisticUnassign: (state, action: PayloadAction<{ id: string }>) => {
-      const { id } = action.payload;
-      const indicator = state.indicators.find(i => i.id === id);
+
+    /**
+     * Optimistically clear an indicator's assignee before the server
+     * round-trip completes.
+     */
+    optimisticUnassign(state, action: PayloadAction<{ id: string }>) {
+      const indicator = state.indicators.find(
+        (i) => i.id === action.payload.id
+      );
       if (indicator) {
         indicator.assigneeId = undefined;
         indicator.assignee = "";
         indicator.assigneeDisplayName = undefined;
         indicator.status = "Unassigned";
       }
-      syncCategorizedLists(state);
+      applyCategories(state);
     },
   },
+
   extraReducers: (builder) => {
-    // ── FETCH ALL ──────────────────────────────────────────────────────
+    /* ── fetchIndicators ── */
     builder
       .addCase(fetchIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchIndicators.fulfilled, (state, action) => {
+      .addCase(fetchIndicators.fulfilled, (state, { payload }) => {
         state.loading = false;
-        state.indicators = action.payload;
-        syncCategorizedLists(state);
+        state.indicators = payload;
+        applyCategories(state);
       })
-      .addCase(fetchIndicators.rejected, (state, action) => {
+      .addCase(fetchIndicators.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = payload as string;
       });
 
-    // ── FETCH ASSIGNED ─────────────────────────────────────────────────
-    builder.addCase(fetchAssignedIndicators.fulfilled, (state, action) => {
-      state.assignedIndicators = action.payload;
+    /* ── fetchAssignedIndicators ── */
+    builder.addCase(fetchAssignedIndicators.fulfilled, (state, { payload }) => {
+      state.assignedIndicators = payload;
     });
 
-    // ── FETCH UNASSIGNED ───────────────────────────────────────────────
-    builder.addCase(fetchUnassignedIndicators.fulfilled, (state, action) => {
-      state.unassignedIndicators = action.payload;
+    /* ── fetchUnassignedIndicators ── */
+    builder.addCase(
+      fetchUnassignedIndicators.fulfilled,
+      (state, { payload }) => {
+        state.unassignedIndicators = payload;
+      }
+    );
+
+    /* ── fetchReviewIndicators ── */
+    builder.addCase(fetchReviewIndicators.fulfilled, (state, { payload }) => {
+      state.reviewIndicators = payload;
     });
 
-    // ── FETCH REVIEW ───────────────────────────────────────────────────
-    builder.addCase(fetchReviewIndicators.fulfilled, (state, action) => {
-      state.reviewIndicators = action.payload;
+    /* ── fetchRejectedByAdmin ── */
+    builder.addCase(fetchRejectedByAdmin.fulfilled, (state, { payload }) => {
+      state.rejectedByAdmin = payload;
     });
 
-    // ── FETCH BY ID ────────────────────────────────────────────────────
-    builder
-      .addCase(fetchIndicatorById.pending, (state) => {
-        state.detailLoading = true;
-        state.error = null;
-      })
-      .addCase(fetchIndicatorById.fulfilled, (state, action) => {
-        state.detailLoading = false;
-        if (
-          !state.selectedIndicator ||
-          state.selectedIndicator.id !== action.payload.id
-        ) {
-          state.selectedIndicator = action.payload;
-        }
-        upsertIndicator(state, action.payload);
-      })
-      .addCase(fetchIndicatorById.rejected, (state, action) => {
-        state.detailLoading = false;
-        state.error = action.payload as string;
-      });
-
-    // ── QUEUE & REJECTED LISTS ─────────────────────────────────────────
-    builder
-      .addCase(fetchSubmissionsQueue.fulfilled, (state, action) => {
-        state.queue = action.payload;
-      })
-      .addCase(fetchRejectedByAdmin.fulfilled, (state, action) => {
-        state.rejectedByAdmin = action.payload;
-      });
-
-    // ── FETCH COUNTS ───────────────────────────────────────────────────
-    builder
-      .addCase(fetchIndicatorCounts.pending, () => {})
-      .addCase(fetchIndicatorCounts.fulfilled, (state, action) => {
-        state.counts = action.payload;
-      })
-      .addCase(fetchIndicatorCounts.rejected, (state, action) => {
-        console.error("Failed to fetch indicator counts:", action.payload);
-        state.counts = null;
-      });
-
-    // ── FETCH SUPER ADMIN APPROVED ─────────────────────────────────────
+    /* ── fetchSuperAdminApprovedIndicators ── */
     builder
       .addCase(fetchSuperAdminApprovedIndicators.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(fetchSuperAdminApprovedIndicators.fulfilled, (state, action) => {
-        state.loading = false;
-        state.superAdminApprovedIndicators = action.payload;
-      })
-      .addCase(fetchSuperAdminApprovedIndicators.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload as string;
-      });
+      .addCase(
+        fetchSuperAdminApprovedIndicators.fulfilled,
+        (state, { payload }) => {
+          state.loading = false;
+          state.superAdminApprovedIndicators = payload;
+        }
+      )
+      .addCase(
+        fetchSuperAdminApprovedIndicators.rejected,
+        (state, { payload }) => {
+          state.loading = false;
+          state.error = payload as string;
+        }
+      );
 
-    // ── FETCH PARTIAL APPROVALS HISTORY ─────────────────────────────────
+    /* ── fetchIndicatorCounts ── */
     builder
-      .addCase(fetchPartialApprovalsHistory.fulfilled, (state, action) => {
-        state.partialApprovals = action.payload.data;
+      .addCase(fetchIndicatorCounts.fulfilled, (state, { payload }) => {
+        state.counts = payload;
       })
-      .addCase(fetchPartialApprovalsHistory.rejected, (state, action) => {
-        console.error("Failed to fetch partial approvals:", action.payload);
-        state.partialApprovals = [];
+      .addCase(fetchIndicatorCounts.rejected, (_, { payload }) => {
+  console.error("[indicators] Failed to fetch counts:", payload);
+});
+
+    /* ── fetchIndicatorById ── */
+    builder
+      .addCase(fetchIndicatorById.pending, (state) => {
+        state.detailLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchIndicatorById.fulfilled, (state, { payload }) => {
+        state.detailLoading = false;
+        state.selectedIndicator = payload;
+        upsertOne(state, payload);
+      })
+      .addCase(fetchIndicatorById.rejected, (state, { payload }) => {
+        state.detailLoading = false;
+        state.error = payload as string;
       });
 
-    // ── CREATE ─────────────────────────────────────────────────────────
+    /* ── createIndicator ── */
     builder
       .addCase(createIndicator.pending, (state) => {
         state.actionLoading = true;
+        state.error = null;
       })
-      .addCase(createIndicator.fulfilled, (state, action) => {
+      .addCase(createIndicator.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
-        state.indicators.unshift(action.payload);
-        syncCategorizedLists(state);
+        state.indicators.unshift(payload);
+        applyCategories(state);
       })
-      .addCase(createIndicator.rejected, (state, action) => {
+      .addCase(createIndicator.rejected, (state, { payload }) => {
         state.actionLoading = false;
-        state.error = action.payload as string;
+        state.error = payload as string;
       });
 
-    // ── ASSIGN INDICATOR ───────────────────────────────────────────────
+    /* ── updateIndicator ── */
+    builder
+      .addCase(updateIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(updateIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        // Preserve heavy relations from the already-loaded detail view
+        if (state.selectedIndicator?.id === payload.id) {
+          payload.submissions = state.selectedIndicator.submissions;
+          payload.reviewHistory = state.selectedIndicator.reviewHistory;
+        }
+        upsertOne(state, payload);
+      })
+      .addCase(updateIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── deleteIndicator ── */
+    builder
+      .addCase(deleteIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        removeOne(state, payload);
+      })
+      .addCase(deleteIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── assignIndicator ── */
     builder
       .addCase(assignIndicator.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
       })
-      .addCase(assignIndicator.fulfilled, (state, action) => {
+      .addCase(assignIndicator.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
-        upsertIndicator(state, action.payload);
-        // Counts and indicators are refreshed in the thunk
+        upsertOne(state, payload);
       })
-      .addCase(assignIndicator.rejected, (state, action) => {
+      .addCase(assignIndicator.rejected, (state, { payload }) => {
         state.actionLoading = false;
-        state.error = action.payload as string;
+        state.error = payload as string;
       });
 
-    // ── DELETE SUBMISSION ──────────────────────────────────────────────
+    /* ── unassignIndicator ── */
+    builder
+      .addCase(unassignIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(unassignIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+      })
+      .addCase(unassignIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── superAdminReview ── */
+    builder
+      .addCase(superAdminReview.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(superAdminReview.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+
+        // Remove from queue once a terminal decision has been made
+        if (
+          payload.status === "Completed" ||
+          payload.status === "Rejected by Super Admin"
+        ) {
+          state.queue = state.queue.filter(
+            (q) => q.indicatorId !== payload.id
+          );
+        }
+
+        // Keep rejectedByAdmin in sync
+        if (isRejected(payload)) {
+          if (!state.rejectedByAdmin.some((r) => r.id === payload.id)) {
+            state.rejectedByAdmin.push(payload);
+          }
+        } else {
+          state.rejectedByAdmin = state.rejectedByAdmin.filter(
+            (r) => r.id !== payload.id
+          );
+        }
+      })
+      .addCase(superAdminReview.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── reopenIndicator ── */
+    builder
+      .addCase(reopenIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(reopenIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+        // Remove from rejection list since it's been reopened
+        state.rejectedByAdmin = state.rejectedByAdmin.filter(
+          (r) => r.id !== payload.id
+        );
+      })
+      .addCase(reopenIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── fetchSubmissionsQueue ── */
+    builder.addCase(fetchSubmissionsQueue.fulfilled, (state, { payload }) => {
+      state.queue = payload;
+    });
+
+    /* ── deleteSubmission ── */
     builder
       .addCase(deleteSubmission.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
       })
-      .addCase(deleteSubmission.fulfilled, (state, action) => {
+      .addCase(deleteSubmission.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
-        const { submissionId, indicatorId } = action.payload;
+        const { submissionId, indicatorId } = payload;
 
+        // Remove from queue
         state.queue = state.queue.filter((q) => q.id !== submissionId);
 
+        // Remove from selectedIndicator's submissions array
         if (state.selectedIndicator?.id === indicatorId) {
           state.selectedIndicator = {
             ...state.selectedIndicator,
@@ -728,6 +789,7 @@ const indicatorSlice = createSlice({
           };
         }
 
+        // Remove from the master indicators list too
         const idx = state.indicators.findIndex((i) => i.id === indicatorId);
         if (idx !== -1 && state.indicators[idx].submissions) {
           state.indicators[idx] = {
@@ -736,115 +798,41 @@ const indicatorSlice = createSlice({
               (s) => s.id !== submissionId
             ),
           };
-          syncCategorizedLists(state);
+          applyCategories(state);
         }
       })
-      .addCase(deleteSubmission.rejected, (state, action) => {
+      .addCase(deleteSubmission.rejected, (state, { payload }) => {
         state.actionLoading = false;
-        state.error = action.payload as string;
+        state.error = payload as string;
       });
 
-    // ── UPDATE ─────────────────────────────────────────────────────────
+    /* ── fetchPartialApprovalsHistory ── */
     builder
-      .addCase(updateIndicator.pending, (state) => {
-        state.actionLoading = true;
-      })
-      .addCase(updateIndicator.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        const updated = action.payload;
-
-        if (
-          state.selectedIndicator &&
-          String(state.selectedIndicator.id) === String(updated.id)
-        ) {
-          state.selectedIndicator = {
-            ...state.selectedIndicator,
-            ...updated,
-            submissions: state.selectedIndicator.submissions,
-            reviewHistory: state.selectedIndicator.reviewHistory,
-          };
+      .addCase(
+        fetchPartialApprovalsHistory.fulfilled,
+        (state, { payload }) => {
+          state.partialApprovals = payload;
         }
-
-        upsertIndicator(state, updated);
-        syncCategorizedLists(state);
-      })
-      .addCase(updateIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
-
-    // ── DELETE ─────────────────────────────────────────────────────────
-    builder
-      .addCase(deleteIndicator.pending, (state) => {
-        state.actionLoading = true;
-      })
-      .addCase(deleteIndicator.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        removeIndicatorById(state, String(action.payload));
-        syncCategorizedLists(state);
-      })
-      .addCase(deleteIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
-
-    // ── UNASSIGN ───────────────────────────────────────────────────────
-    builder
-      .addCase(unassignIndicator.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(unassignIndicator.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        upsertIndicator(state, action.payload);
-        // Counts and indicators are refreshed in the thunk
-      })
-      .addCase(unassignIndicator.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
-
-    // ── SUPER ADMIN REVIEW ─────────────────────────────────────────────
-    builder
-      .addCase(superAdminReview.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(superAdminReview.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        const updated = action.payload;
-
-        upsertIndicator(state, updated);
-
-        if (updated.status === "Completed" || updated.status === "Rejected by Super Admin") {
-          state.queue = state.queue.filter(
-            (q) => String(q.indicatorId) !== String(updated.id)
+      )
+      .addCase(
+        fetchPartialApprovalsHistory.rejected,
+        (_state, { payload }) => {
+          console.error(
+            "[indicators] Failed to fetch partial approvals:",
+            payload
           );
         }
-
-        if (updated.status === "Rejected by Super Admin") {
-          const exists = state.rejectedByAdmin.some((r) => r.id === updated.id);
-          if (!exists) state.rejectedByAdmin.push(updated);
-        } else {
-          state.rejectedByAdmin = state.rejectedByAdmin.filter(
-            (r) => r.id !== updated.id
-          );
-        }
-
-        syncCategorizedLists(state);
-      })
-      .addCase(superAdminReview.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload as string;
-      });
+      );
   },
 });
+
+/* ─── ACTIONS ────────────────────────────────────────────────────────────── */
 
 export const {
   clearIndicatorError,
   clearSelectedIndicator,
-  refreshCategorizedLists,
   clearPartialApprovals,
+  refreshCategorizedLists,
   optimisticAssign,
   optimisticUnassign,
 } = indicatorSlice.actions;
