@@ -127,6 +127,12 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
+export interface IRejectDocumentPayload {
+  documentId: string;
+  submissionId: string;
+  reason: string;
+}
+
 // ─── Internal Helpers ─────────────────────────────────────────────────────────
 
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
@@ -364,6 +370,20 @@ export const fetchAdminApprovedIndicators = createAsyncThunk <
   }
 });
 
+export const rejectDocument = createAsyncThunk <
+  IAdminIndicator,
+  { id: string; payload: IRejectDocumentPayload },
+  { rejectValue: string }
+>("adminIndicators/rejectDocument", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/reject-document`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Document rejection failed"));
+  }
+});
+
 // ─── Slice ────────────────────────────────────────────────────────────────────
 
 const adminIndicatorSlice = createSlice({
@@ -453,6 +473,14 @@ const adminIndicatorSlice = createSlice({
         upsertAndRefresh(state, action.payload);
       })
       .addCase(rejectSubmission.rejected, setRejected("isReviewing"))
+
+      // ── rejectDocument ───────────────────────────────────────────────────
+      .addCase(rejectDocument.pending, setPending("isReviewing"))
+      .addCase(rejectDocument.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(rejectDocument.rejected, setRejected("isReviewing"))
 
       // ── reopenIndicator ──────────────────────────────────────────────────
       .addCase(reopenIndicator.pending, setPending("isReopening"))

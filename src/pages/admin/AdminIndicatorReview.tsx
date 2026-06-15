@@ -19,12 +19,13 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   approveSubmission,
   rejectSubmission,
+  rejectDocument,
   getIndicatorByIdAdmin,
   getSubmitterName,
   getPreviousRejectionReason,
   type ISubmission,
   type IDocument,
-  type IDocumentReviewUpdate,
+  //type IDocumentReviewUpdate,
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
@@ -37,11 +38,12 @@ interface Toast {
 
 interface DocRejectionDraft {
   documentId: string;
+  submissionId: string;
   fileName: string;
   reason: string;
 }
 
-// ─── Local Helpers (not exposed by slice) ────────────────────────────────────
+// ─── Local Helpers ────────────────────────────────────────────────────────────
 
 function deduplicateDocs(docs: IDocument[] | undefined | null): IDocument[] {
   if (!docs || !Array.isArray(docs) || docs.length === 0) return [];
@@ -84,10 +86,18 @@ const AdminIndicatorReview: React.FC = () => {
   const { selectedIndicator: indicator, isReviewing, isLoading } =
     useAppSelector((state) => state.adminIndicators);
 
+  // ── Overall rejection flow state ──────────────────────────────────────────
   const [individualComments, setIndividualComments] = useState<Record<string, string>>({});
-  const [docRejectionDrafts, setDocRejectionDrafts] = useState<Record<string, DocRejectionDraft>>({});
   const [overallComment, setOverallComment] = useState<string>("");
   const [explicitRejectionToggle, setExplicitRejectionToggle] = useState<boolean>(false);
+
+  // ── Per-document rejection flow state ────────────────────────────────────
+  // Key: documentId → draft (includes submissionId for the backend call)
+  const [docRejectionDrafts, setDocRejectionDrafts] = useState<Record<string, DocRejectionDraft>>({});
+  // Track which doc is currently being submitted (for per-doc spinner)
+  const [submittingDocId, setSubmittingDocId] = useState<string | null>(null);
+
+  // ── Shared UI state ───────────────────────────────────────────────────────
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -104,8 +114,7 @@ const AdminIndicatorReview: React.FC = () => {
   const pendingSubmissions = useMemo(
     () =>
       allSubmissions.filter(
-        (s) =>
-          s.reviewStatus === "Pending" || s.reviewStatus === "Correction Needed"
+        (s) => s.reviewStatus === "Pending" || s.reviewStatus === "Correction Needed"
       ),
     [allSubmissions]
   );
@@ -120,12 +129,11 @@ const AdminIndicatorReview: React.FC = () => {
     return grouped;
   }, [allSubmissions]);
 
-  const rejectionMode = useMemo(
-    () =>
-      explicitRejectionToggle ||
-      Object.keys(docRejectionDrafts).length > 0 ||
-      indicator?.status === "Correction Needed",
-    [explicitRejectionToggle, docRejectionDrafts, indicator?.status]
+  // Overall rejection mode is ONLY driven by the explicit toggle or indicator
+  // already being in Correction Needed — doc-level drafts no longer hijack it.
+  const overallRejectionMode = useMemo(
+    () => explicitRejectionToggle || indicator?.status === "Correction Needed",
+    [explicitRejectionToggle, indicator?.status]
   );
 
   const showToast = useCallback((type: Toast["type"], message: string) => {
@@ -133,19 +141,24 @@ const AdminIndicatorReview: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const toggleFileRejection = useCallback((documentId: string, fileName: string) => {
-    setDocRejectionDrafts((prev) => {
-      if (prev[documentId]) {
-        const next = { ...prev };
-        delete next[documentId];
-        return next;
-      }
-      return {
-        ...prev,
-        [documentId]: { documentId, fileName, reason: "" },
-      };
-    });
-  }, []);
+  // ── Doc rejection draft helpers ───────────────────────────────────────────
+
+  const toggleFileRejection = useCallback(
+    (documentId: string, submissionId: string, fileName: string) => {
+      setDocRejectionDrafts((prev) => {
+        if (prev[documentId]) {
+          const next = { ...prev };
+          delete next[documentId];
+          return next;
+        }
+        return {
+          ...prev,
+          [documentId]: { documentId, submissionId, fileName, reason: "" },
+        };
+      });
+    },
+    []
+  );
 
   const updateDocReason = useCallback((documentId: string, reason: string) => {
     setDocRejectionDrafts((prev) => ({
@@ -161,7 +174,57 @@ const AdminIndicatorReview: React.FC = () => {
     setExplicitRejectionToggle(false);
   }, []);
 
-  // ── Approve ───────────────────────────────────────────────────────────────
+  // ── Per-document reject ───────────────────────────────────────────────────
+  // Called immediately when the admin clicks "Confirm" on a single document,
+  // without requiring an overall comment.
+
+  const handleDocumentReject = useCallback(
+    async (documentId: string) => {
+      if (!indicator) return;
+
+      const draft = docRejectionDrafts[documentId];
+      if (!draft) return;
+
+      if (!draft.reason.trim()) {
+        showToast("error", `Please provide a rejection reason for "${draft.fileName}".`);
+        return;
+      }
+
+      setSubmittingDocId(documentId);
+
+      const result = await dispatch(
+        rejectDocument({
+          id: indicator.id,
+          payload: {
+            documentId: draft.documentId,
+            submissionId: draft.submissionId,
+            reason: draft.reason.trim(),
+          },
+        })
+      );
+
+      setSubmittingDocId(null);
+
+      if (rejectDocument.fulfilled.match(result)) {
+        showToast("success", `"${draft.fileName}" flagged for correction.`);
+        // Remove just this draft; leave others intact
+        setDocRejectionDrafts((prev) => {
+          const next = { ...prev };
+          delete next[documentId];
+          return next;
+        });
+        dispatch(getIndicatorByIdAdmin(indicator.id));
+      } else {
+        showToast(
+          "error",
+          (result.payload as string) || "Document rejection failed. Please try again."
+        );
+      }
+    },
+    [dispatch, indicator, docRejectionDrafts, showToast]
+  );
+
+  // ── Overall approve ───────────────────────────────────────────────────────
 
   const handleApprove = useCallback(async () => {
     if (!indicator) return;
@@ -169,9 +232,7 @@ const AdminIndicatorReview: React.FC = () => {
     const submissionUpdates = pendingSubmissions.map((s) => ({
       submissionId: s.id,
       adminComment:
-        individualComments[s.id]?.trim() ||
-        overallComment.trim() ||
-        "Approved.",
+        individualComments[s.id]?.trim() || overallComment.trim() || "Approved.",
     }));
 
     const result = await dispatch(
@@ -194,62 +255,25 @@ const AdminIndicatorReview: React.FC = () => {
         (result.payload as string) || "Approval failed. Please try again."
       );
     }
-  }, [
-    dispatch,
-    indicator,
-    individualComments,
-    overallComment,
-    pendingSubmissions,
-    resetReviewState,
-    showToast,
-  ]);
+  }, [dispatch, indicator, individualComments, overallComment, pendingSubmissions, resetReviewState, showToast]);
 
-  // ── Reject ────────────────────────────────────────────────────────────────
+  // ── Overall reject ────────────────────────────────────────────────────────
+  // This path is ONLY reachable via "Flag for Correction" button.
+  // It requires an overall comment; it does NOT process per-doc drafts.
 
-  const handleReject = useCallback(async () => {
+  const handleOverallReject = useCallback(async () => {
     if (!indicator) return;
 
     if (!overallComment.trim()) {
-      alert("Please provide an overall justification for rejection.");
+      showToast("error", "Please provide an overall justification for rejection.");
       return;
     }
 
-    const drafts = Object.values(docRejectionDrafts);
-    const missingReason = drafts.find((d) => !d.reason.trim());
-    if (missingReason) {
-      alert(
-        `Please provide a rejection reason for "${missingReason.fileName}" before submitting.`
-      );
-      return;
-    }
-
-    const documentUpdates: IDocumentReviewUpdate[] = drafts.map((d) => ({
-      documentId: d.documentId,
-      status: "Rejected",
-      reason: d.reason.trim(),
+    const submissionUpdates = pendingSubmissions.map((s) => ({
+      submissionId: s.id,
+      adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
+      reviewStatus: "Rejected" as const,
     }));
-
-    const submissionUpdates = pendingSubmissions.map((s) => {
-      const submissionDocIds = getSafeDocuments(s).map((d) => d.id);
-      const rejectedDocIds = documentUpdates
-        .filter((du) => submissionDocIds.includes(du.documentId))
-        .map((du) => du.documentId);
-
-      const allDocsRejected =
-        submissionDocIds.length > 0 &&
-        submissionDocIds.every((id) => rejectedDocIds.includes(id));
-
-      const reviewStatus: "Rejected" | "Correction Needed" =
-        (explicitRejectionToggle && drafts.length === 0) || allDocsRejected
-          ? "Rejected"
-          : "Correction Needed";
-
-      return {
-        submissionId: s.id,
-        adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
-        reviewStatus,
-      };
-    });
 
     const result = await dispatch(
       rejectSubmission({
@@ -257,7 +281,7 @@ const AdminIndicatorReview: React.FC = () => {
         payload: {
           adminOverallComments: overallComment.trim(),
           submissionUpdates,
-          documentUpdates,
+          documentUpdates: [],
         },
       })
     );
@@ -272,17 +296,7 @@ const AdminIndicatorReview: React.FC = () => {
         (result.payload as string) || "Rejection failed. Please try again."
       );
     }
-  }, [
-    dispatch,
-    indicator,
-    individualComments,
-    docRejectionDrafts,
-    explicitRejectionToggle,
-    overallComment,
-    pendingSubmissions,
-    resetReviewState,
-    showToast,
-  ]);
+  }, [dispatch, indicator, individualComments, overallComment, pendingSubmissions, resetReviewState, showToast]);
 
   // ── Loading ───────────────────────────────────────────────────────────────
 
@@ -324,10 +338,7 @@ const AdminIndicatorReview: React.FC = () => {
             onClick={() => navigate(-1)}
             className="p-2.5 hover:bg-slate-100 rounded-xl transition-all text-slate-500 hover:text-black group"
           >
-            <ChevronLeft
-              size={20}
-              className="group-hover:-translate-x-0.5 transition-transform"
-            />
+            <ChevronLeft size={20} className="group-hover:-translate-x-0.5 transition-transform" />
           </button>
           <div>
             <h2 className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.2em] mb-0.5">
@@ -341,7 +352,8 @@ const AdminIndicatorReview: React.FC = () => {
 
         {hasPending && (
           <div className="flex items-center gap-4">
-            {!rejectionMode && (
+            {/* "Flag for Correction" only appears when NOT already in overall rejection mode */}
+            {!overallRejectionMode && (
               <button
                 onClick={() => setExplicitRejectionToggle(true)}
                 disabled={isReviewing}
@@ -352,23 +364,23 @@ const AdminIndicatorReview: React.FC = () => {
             )}
             <button
               disabled={isReviewing}
-              onClick={rejectionMode ? handleReject : handleApprove}
+              onClick={overallRejectionMode ? handleOverallReject : handleApprove}
               className={`px-7 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
-                rejectionMode
+                overallRejectionMode
                   ? "bg-rose-600 text-white hover:bg-rose-700 shadow-rose-200"
                   : "bg-[#1d3331] text-white hover:bg-black shadow-emerald-900/20"
               }`}
             >
               {isReviewing ? (
                 <Loader2 size={14} className="animate-spin" />
-              ) : rejectionMode ? (
+              ) : overallRejectionMode ? (
                 <XCircle size={14} />
               ) : (
                 <CheckCircle2 size={14} />
               )}
               {isReviewing
                 ? "Processing..."
-                : rejectionMode
+                : overallRejectionMode
                 ? isPartialCorrection
                   ? "Submit Correction Request"
                   : "Confirm Rejection"
@@ -381,6 +393,7 @@ const AdminIndicatorReview: React.FC = () => {
       {/* ── Main Content ── */}
       <div className="flex-1 p-6 md:p-12">
         <div className="w-full max-w-6xl mx-auto space-y-10">
+
           {/* Summary Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
@@ -424,24 +437,19 @@ const AdminIndicatorReview: React.FC = () => {
             </div>
           </div>
 
-          {/* Rejection / Correction Textarea */}
-          {rejectionMode && (
+          {/* Overall Rejection / Correction Textarea — only shown for the overall flow */}
+          {overallRejectionMode && (
             <div className="space-y-4 bg-rose-50/50 p-8 rounded-[2.5rem] border-2 border-dashed border-rose-200">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 text-rose-600">
                   <AlertOctagon size={20} />
                   <h4 className="text-[11px] font-black uppercase tracking-widest">
-                    {isPartialCorrection
-                      ? "Correction Request Note"
-                      : "Rejection Note"}
+                    {isPartialCorrection ? "Correction Request Note" : "Rejection Note"}
                   </h4>
                 </div>
                 {!isPartialCorrection && (
                   <button
-                    onClick={() => {
-                      setExplicitRejectionToggle(false);
-                      setDocRejectionDrafts({});
-                    }}
+                    onClick={() => setExplicitRejectionToggle(false)}
                     className="text-[10px] font-black text-slate-400 hover:text-black uppercase"
                   >
                     Cancel
@@ -465,346 +473,365 @@ const AdminIndicatorReview: React.FC = () => {
             </h4>
 
             {indicator.submissions &&
-              Object.entries(indicator.submissions).map(
-                ([quarterKey, submissions]) => {
-                  const sortedSubmissions = [...submissions].sort(
-                    (a, b) =>
-                      new Date(b.submittedAt).getTime() -
-                      new Date(a.submittedAt).getTime()
-                  );
+              Object.entries(indicator.submissions).map(([quarterKey, submissions]) => {
+                const sortedSubmissions = [...submissions].sort(
+                  (a, b) =>
+                    new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+                );
 
-                  return (
-                    <div key={quarterKey} className="space-y-4">
-                      <div className="flex items-center gap-4 px-2">
-                        <div className="h-[1px] flex-1 bg-slate-100" />
-                        <span className="text-[10px] font-black text-slate-300 uppercase">
-                          {quarterKey.replace("_", " ")}
-                        </span>
-                        <div className="h-[1px] flex-1 bg-slate-100" />
-                      </div>
+                return (
+                  <div key={quarterKey} className="space-y-4">
+                    <div className="flex items-center gap-4 px-2">
+                      <div className="h-[1px] flex-1 bg-slate-100" />
+                      <span className="text-[10px] font-black text-slate-300 uppercase">
+                        {quarterKey.replace("_", " ")}
+                      </span>
+                      <div className="h-[1px] flex-1 bg-slate-100" />
+                    </div>
 
-                      {sortedSubmissions.map((sub: ISubmission) => {
-                        const documents = getSafeDocuments(sub);
-                        const uniqueDocs = deduplicateDocs(documents);
-                        const isResubmission = sub.resubmissionCount > 0;
-                        const submitterName = getSubmitterName(sub);
-                        const periodKey = `${sub.quarter}-${sub.year}`;
-                        const periodSubmissions =
-                          submissionsByPeriod[periodKey] || submissions;
-                        const previousRejectionReason = isResubmission
-                          ? getPreviousRejectionReason(sub) ||
-                            (sub.adminComment && sub.reviewStatus === "Pending"
-                              ? sub.adminComment
-                              : periodSubmissions.find(
-                                  (s) => s.reviewStatus === "Rejected"
-                                )?.adminComment)
-                          : null;
+                    {sortedSubmissions.map((sub: ISubmission) => {
+                      const documents = getSafeDocuments(sub);
+                      const uniqueDocs = deduplicateDocs(documents);
+                      const isResubmission = sub.resubmissionCount > 0;
+                      const submitterName = getSubmitterName(sub);
+                      const periodKey = `${sub.quarter}-${sub.year}`;
+                      const periodSubmissions = submissionsByPeriod[periodKey] || submissions;
+                      const previousRejectionReason = isResubmission
+                        ? getPreviousRejectionReason(sub) ||
+                          (sub.adminComment && sub.reviewStatus === "Pending"
+                            ? sub.adminComment
+                            : periodSubmissions.find((s) => s.reviewStatus === "Rejected")
+                                ?.adminComment)
+                        : null;
 
-                        const isActionable =
-                          sub.reviewStatus === "Pending" ||
-                          sub.reviewStatus === "Correction Needed";
+                      const isActionable =
+                        sub.reviewStatus === "Pending" ||
+                        sub.reviewStatus === "Correction Needed";
 
-                        return (
-                          <div
-                            key={sub.id}
-                            className={`bg-white border rounded-[2rem] p-8 shadow-sm ${
-                              sub.reviewStatus === "Correction Needed"
-                                ? "border-amber-200/80"
-                                : isResubmission
-                                ? "border-amber-200/60"
-                                : "border-slate-200/60"
-                            }`}
-                          >
-                            <div className="flex flex-col md:flex-row justify-between gap-8">
-                              <div className="flex-1 space-y-6">
-                                <div className="flex items-center justify-between flex-wrap gap-4">
-                                  <div className="flex items-center gap-4">
-                                    <div>
-                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                                        Reported Value
-                                      </p>
-                                      <p className="text-lg font-black text-slate-900">
-                                        {sub.achievedValue || 0}{" "}
-                                        {indicator.unit || "%"}
-                                      </p>
-                                    </div>
+                      return (
+                        <div
+                          key={sub.id}
+                          className={`bg-white border rounded-[2rem] p-8 shadow-sm ${
+                            sub.reviewStatus === "Correction Needed"
+                              ? "border-amber-200/80"
+                              : isResubmission
+                              ? "border-amber-200/60"
+                              : "border-slate-200/60"
+                          }`}
+                        >
+                          <div className="flex flex-col md:flex-row justify-between gap-8">
+                            <div className="flex-1 space-y-6">
 
-                                    <div className="w-px h-8 bg-slate-100" />
-
-                                    <div>
-                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">
-                                        Submitted By
-                                      </p>
-                                      {submitterName ? (
-                                        <div className="flex items-center gap-1.5">
-                                          <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
-                                            <User
-                                              size={10}
-                                              className="text-emerald-700"
-                                            />
-                                          </div>
-                                          <span className="text-[12px] font-black text-slate-800">
-                                            {submitterName}
-                                          </span>
-                                        </div>
-                                      ) : (
-                                        <span className="text-[11px] font-medium text-slate-400 italic">
-                                          Unknown submitter
-                                        </span>
-                                      )}
-                                    </div>
+                              {/* Submission header */}
+                              <div className="flex items-center justify-between flex-wrap gap-4">
+                                <div className="flex items-center gap-4">
+                                  <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                      Reported Value
+                                    </p>
+                                    <p className="text-lg font-black text-slate-900">
+                                      {sub.achievedValue || 0} {indicator.unit || "%"}
+                                    </p>
                                   </div>
-
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    {isResubmission && (
-                                      <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
-                                        <RotateCcw size={10} />
-                                        <span className="text-[8px] font-black uppercase tracking-widest">
-                                          Resubmission #{sub.resubmissionCount}
+                                  <div className="w-px h-8 bg-slate-100" />
+                                  <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">
+                                      Submitted By
+                                    </p>
+                                    {submitterName ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
+                                          <User size={10} className="text-emerald-700" />
+                                        </div>
+                                        <span className="text-[12px] font-black text-slate-800">
+                                          {submitterName}
                                         </span>
                                       </div>
+                                    ) : (
+                                      <span className="text-[11px] font-medium text-slate-400 italic">
+                                        Unknown submitter
+                                      </span>
                                     )}
-                                    <span
-                                      className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${reviewStatusBadgeClass(
-                                        sub.reviewStatus
-                                      )}`}
-                                    >
-                                      {sub.reviewStatus || "Pending"}
-                                    </span>
                                   </div>
                                 </div>
-
-                                {isResubmission && previousRejectionReason && (
-                                  <div className="flex gap-3 p-5 bg-amber-50/60 border border-amber-200/70 rounded-2xl">
-                                    <div className="shrink-0 mt-0.5">
-                                      <MessageSquareWarning
-                                        size={15}
-                                        className="text-amber-600"
-                                      />
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {isResubmission && (
+                                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
+                                      <RotateCcw size={10} />
+                                      <span className="text-[8px] font-black uppercase tracking-widest">
+                                        Resubmission #{sub.resubmissionCount}
+                                      </span>
                                     </div>
-                                    <div className="min-w-0">
-                                      <p className="text-[9px] font-black text-amber-700 uppercase tracking-widest mb-1.5">
-                                        Previous Rejection Reason (to be addressed)
-                                      </p>
-                                      <p className="text-[12px] text-amber-800 font-semibold leading-relaxed">
-                                        "{previousRejectionReason}"
-                                      </p>
-                                      <p className="text-[10px] text-amber-600 mt-2 italic">
-                                        Please ensure this resubmission addresses the issues above.
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
-                                    User's Commentary
-                                  </p>
-                                  <p className="text-[13px] text-slate-600 font-medium leading-relaxed italic">
-                                    "{sub.notes || "No user commentary provided."}"
-                                  </p>
+                                  )}
+                                  <span
+                                    className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${reviewStatusBadgeClass(
+                                      sub.reviewStatus
+                                    )}`}
+                                  >
+                                    {sub.reviewStatus || "Pending"}
+                                  </span>
                                 </div>
+                              </div>
 
-                                {isActionable && (
-                                  <div className="space-y-2">
-                                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                      Reviewer Row Comments (Optional)
-                                    </label>
-                                    <input
-                                      type="text"
-                                      placeholder="Add notes specific to this value..."
-                                      value={individualComments[sub.id] || ""}
-                                      onChange={(e) =>
-                                        setIndividualComments((prev) => ({
-                                          ...prev,
-                                          [sub.id]: e.target.value,
-                                        }))
-                                      }
-                                      className="w-full px-4 py-3 border border-slate-100 bg-slate-50/30 rounded-xl text-[12px] font-medium outline-none focus:border-slate-300 focus:bg-white transition-all"
-                                    />
+                              {/* Previous rejection reason */}
+                              {isResubmission && previousRejectionReason && (
+                                <div className="flex gap-3 p-5 bg-amber-50/60 border border-amber-200/70 rounded-2xl">
+                                  <div className="shrink-0 mt-0.5">
+                                    <MessageSquareWarning size={15} className="text-amber-600" />
                                   </div>
-                                )}
-
-                                {/* Documents */}
-                                <div className="space-y-3">
-                                  <div className="flex items-center justify-between">
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                                      <Paperclip size={12} /> Supporting Documents
+                                  <div className="min-w-0">
+                                    <p className="text-[9px] font-black text-amber-700 uppercase tracking-widest mb-1.5">
+                                      Previous Rejection Reason (to be addressed)
                                     </p>
-                                    {documents.length > 0 &&
-                                      uniqueDocs.length < documents.length && (
-                                        <span className="text-[9px] font-bold text-amber-500 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg">
-                                          {documents.length - uniqueDocs.length}{" "}
-                                          duplicate
-                                          {documents.length - uniqueDocs.length > 1 ? "s" : ""}{" "}
-                                          collapsed · showing latest versions
-                                        </span>
-                                      )}
+                                    <p className="text-[12px] text-amber-800 font-semibold leading-relaxed">
+                                      "{previousRejectionReason}"
+                                    </p>
+                                    <p className="text-[10px] text-amber-600 mt-2 italic">
+                                      Please ensure this resubmission addresses the issues above.
+                                    </p>
                                   </div>
+                                </div>
+                              )}
 
-                                  <div className="flex flex-col gap-3">
-                                    {uniqueDocs.length > 0 ? (
-                                      uniqueDocs.map((doc) => {
-                                        const draft = docRejectionDrafts[doc.id];
-                                        const isRejected = Boolean(draft);
-                                        const isExpanded = expandedDocId === doc.id;
-                                        const docDescription =
-                                          doc.description ||
-                                          doc.fileDescription ||
-                                          null;
-                                        const serverRejected = doc.status === "Rejected";
+                              {/* User commentary */}
+                              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                                  User's Commentary
+                                </p>
+                                <p className="text-[13px] text-slate-600 font-medium leading-relaxed italic">
+                                  "{sub.notes || "No user commentary provided."}"
+                                </p>
+                              </div>
 
-                                        return (
-                                          <div key={doc.id} className="group relative">
-                                            <div
-                                              className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
-                                                isRejected || serverRejected
-                                                  ? "border-rose-200 bg-rose-50/30"
-                                                  : "border-slate-100 bg-white shadow-sm"
-                                              }`}
+                              {/* Row-level comment (for overall rejection flow only) */}
+                              {isActionable && overallRejectionMode && (
+                                <div className="space-y-2">
+                                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                    Reviewer Row Comments (Optional)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Add notes specific to this value..."
+                                    value={individualComments[sub.id] || ""}
+                                    onChange={(e) =>
+                                      setIndividualComments((prev) => ({
+                                        ...prev,
+                                        [sub.id]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-full px-4 py-3 border border-slate-100 bg-slate-50/30 rounded-xl text-[12px] font-medium outline-none focus:border-slate-300 focus:bg-white transition-all"
+                                  />
+                                </div>
+                              )}
+
+                              {/* Documents */}
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Paperclip size={12} /> Supporting Documents
+                                  </p>
+                                  {documents.length > 0 && uniqueDocs.length < documents.length && (
+                                    <span className="text-[9px] font-bold text-amber-500 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg">
+                                      {documents.length - uniqueDocs.length} duplicate
+                                      {documents.length - uniqueDocs.length > 1 ? "s" : ""} collapsed
+                                      · showing latest versions
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-col gap-3">
+                                  {uniqueDocs.length > 0 ? (
+                                    uniqueDocs.map((doc) => {
+                                      const draft = docRejectionDrafts[doc.id];
+                                      const isDrafted = Boolean(draft);
+                                      const isExpanded = expandedDocId === doc.id;
+                                      const docDescription = doc.description || doc.fileDescription || null;
+                                      const serverRejected = doc.status === "Rejected";
+                                      const isSubmittingThisDoc = submittingDocId === doc.id;
+
+                                      return (
+                                        <div key={doc.id} className="group relative">
+                                          <div
+                                            className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
+                                              isDrafted || serverRejected
+                                                ? "border-rose-200 bg-rose-50/30"
+                                                : "border-slate-100 bg-white shadow-sm"
+                                            }`}
+                                          >
+                                            {/* File name / preview trigger */}
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setPreviewFile({
+                                                  url: doc.evidenceUrl,
+                                                  name: doc.fileName || "Document",
+                                                })
+                                              }
+                                              className="flex items-center gap-3 flex-1 min-w-0 text-left"
                                             >
+                                              <FileText
+                                                size={14}
+                                                className={
+                                                  isDrafted || serverRejected
+                                                    ? "text-rose-500 shrink-0"
+                                                    : "text-emerald-600 shrink-0"
+                                                }
+                                              />
+                                              <span
+                                                className={`text-[11px] font-bold truncate ${
+                                                  isDrafted || serverRejected
+                                                    ? "text-rose-600"
+                                                    : "text-slate-700"
+                                                }`}
+                                              >
+                                                {doc.fileName || "Untitled Document"}
+                                              </span>
+                                            </button>
+
+                                            {/* Server-side rejection reason pill */}
+                                            {serverRejected && doc.rejectionReason && (
+                                              <span className="shrink-0 text-[9px] font-bold text-rose-500 italic max-w-[160px] truncate">
+                                                {doc.rejectionReason}
+                                              </span>
+                                            )}
+
+                                            {isResubmission && (
+                                              <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
+                                                <RotateCcw size={9} />
+                                                Resubmitted
+                                              </span>
+                                            )}
+
+                                            {docDescription && (
                                               <button
                                                 type="button"
                                                 onClick={() =>
-                                                  setPreviewFile({
-                                                    url: doc.evidenceUrl,
-                                                    name: doc.fileName || "Document",
-                                                  })
+                                                  setExpandedDocId(isExpanded ? null : doc.id)
                                                 }
-                                                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                                                className={`shrink-0 p-1 rounded-lg transition-all ${
+                                                  isExpanded
+                                                    ? "bg-emerald-100 text-emerald-700"
+                                                    : "text-slate-300 hover:text-slate-500 hover:bg-slate-50"
+                                                }`}
                                               >
-                                                <FileText
-                                                  size={14}
-                                                  className={
-                                                    isRejected || serverRejected
-                                                      ? "text-rose-500 shrink-0"
-                                                      : "text-emerald-600 shrink-0"
-                                                  }
-                                                />
-                                                <span
-                                                  className={`text-[11px] font-bold truncate ${
-                                                    isRejected || serverRejected
-                                                      ? "text-rose-600"
-                                                      : "text-slate-700"
-                                                  }`}
-                                                >
-                                                  {doc.fileName || "Untitled Document"}
-                                                </span>
+                                                <Info size={13} />
                                               </button>
+                                            )}
 
-                                              {serverRejected && doc.rejectionReason && (
-                                                <span className="shrink-0 text-[9px] font-bold text-rose-500 italic max-w-[160px] truncate">
-                                                  {doc.rejectionReason}
-                                                </span>
+                                            {/* Per-doc reject toggle — only visible when actionable
+                                                and NOT in the overall rejection flow */}
+                                            {isActionable && !serverRejected && !overallRejectionMode && (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  toggleFileRejection(
+                                                    doc.id,
+                                                    sub.id,
+                                                    doc.fileName || "document"
+                                                  )
+                                                }
+                                                className={`shrink-0 p-1 rounded-full shadow-sm transition-all ${
+                                                  isDrafted
+                                                    ? "bg-rose-500 text-white"
+                                                    : "bg-white text-slate-300 hover:text-rose-500 border border-slate-100 opacity-0 group-hover:opacity-100"
+                                                }`}
+                                              >
+                                                {isDrafted ? (
+                                                  <CheckCircle2 size={12} />
+                                                ) : (
+                                                  <XCircle size={12} />
+                                                )}
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          {/* Expanded description */}
+                                          {docDescription && isExpanded && (
+                                            <div className="mt-1.5 ml-4 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl">
+                                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                                                Document Description
+                                              </p>
+                                              <p className="text-[12px] text-slate-600 font-medium leading-relaxed">
+                                                {docDescription}
+                                              </p>
+                                            </div>
+                                          )}
+
+                                          {/* Per-doc rejection reason input + confirm button */}
+                                          {isDrafted && (
+                                            <div className="mt-2 ml-4 space-y-2">
+                                              <input
+                                                type="text"
+                                                autoFocus
+                                                placeholder={`Why is "${doc.fileName || "this document"}" being rejected?`}
+                                                value={draft?.reason || ""}
+                                                onChange={(e) =>
+                                                  updateDocReason(doc.id, e.target.value)
+                                                }
+                                                className={`w-full px-4 py-2.5 rounded-xl border text-[12px] font-medium outline-none transition-all ${
+                                                  draft?.reason.trim()
+                                                    ? "border-rose-200 bg-rose-50/40 focus:ring-2 focus:ring-rose-400/20"
+                                                    : "border-rose-300 bg-rose-50 focus:ring-2 focus:ring-rose-500/20"
+                                                }`}
+                                              />
+                                              {!draft?.reason.trim() && (
+                                                <p className="text-[9px] text-rose-500 font-bold ml-1 uppercase tracking-wide">
+                                                  A reason is required
+                                                </p>
                                               )}
-
-                                              {isResubmission && (
-                                                <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
-                                                  <RotateCcw size={9} />
-                                                  Resubmitted
-                                                </span>
-                                              )}
-
-                                              {docDescription && (
+                                              {/* Confirm button fires the single-doc endpoint immediately */}
+                                              <div className="flex items-center gap-3">
                                                 <button
                                                   type="button"
-                                                  onClick={() =>
-                                                    setExpandedDocId(
-                                                      isExpanded ? null : doc.id
-                                                    )
-                                                  }
-                                                  className={`shrink-0 p-1 rounded-lg transition-all ${
-                                                    isExpanded
-                                                      ? "bg-emerald-100 text-emerald-700"
-                                                      : "text-slate-300 hover:text-slate-500 hover:bg-slate-50"
-                                                  }`}
+                                                  disabled={!draft?.reason.trim() || isSubmittingThisDoc}
+                                                  onClick={() => handleDocumentReject(doc.id)}
+                                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                                                 >
-                                                  <Info size={13} />
-                                                </button>
-                                              )}
-
-                                              {isActionable && !serverRejected && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    toggleFileRejection(
-                                                      doc.id,
-                                                      doc.fileName || "document"
-                                                    )
-                                                  }
-                                                  className={`shrink-0 p-1 rounded-full shadow-sm transition-all ${
-                                                    isRejected
-                                                      ? "bg-rose-500 text-white"
-                                                      : "bg-white text-slate-300 hover:text-rose-500 border border-slate-100 opacity-0 group-hover:opacity-100"
-                                                  }`}
-                                                >
-                                                  {isRejected ? (
-                                                    <CheckCircle2 size={12} />
+                                                  {isSubmittingThisDoc ? (
+                                                    <Loader2 size={12} className="animate-spin" />
                                                   ) : (
                                                     <XCircle size={12} />
                                                   )}
+                                                  {isSubmittingThisDoc ? "Flagging..." : "Confirm Rejection"}
                                                 </button>
-                                              )}
-                                            </div>
-
-                                            {docDescription && isExpanded && (
-                                              <div className="mt-1.5 ml-4 px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl">
-                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                                                  Document Description
-                                                </p>
-                                                <p className="text-[12px] text-slate-600 font-medium leading-relaxed">
-                                                  {docDescription}
-                                                </p>
-                                              </div>
-                                            )}
-
-                                            {isRejected && (
-                                              <div className="mt-2 ml-4">
-                                                <input
-                                                  type="text"
-                                                  autoFocus
-                                                  placeholder={`Why is "${doc.fileName || "this document"}" being rejected?`}
-                                                  value={draft?.reason || ""}
-                                                  onChange={(e) =>
-                                                    updateDocReason(doc.id, e.target.value)
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setDocRejectionDrafts((prev) => {
+                                                      const next = { ...prev };
+                                                      delete next[doc.id];
+                                                      return next;
+                                                    })
                                                   }
-                                                  className={`w-full px-4 py-2.5 rounded-xl border text-[12px] font-medium outline-none transition-all ${
-                                                    draft?.reason.trim()
-                                                      ? "border-rose-200 bg-rose-50/40 focus:ring-2 focus:ring-rose-400/20"
-                                                      : "border-rose-300 bg-rose-50 focus:ring-2 focus:ring-rose-500/20"
-                                                  }`}
-                                                />
-                                                {!draft?.reason.trim() && (
-                                                  <p className="text-[9px] text-rose-500 font-bold mt-1 ml-1 uppercase tracking-wide">
-                                                    A reason is required
-                                                  </p>
-                                                )}
+                                                  className="text-[10px] font-black text-slate-400 hover:text-slate-700 uppercase tracking-widest transition-colors"
+                                                >
+                                                  Cancel
+                                                </button>
                                               </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })
-                                    ) : (
-                                      <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
-                                        <p className="text-[10px] text-slate-400 font-medium">
-                                          No documents attached for this submission.
-                                        </p>
-                                      </div>
-                                    )}
-                                  </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
+                                      <p className="text-[10px] text-slate-400 font-medium">
+                                        No documents attached for this submission.
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  );
-                }
-              )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
 
-            {(!indicator.submissions ||
-              Object.keys(indicator.submissions).length === 0) && (
+            {(!indicator.submissions || Object.keys(indicator.submissions).length === 0) && (
               <div className="text-center py-12 bg-white rounded-[2rem] border border-slate-100">
                 <FileText size={48} className="mx-auto text-slate-200 mb-3" />
                 <p className="text-[11px] text-slate-400 font-medium">
@@ -832,11 +859,7 @@ const AdminIndicatorReview: React.FC = () => {
             toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"
           }`}
         >
-          {toast.type === "success" ? (
-            <CheckCircle2 size={16} />
-          ) : (
-            <AlertOctagon size={16} />
-          )}
+          {toast.type === "success" ? <CheckCircle2 size={16} /> : <AlertOctagon size={16} />}
           <span>{toast.message}</span>
           <button
             type="button"
