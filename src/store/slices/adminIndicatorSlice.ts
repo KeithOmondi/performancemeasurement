@@ -41,27 +41,14 @@ export interface ISubmission {
 
 export type ISubmissionsByPeriod = Record<string, ISubmission[]>;
 
-export interface IDocumentReviewUpdate {
-  documentId: string;
-  status: "Accepted" | "Rejected";
-  reason?: string;
-}
-
-export interface ISubmissionReviewUpdate {
-  submissionId: string;
-  adminComment?: string;
-  reviewStatus?: "Rejected" | "Correction Needed";
-}
-
 export interface IApprovePayload {
-  submissionUpdates?: ISubmissionReviewUpdate[];
+  submissionUpdates?: { submissionId: string; adminComment?: string }[];
   adminOverallComments?: string;
 }
 
 export interface IRejectPayload {
   adminOverallComments: string;
-  submissionUpdates?: ISubmissionReviewUpdate[];
-  documentUpdates?: IDocumentReviewUpdate[];
+  submissionUpdates?: { submissionId: string; adminComment?: string }[];
 }
 
 export interface IReviewHistoryEntry {
@@ -78,12 +65,28 @@ export interface IReopenPayload {
   reason?: string;
 }
 
+export interface IRejectDocumentPayload {
+  documentId: string;
+  submissionId: string;
+  reason: string;
+}
+
+// Indicator statuses as returned by backend recalcIndicatorStatus
+export type IndicatorStatus =
+  | "Assigned"
+  | "Awaiting Admin Approval"
+  | "Correction Needed"
+  | "Rejected by Admin"
+  | "Awaiting Super Admin"
+  | "Rejected by Super Admin"
+  | "Verified";
+
 export interface IAdminIndicator {
   id: string;
   perspective: string;
   objective: { title: string };
   activity: { description: string };
-  status: string;
+  status: IndicatorStatus;
   progress: number;
   weight: number;
   unit: string;
@@ -127,18 +130,12 @@ const initialState: IAdminIndicatorState = {
   error: null,
 };
 
-export interface IRejectDocumentPayload {
-  documentId: string;
-  submissionId: string;
-  reason: string;
-}
-
 // ─── Internal Helpers ─────────────────────────────────────────────────────────
 
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
 
-// ─── Exported Helpers ─────────────────────────────────────────────────────────
+// ─── Exported Helpers (for components) ───────────────────────────────────────
 
 export const getDocumentDescription = (doc: IDocument): string =>
   doc.description || doc.fileDescription || "";
@@ -182,8 +179,6 @@ export const getMaxResubmissionCount = (indicator: IAdminIndicator): number =>
     0
   );
 
-// Returns true when at least one submission has doc-level corrections pending
-// but the submission itself was NOT fully rejected
 export const hasCorrectionNeededSubmissions = (
   indicator: IAdminIndicator
 ): boolean =>
@@ -198,17 +193,26 @@ export const getCorrectionNeededSubmissions = (
     (s) => s.reviewStatus === "Correction Needed"
   );
 
-// ─── Queue Refresh ────────────────────────────────────────────────────────────
+// ─── Queue Refresh (updated logic) ───────────────────────────────────────────
 
+/**
+ * Refreshes derived queues based on current allAssignments.
+ * - pendingAdminReview: Indicators that need admin attention (either first-time or correction)
+ * - resubmittedWork: Indicators that have at least one resubmission awaiting review
+ */
 const refreshQueues = (state: IAdminIndicatorState) => {
-  // Include "Correction Needed" so partially-rejected indicators
-  // remain visible in the review queue rather than silently disappearing
+  // Pending review includes:
+  // - "Awaiting Admin Approval" (new submission)
+  // - "Correction Needed" (after doc rejection or overall flag)
+  // Note: "Rejected by Admin" is NOT included because further actions require user resubmission.
+  // After resubmission, the status will become "Awaiting Admin Approval" again.
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) =>
-      ind.status === "Awaiting Admin Approval" ||
-      ind.status === "Correction Needed"
+      ind.status === "Awaiting Admin Approval" || ind.status === "Correction Needed"
   );
 
+  // Resubmitted work: indicators where any submission has resubmissionCount > 0
+  // and that submission is still pending admin review (not yet verified)
   state.resubmittedWork = state.allAssignments.filter((ind) =>
     Object.values(ind.submissions ?? {}).some((periodRows) =>
       periodRows.some(
@@ -257,7 +261,7 @@ const extractError = (error: unknown, fallback: string): string => {
 
 // ─── Thunks ───────────────────────────────────────────────────────────────────
 
-export const fetchAllAdminIndicators = createAsyncThunk < 
+export const fetchAllAdminIndicators = createAsyncThunk<
   IAdminIndicator[],
   { status?: string; search?: string } | undefined,
   { rejectValue: string }
@@ -267,7 +271,6 @@ export const fetchAllAdminIndicators = createAsyncThunk <
     const query = new URLSearchParams();
     if (status && status !== "all") query.set("status", status);
     if (search) query.set("search", search);
-
     const res = await apiPrivate.get<{ data: IAdminIndicator[] }>(
       `/admin/all?${query.toString()}`
     );
@@ -277,7 +280,7 @@ export const fetchAllAdminIndicators = createAsyncThunk <
   }
 });
 
-export const fetchResubmittedIndicators = createAsyncThunk <
+export const fetchResubmittedIndicators = createAsyncThunk<
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -288,13 +291,11 @@ export const fetchResubmittedIndicators = createAsyncThunk <
     );
     return res.data?.data ?? [];
   } catch (error) {
-    return rejectWithValue(
-      extractError(error, "Failed to load resubmissions")
-    );
+    return rejectWithValue(extractError(error, "Failed to load resubmissions"));
   }
 });
 
-export const getIndicatorByIdAdmin = createAsyncThunk <
+export const getIndicatorByIdAdmin = createAsyncThunk<
   IAdminIndicator,
   string,
   { rejectValue: string }
@@ -307,13 +308,14 @@ export const getIndicatorByIdAdmin = createAsyncThunk <
   }
 });
 
-export const approveSubmission = createAsyncThunk <
+export const approveSubmission = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IApprovePayload },
   { rejectValue: string }
 >("adminIndicators/approve", async ({ id, payload }, { rejectWithValue }) => {
   try {
     await apiPrivate.patch(`/admin/${id}/approve`, payload);
+    // Re-fetch updated indicator
     const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
     return res.data?.data;
   } catch (error) {
@@ -321,7 +323,7 @@ export const approveSubmission = createAsyncThunk <
   }
 });
 
-export const rejectSubmission = createAsyncThunk <
+export const rejectSubmission = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IRejectPayload },
   { rejectValue: string }
@@ -335,25 +337,23 @@ export const rejectSubmission = createAsyncThunk <
   }
 });
 
-export const reopenIndicator = createAsyncThunk <
+export const reopenIndicator = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IReopenPayload },
   { rejectValue: string }
 >("adminIndicators/reopen", async ({ id, payload }, { rejectWithValue }) => {
   try {
     const res = await apiPrivate.patch<{ data: IAdminIndicator }>(
-      `/indicators/${id}/reopen`,
+      `/admin/${id}/reopen`, // Ensure backend route exists
       payload
     );
     return res.data.data;
   } catch (error) {
-    return rejectWithValue(
-      extractError(error, "Failed to reopen indicator")
-    );
+    return rejectWithValue(extractError(error, "Failed to reopen indicator"));
   }
 });
 
-export const fetchAdminApprovedIndicators = createAsyncThunk <
+export const fetchAdminApprovedIndicators = createAsyncThunk<
   IAdminIndicator[],
   void,
   { rejectValue: string }
@@ -370,7 +370,7 @@ export const fetchAdminApprovedIndicators = createAsyncThunk <
   }
 });
 
-export const rejectDocument = createAsyncThunk <
+export const rejectDocument = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IRejectDocumentPayload },
   { rejectValue: string }
@@ -411,16 +411,13 @@ const adminIndicatorSlice = createSlice({
 
     const setRejected =
       (key: "isLoading" | "isReviewing" | "isReopening") =>
-      (
-        state: IAdminIndicatorState,
-        action: PayloadAction<string | undefined>
-      ) => {
+      (state: IAdminIndicatorState, action: PayloadAction<string | undefined>) => {
         state[key] = false;
         state.error = action.payload ?? "An unexpected error occurred";
       };
 
     builder
-      // ── fetchAllAdminIndicators ──────────────────────────────────────────
+      // fetchAllAdminIndicators
       .addCase(fetchAllAdminIndicators.pending, setPending("isLoading"))
       .addCase(fetchAllAdminIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -429,18 +426,16 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(fetchAllAdminIndicators.rejected, setRejected("isLoading"))
 
-      // ── fetchResubmittedIndicators ───────────────────────────────────────
+      // fetchResubmittedIndicators
       .addCase(fetchResubmittedIndicators.pending, setPending("isLoading"))
       .addCase(fetchResubmittedIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
-        action.payload.forEach((updated) =>
-          upsertIntoAssignments(state, updated)
-        );
+        action.payload.forEach((updated) => upsertIntoAssignments(state, updated));
         refreshQueues(state);
       })
       .addCase(fetchResubmittedIndicators.rejected, setRejected("isLoading"))
 
-      // ── getIndicatorByIdAdmin ────────────────────────────────────────────
+      // getIndicatorByIdAdmin
       .addCase(getIndicatorByIdAdmin.pending, setPending("isLoading"))
       .addCase(getIndicatorByIdAdmin.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -450,7 +445,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(getIndicatorByIdAdmin.rejected, setRejected("isLoading"))
 
-      // ── fetchAdminApprovedIndicators ─────────────────────────────────────
+      // fetchAdminApprovedIndicators
       .addCase(fetchAdminApprovedIndicators.pending, setPending("isLoading"))
       .addCase(fetchAdminApprovedIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -458,7 +453,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(fetchAdminApprovedIndicators.rejected, setRejected("isLoading"))
 
-      // ── approveSubmission ────────────────────────────────────────────────
+      // approveSubmission
       .addCase(approveSubmission.pending, setPending("isReviewing"))
       .addCase(approveSubmission.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -466,7 +461,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(approveSubmission.rejected, setRejected("isReviewing"))
 
-      // ── rejectSubmission ─────────────────────────────────────────────────
+      // rejectSubmission
       .addCase(rejectSubmission.pending, setPending("isReviewing"))
       .addCase(rejectSubmission.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -474,7 +469,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectSubmission.rejected, setRejected("isReviewing"))
 
-      // ── rejectDocument ───────────────────────────────────────────────────
+      // rejectDocument
       .addCase(rejectDocument.pending, setPending("isReviewing"))
       .addCase(rejectDocument.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -482,7 +477,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectDocument.rejected, setRejected("isReviewing"))
 
-      // ── reopenIndicator ──────────────────────────────────────────────────
+      // reopenIndicator
       .addCase(reopenIndicator.pending, setPending("isReopening"))
       .addCase(reopenIndicator.fulfilled, (state, action) => {
         state.isReopening = false;

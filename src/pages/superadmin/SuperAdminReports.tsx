@@ -1,588 +1,519 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'; 
-import { 
-  FileDown, Loader2, Search, CheckCircle2, RefreshCcw, ChevronDown, ChevronUp, History
-} from 'lucide-react';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { fetchIndicators } from '../../store/slices/indicatorSlice';
-import { getAllStrategicPlans } from '../../store/slices/strategicPlan/strategicPlanSlice';
-import { fetchAllUsers } from '../../store/slices/user/userSlice';
+import { useEffect, useState, type JSX } from "react";
+import {
+  fetchTrackerReport,
+  fetchReportSummary,
+  downloadTrackerPdf,
+  clearReportFilters,
+  type IPerspective,
+  type IIndicator,
+  type ISubmission,
+  type IDocument,
+} from "../../store/slices/reportSlice";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
 
-/* ─── TYPES & INTERFACES ──────────────────────────────────────────────── */
-
-interface RejectionHistory {
-  indicator: string;
-  reason: string;
-  date: string;
-}
-
-interface SubIndicator {
-  title: string;
-  progress: number;
-  status: string;
-}
-
-interface StaffEntry {
-  id: string;
-  name: string;
-  pf: string;
-  assigned: number;
-  approved: number;
-  overdue: number;
-  rejections: number;
-  rejectionHistory: RejectionHistory[];
-  subIndicators: SubIndicator[];
-  totalProgress: number;
-  totalWeight: number;
-}
-
-interface PerspectiveRow {
-  name: string;
-  weight: number;
-  target: string;
-  achieved: string;
-  score: string;
-  status: 'ON TRACK' | 'IN PROGRESS' | 'AT RISK';
-}
-
-interface TabButtonProps {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  icon: string;
-}
-
-interface MetricCardProps {
-  title: string;
-  value: string | number;
-  subtext?: string;
-  progress?: number;
-  accentColor: string;
-  isCritical?: boolean;
-}
-
-/* ─── MAIN COMPONENT ──────────────────────────────────────────────────── */
-
-const SuperAdminReports = () => {
-  const dispatch = useAppDispatch();
-  const [activeTab, setActiveTab] = useState<'summary' | 'review' | 'individual'>('summary');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [reviewFilter, setReviewFilter] = useState<'ALL' | 'Approved' | 'Rejected'>('ALL');
-  const [expandedStaff, setExpandedStaff] = useState<string | null>(null);
-
-  const { indicators = [], loading: indicatorsLoading } = useAppSelector((s) => s.indicators);
-  const { plans = [], loading: plansLoading } = useAppSelector((s) => s.strategicPlan);
-  const { users = [] } = useAppSelector((s) => s.users);
-
-  useEffect(() => {
-    dispatch(fetchIndicators());
-    dispatch(getAllStrategicPlans());
-    if (users.length === 0) dispatch(fetchAllUsers());
-  }, [dispatch, users.length]);
-
-  const handleRefresh = () => {
-    dispatch(fetchIndicators());
-    dispatch(getAllStrategicPlans());
-    dispatch(fetchAllUsers());
+/* ─── STATUS BADGE ────────────────────────────────────────────────────────── */
+const StatusBadge = ({ status }: { status: string }) => {
+  const colours: Record<string, string> = {
+    Completed:                 "bg-green-100 text-green-800",
+    "Awaiting Super Admin":    "bg-blue-100 text-blue-800",
+    "Awaiting Admin Approval": "bg-yellow-100 text-yellow-800",
+    Pending:                   "bg-gray-100 text-gray-700",
+    "Rejected by Admin":       "bg-red-100 text-red-700",
+    "Rejected by Super Admin": "bg-red-200 text-red-800",
   };
 
-  const derivedData = useMemo(() => {
-    // 1. INSTITUTIONAL METRICS
-    const totalWeightSum = indicators.reduce((acc, curr) => acc + (curr.weight || 0), 0);
-    const weightedProgressSum = indicators.reduce(
-      (acc, curr) => acc + (Number(curr.progress || 0) * (curr.weight || 0)), 0
-    );
-
-    const institutionalCompletion = totalWeightSum > 0
-      ? Math.round(weightedProgressSum / totalWeightSum)
-      : 0;
-
-    const overdueCount = indicators.filter(
-      (i) => i.deadline && new Date(i.deadline) < new Date() && i.status !== 'Completed'
-    ).length;
-
-    // 2. REVIEW LOG
-    const filteredByReview = indicators.filter((i) => {
-      const matchesSearch =
-        i.activityDescription?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        i.assigneeDisplayName?.toLowerCase().includes(searchTerm.toLowerCase());
-
-      if (!matchesSearch) return false;
-      if (reviewFilter === 'ALL') return true;
-      if (reviewFilter === 'Approved') return i.status === 'Completed';
-      if (reviewFilter === 'Rejected')
-        return (i.reviewHistory || []).some((h) => h.action === 'Rejected');
-      return true;
-    });
-
-    // 3. PERSPECTIVE PERFORMANCE MATRIX
-    const perspectiveData: PerspectiveRow[] = (plans || []).map((plan) => {
-      const related = indicators.filter(
-        (i) => i.perspective?.trim().toLowerCase() === plan.perspective?.trim().toLowerCase()
-      );
-
-      const pTotalWeight = related.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
-      const pWeightedProgress = related.reduce(
-        (acc, curr) => acc + (Number(curr.progress || 0) * (Number(curr.weight) || 0)), 0
-      );
-
-      const avgProgress = pTotalWeight > 0 ? pWeightedProgress / pTotalWeight : 0;
-
-      let status: 'ON TRACK' | 'IN PROGRESS' | 'AT RISK' = 'AT RISK';
-      if (avgProgress >= 75) status = 'ON TRACK';
-      else if (avgProgress >= 40) status = 'IN PROGRESS';
-
-      return {
-        name: plan.perspective,
-        weight: pTotalWeight,
-        target: '100%',
-        achieved: `${Math.round(avgProgress)}%`,
-        score: (pWeightedProgress / 100).toFixed(2),
-        status,
-      };
-    });
-
-    // 4. STAFF PERFORMANCE
-    const staffMap = indicators.reduce<Record<string, StaffEntry>>((acc, indicator) => {
-      const staffId = indicator.assignee || 'unassigned';
-
-      if (!acc[staffId]) {
-        acc[staffId] = {
-          id: staffId,
-          name: indicator.assigneeDisplayName || 'Unassigned',
-          pf: indicator.assigneePjNumber || 'N/A',
-          assigned: 0,
-          approved: 0,
-          overdue: 0,
-          rejections: 0,
-          rejectionHistory: [],
-          subIndicators: [],
-          totalProgress: 0,
-          totalWeight: 0,
-        };
-      }
-
-      const isCompleted = indicator.status === 'Completed';
-      const isOverdue =
-        !!indicator.deadline &&
-        new Date(indicator.deadline) < new Date() &&
-        indicator.status !== 'Completed';
-
-      const indicatorRejections = (indicator.reviewHistory || []).filter(
-        (h) => h.action === 'Rejected'
-      );
-
-      acc[staffId].assigned += 1;
-      if (isCompleted) acc[staffId].approved += 1;
-      if (isOverdue) acc[staffId].overdue += 1;
-      acc[staffId].rejections += indicatorRejections.length;
-
-      indicatorRejections.forEach((rej) => {
-        acc[staffId].rejectionHistory.push({
-          indicator: indicator.activityDescription || '',
-          reason: rej.reason || '',
-          date: rej.at || '',
-        });
-      });
-
-      acc[staffId].subIndicators.push({
-        title: indicator.activityDescription || '',
-        progress: indicator.progress || 0,
-        status: indicator.status || '',
-      });
-
-      acc[staffId].totalProgress += Number(indicator.progress || 0) * Number(indicator.weight || 0);
-      acc[staffId].totalWeight += Number(indicator.weight || 0);
-
-      return acc;
-    }, {});
-
-    const staffStats = Object.values(staffMap).filter(
-      (staff) =>
-        staff.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        staff.pf.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    return {
-      institutionalCompletion,
-      overdueCount,
-      perspectiveData,
-      staffStats,
-      filteredByReview,
-      totalApproved: indicators.filter((i) => i.status === 'Completed').length,
-      totalRejected: indicators.reduce(
-        (acc, curr) =>
-          acc + (curr.reviewHistory?.filter((h) => h.action === 'Rejected').length || 0),
-        0
-      ),
-    };
-  }, [indicators, plans, searchTerm, reviewFilter]);
-
   return (
-    <div className="p-4 md:p-8 bg-[#fcfcf7] min-h-screen font-sans text-[#1a2c2c]">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:justify-between items-start mb-8 gap-6">
-        <div>
-          <h1 className="text-2xl font-serif font-bold text-[#1d3331] mb-1">Performance Reports</h1>
-          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
-            Summary, review log and individual staff performance
-          </p>
-        </div>
-        <div className="flex gap-3 w-full md:w-auto">
-          <button
-            onClick={handleRefresh}
-            className="p-3 bg-white border border-slate-200 rounded-xl text-slate-600 hover:shadow-md transition-all"
-          >
-            <RefreshCcw size={18} className={indicatorsLoading ? 'animate-spin' : ''} />
-          </button>
-          <button className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-[#eab308] hover:bg-[#ca8a04] text-[#1d3331] px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">
-            <FileDown size={16} /> Export Audit Report
-          </button>
-        </div>
-      </div>
-
-      {/* TABS */}
-      <div className="flex gap-8 overflow-x-auto no-scrollbar border-b border-slate-200 mb-8">
-        <TabButton active={activeTab === 'summary'} onClick={() => setActiveTab('summary')} icon="📊" label="Summary" />
-        <TabButton active={activeTab === 'review'} onClick={() => setActiveTab('review')} icon="⚖️" label="Review Log" />
-        <TabButton active={activeTab === 'individual'} onClick={() => setActiveTab('individual')} icon="👤" label="Individual Performance" />
-      </div>
-
-      {indicatorsLoading || plansLoading ? <LoadingState /> : (
-        <div className="animate-in slide-in-from-bottom-2 duration-500">
-
-          {/* 1. SUMMARY TAB */}
-          {activeTab === 'summary' && (
-            <div className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <MetricCard
-                  title="Overall Completion"
-                  value={`${derivedData.institutionalCompletion}%`}
-                  progress={derivedData.institutionalCompletion}
-                  accentColor="border-[#1d3331]"
-                />
-                <MetricCard
-                  title="Current Indicators"
-                  value={indicators.length}
-                  subtext="Active Indicators"
-                  accentColor="border-slate-300"
-                />
-                <MetricCard
-                  title="Overdue Indicators"
-                  value={derivedData.overdueCount}
-                  subtext="Requires immediate attention"
-                  accentColor="border-red-800"
-                  isCritical={derivedData.overdueCount > 0}
-                />
-              </div>
-
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="p-5 border-b border-slate-50 bg-slate-50/50">
-                  <h3 className="text-[11px] font-bold uppercase tracking-widest text-[#1d3331]">
-                    Strategic Perspective Breakdown
-                  </h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-white text-[10px] font-black uppercase text-slate-400 border-b">
-                      <tr>
-                        <th className="px-8 py-5">Perspective</th>
-                        <th className="px-6 py-5 text-center">Weight</th>
-                        <th className="px-6 py-5 text-center">Target</th>
-                        <th className="px-6 py-5 text-center">Achieved</th>
-                        <th className="px-6 py-5 text-center">Score</th>
-                        <th className="px-8 py-5 text-right">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {derivedData.perspectiveData.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-8 py-6 text-sm font-bold text-[#1d3331]">{row.name}</td>
-                          <td className="px-6 py-6 text-center text-xs font-semibold text-slate-500">{row.weight}</td>
-                          <td className="px-6 py-6 text-center text-xs font-bold text-slate-400">{row.target}</td>
-                          <td className="px-6 py-6 text-center text-xs font-black text-emerald-700">{row.achieved}</td>
-                          <td className="px-6 py-6 text-center text-sm font-black text-[#1d3331]">{row.score}</td>
-                          <td className="px-8 py-6 text-right"><StatusBadge status={row.status} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 2. REVIEW LOG TAB */}
-          {activeTab === 'review' && (
-            <div className="space-y-6">
-              <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                <div className="relative flex-1 max-w-md w-full">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input
-                    type="text"
-                    placeholder="Search by activity or staff..."
-                    className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#1d3331]/10 transition-all"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <div className="flex bg-white border border-slate-200 p-1 rounded-xl w-full md:w-auto">
-                  {(['ALL', 'Approved', 'Rejected'] as const).map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setReviewFilter(f)}
-                      className={`flex-1 md:flex-none px-6 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                        reviewFilter === f ? 'bg-[#1d3331] text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'
-                      }`}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
-                    <tr>
-                      <th className="px-8 py-5">Indicator Activity</th>
-                      <th className="px-6 py-5">Assigned To</th>
-                      <th className="px-6 py-5 text-center">Progress</th>
-                      <th className="px-8 py-5 text-right">Registry Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {derivedData.filteredByReview.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/30">
-                        <td className="px-8 py-5">
-                          <p className="text-sm font-bold text-[#1d3331] line-clamp-1">
-                            {item.activityDescription}
-                          </p>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">
-                            {item.perspective}
-                          </p>
-                        </td>
-                        <td className="px-6 py-5 text-xs font-semibold text-slate-600">
-                          {item.assigneeDisplayName}
-                        </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-2 justify-center">
-                            <span className="text-[10px] font-black text-[#1d3331]">{item.progress}%</span>
-                            <div className="w-16 h-1 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-emerald-500" style={{ width: `${item.progress}%` }} />
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-8 py-5 text-right">
-                          <span
-                            className={`px-3 py-1 rounded-md text-[9px] font-black uppercase border ${
-                              item.status === 'Completed'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                : 'bg-orange-50 text-orange-700 border-orange-100'
-                            }`}
-                          >
-                            {item.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* 3. INDIVIDUAL PERFORMANCE TAB */}
-          {activeTab === 'individual' && (
-            <div className="space-y-6">
-              <div className="relative max-w-md">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input
-                  type="text"
-                  placeholder="Filter by Name or PF Number..."
-                  className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#1d3331]/10 transition-all"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b">
-                    <tr>
-                      <th className="px-8 py-5">Team Member / PF</th>
-                      <th className="px-4 py-5 text-center">Details</th>
-                      <th className="px-4 py-5 text-center">Assigned</th>
-                      <th className="px-4 py-5 text-center text-emerald-700">Approved</th>
-                      <th className="px-4 py-5 text-center text-red-700">Overdue</th>
-                      <th className="px-4 py-5 text-center text-orange-700">Rejections</th>
-                      <th className="px-8 py-5 text-right">Aggregated Score</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {derivedData.staffStats.map((staff) => {
-                      const performance =
-                        staff.totalWeight > 0
-                          ? Math.round(staff.totalProgress / staff.totalWeight)
-                          : 0;
-                      const isExpanded = expandedStaff === staff.id;
-
-                      return (
-                        <Fragment key={staff.id}>
-                          <tr
-                            className={`hover:bg-slate-50/30 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`}
-                            onClick={() => setExpandedStaff(isExpanded ? null : staff.id)}
-                          >
-                            <td className="px-8 py-5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-full bg-[#1d3331] text-white flex items-center justify-center text-[10px] font-black uppercase">
-                                  {staff.name.substring(0, 2)}
-                                </div>
-                                <div>
-                                  <p className="text-sm font-bold text-[#1d3331]">{staff.name}</p>
-                                  <p className="text-[9px] text-slate-400 uppercase tracking-tighter font-black">
-                                    {staff.pf}
-                                  </p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-5 text-center">
-                              <button className="p-2 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-200">
-                                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                              </button>
-                            </td>
-                            <td className="px-4 py-5 text-center font-bold text-sm text-slate-600">{staff.assigned}</td>
-                            <td className="px-4 py-5 text-center font-bold text-sm text-emerald-700">{staff.approved}</td>
-                            <td className="px-4 py-5 text-center font-bold text-sm text-red-700">{staff.overdue}</td>
-                            <td className="px-4 py-5 text-center font-bold text-sm text-orange-700">{staff.rejections}</td>
-                            <td className="px-8 py-5 text-right font-black text-[#1d3331]">{performance}%</td>
-                          </tr>
-
-                          {isExpanded && (
-                            <tr className="bg-[#fcfcfc]">
-                              <td colSpan={7} className="px-12 py-6 border-b border-slate-100">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                                  <div>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
-                                      <CheckCircle2 size={12} /> Current Indicator Load
-                                    </h4>
-                                    <div className="space-y-3">
-                                      {staff.subIndicators.map((si, i) => (
-                                        <div
-                                          key={i}
-                                          className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-100 shadow-sm"
-                                        >
-                                          <span className="text-xs font-bold text-[#1a3a32] truncate max-w-[200px]">
-                                            {si.title}
-                                          </span>
-                                          <div className="flex items-center gap-3">
-                                            <div className="w-12 bg-slate-100 h-1 rounded-full overflow-hidden">
-                                              <div className="bg-emerald-500 h-full" style={{ width: `${si.progress}%` }} />
-                                            </div>
-                                            <span className="text-[9px] font-black text-slate-400">{si.progress}%</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  <div>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-red-400 mb-4 flex items-center gap-2">
-                                      <History size={12} /> Audit Rejection History
-                                    </h4>
-                                    {staff.rejectionHistory.length > 0 ? (
-                                      <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                                        {staff.rejectionHistory.map((rej, i) => (
-                                          <div key={i} className="bg-red-50/50 p-3 rounded-xl border border-red-100">
-                                            <div className="flex justify-between mb-1 text-[8px] font-black uppercase italic">
-                                              <span className="text-red-800">Indicator Rejection</span>
-                                              <span className="text-slate-400">
-                                                {new Date(rej.date).toLocaleDateString()}
-                                              </span>
-                                            </div>
-                                            <p className="text-[11px] font-bold text-[#1d3331] leading-tight mb-1">
-                                              {rej.indicator}
-                                            </p>
-                                            <p className="text-[10px] text-red-600 italic">" {rej.reason} "</p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div className="py-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">
-                                          No Rejection Data Logged
-                                        </p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ─── SUBCOMPONENTS ───────────────────────────────────────────────────── */
-
-const TabButton = ({ active, onClick, label, icon }: TabButtonProps) => (
-  <button
-    onClick={onClick}
-    className={`flex items-center gap-2 pb-4 text-[11px] font-bold uppercase tracking-widest relative transition-all whitespace-nowrap ${
-      active ? 'text-[#1d3331]' : 'text-slate-300 hover:text-slate-400'
-    }`}
-  >
-    <span>{icon}</span> {label}
-    {active && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-[#1d3331] rounded-full" />}
-  </button>
-);
-
-const MetricCard = ({ title, value, subtext, progress, accentColor, isCritical }: MetricCardProps) => (
-  <div className={`bg-white rounded-2xl p-6 shadow-sm border-t-4 transition-transform hover:scale-[1.02] ${accentColor}`}>
-    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">{title}</h3>
-    <span className="text-4xl font-serif font-bold text-[#1d3331]">{value}</span>
-    {progress !== undefined && (
-      <div className="w-full bg-slate-100 h-1.5 rounded-full mt-5 overflow-hidden">
-        <div className="bg-[#1d3331] h-full transition-all duration-700" style={{ width: `${progress}%` }} />
-      </div>
-    )}
-    {subtext && (
-      <p className={`text-[10px] mt-4 font-bold uppercase tracking-tight ${isCritical ? 'text-red-700 animate-pulse' : 'text-slate-400'}`}>
-        {subtext}
-      </p>
-    )}
-  </div>
-);
-
-const StatusBadge = ({ status }: { status: 'ON TRACK' | 'IN PROGRESS' | 'AT RISK' }) => {
-  const styles: Record<string, string> = {
-    'IN PROGRESS': 'bg-yellow-50 text-yellow-700 border-yellow-200',
-    'ON TRACK': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    'AT RISK': 'bg-red-50 text-red-700 border-red-200',
-  };
-  return (
-    <span className={`px-3 py-1 rounded-md text-[9px] font-black border ${styles[status]}`}>
+    <span
+      className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium ${
+        colours[status] ?? "bg-gray-100 text-gray-600"
+      }`}
+    >
       {status}
     </span>
   );
 };
 
-const LoadingState = () => (
-  <div className="flex flex-col items-center justify-center py-24 bg-white rounded-2xl border-2 border-dashed border-slate-100">
-    <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
-    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-      Generating Judicial Audit Logs...
-    </p>
+/* ─── DOCUMENT LINK ───────────────────────────────────────────────────────── */
+const DocumentLink = ({ doc }: { doc: IDocument }): JSX.Element => {
+  if (doc.evidenceUrl) {
+    return (
+      <a
+        href={doc.evidenceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        {doc.fileName || doc.description || "View Document"}
+      </a>
+    );
+  }
+
+  return <span>{doc.fileName || doc.description}</span>;
+};
+
+/* ─── EVIDENCE CELL ───────────────────────────────────────────────────────── */
+const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
+  if (!submissions || submissions.length === 0) {
+    return (
+      <span className="text-gray-400 italic text-[11px]">
+        No submissions yet
+      </span>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {submissions.map((sub) => (
+        <div key={sub.submissionId}>
+          {/* Period + review status */}
+          <p className="font-semibold text-gray-800 mb-1 flex items-center gap-2">
+            <span>
+              • {sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`} {sub.year}
+            </span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                sub.reviewStatus === "Accepted"
+                  ? "bg-green-100 text-green-700"
+                  : sub.reviewStatus === "Rejected"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-yellow-100 text-yellow-700"
+              }`}
+            >
+              {sub.reviewStatus}
+            </span>
+          </p>
+
+          {/* Notes */}
+          {sub.notes && (
+            <p className="text-gray-600 text-[11px] mb-1 italic pl-2">
+              {sub.notes}
+            </p>
+          )}
+
+          {/* Documents */}
+          {sub.documents && sub.documents.length > 0 && (
+            <ul className="space-y-1 pl-2">
+              {sub.documents.map((doc, idx) => (
+                <li key={idx} className="flex gap-2 text-gray-700">
+                  <span className="text-gray-400 mt-0.5 shrink-0">❖</span>
+                  <DocumentLink doc={doc} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ─── SUMMARY CARDS ───────────────────────────────────────────────────────── */
+const SummaryCards = () => {
+  const { summary, summaryLoading } = useAppSelector((s) => s.reports);
+
+  if (summaryLoading) {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="bg-white rounded-lg border border-gray-200 p-4 animate-pulse"
+          >
+            <div className="h-3 bg-gray-200 rounded w-2/3 mb-2" />
+            <div className="h-6 bg-gray-200 rounded w-1/3" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const totals = summary.reduce(
+    (acc, s) => ({
+      total:          acc.total          + s.totalIndicators,
+      completed:      acc.completed      + s.completed,
+      awaitingReview: acc.awaitingReview + s.awaitingReview,
+      overdue:        acc.overdue        + s.overdue,
+    }),
+    { total: 0, completed: 0, awaitingReview: 0, overdue: 0 }
+  );
+
+  const cards: { label: string; value: number; colour: string }[] = [
+    { label: "Total Indicators", value: totals.total,          colour: "text-gray-800" },
+    { label: "Completed",        value: totals.completed,       colour: "text-green-700" },
+    { label: "Awaiting Review",  value: totals.awaitingReview,  colour: "text-blue-700" },
+    { label: "Overdue",          value: totals.overdue,         colour: "text-red-600" },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      {cards.map((c) => (
+        <div
+          key={c.label}
+          className="bg-white rounded-lg border border-gray-200 p-4"
+        >
+          <p className="text-[11px] text-gray-500 mb-1">{c.label}</p>
+          <p className={`text-2xl font-semibold ${c.colour}`}>{c.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ─── LOADING SKELETON ────────────────────────────────────────────────────── */
+const TableSkeleton = () => (
+  <div className="space-y-2">
+    {Array.from({ length: 5 }).map((_, i) => (
+      <div key={i} className="h-10 bg-gray-200 rounded animate-pulse" />
+    ))}
   </div>
 );
+
+/* ─── TABLE PERSPECTIVE ROWS ──────────────────────────────────────────────── */
+const TablePerspectiveRows = ({
+  perspective,
+  getIndex,
+}: {
+  perspective: IPerspective;
+  getIndex: () => number;
+}) => (
+  <>
+    {/* Perspective section header */}
+    <tr>
+      <td
+        colSpan={6}
+        className="border border-gray-300 px-3 py-2 font-semibold
+                   text-green-900 text-xs bg-green-100"
+      >
+        {perspective.perspective}
+      </td>
+    </tr>
+
+    {perspective.objectives.map((objective) =>
+      objective.activities.map((activity) =>
+        activity.indicators.map((indicator: IIndicator) => {
+          const idx = getIndex();
+          return (
+            <tr
+              key={indicator.indicatorId}
+              className="align-top hover:bg-gray-50 transition-colors"
+            >
+              {/* ── Indicators column ── */}
+              <td className="border border-gray-300 px-3 py-3 text-gray-800">
+                <div className="font-medium mb-1">
+                  {idx}. {objective.title}
+                </div>
+                <StatusBadge status={indicator.status} />
+                {indicator.progress > 0 && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                      <span>Progress</span>
+                      <span>{indicator.progress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
+                      <div
+                        className="bg-green-600 h-1.5 rounded-full"
+                        style={{
+                          width: `${Math.min(indicator.progress, 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </td>
+
+              {/* ── Unit of Measure ── */}
+              <td className="border border-gray-300 px-3 py-3 text-gray-700 text-center">
+                {indicator.unit || "%"}
+              </td>
+
+              {/* ── Explanatory Notes ── */}
+              <td className="border border-gray-300 px-3 py-3 text-gray-800">
+                {activity.description}
+                {indicator.instructions && (
+                  <p className="mt-1 text-[11px] text-gray-500 italic">
+                    {indicator.instructions}
+                  </p>
+                )}
+              </td>
+
+              {/* ── Responsibility ── */}
+              <td className="border border-gray-300 px-3 py-3 text-gray-800">
+                <div className="font-medium">
+                  {indicator.assigneeDisplayName || "Unassigned"}
+                </div>
+                {indicator.assignedByName && (
+                  <div className="text-[11px] text-gray-500 mt-0.5">
+                    Assigned by: {indicator.assignedByName}
+                  </div>
+                )}
+                <div className="text-[10px] text-gray-400 mt-0.5 capitalize">
+                  {indicator.assignmentType || "—"}
+                </div>
+              </td>
+
+              {/* ── Evidence ── */}
+              <td className="border border-gray-300 px-3 py-3">
+                <EvidenceCell submissions={indicator.submissions} />
+              </td>
+
+              {/* ── Evaluation Point Person ── */}
+              <td className="border border-gray-300 px-3 py-3 text-gray-800 font-medium">
+                {indicator.assignedByName || "—"}
+                {indicator.deadline && (
+                  <div className="text-[10px] text-gray-400 mt-1">
+                    Due:{" "}
+                    {new Date(indicator.deadline).toLocaleDateString("en-KE", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </div>
+                )}
+              </td>
+            </tr>
+          );
+        })
+      )
+    )}
+  </>
+);
+
+/* ─── MAIN COMPONENT ──────────────────────────────────────────────────────── */
+const SuperAdminReports = () => {
+  const dispatch   = useAppDispatch();
+  const { data, loading, error, filters } = useAppSelector((s) => s.reports);
+
+  const [activePerspective, setActivePerspective] = useState<string>("all");
+  const [statusFilter, setStatusFilter]           = useState<string>("");
+  const [pdfLoading, setPdfLoading]               = useState<boolean>(false);
+
+  /* Initial fetch */
+  useEffect(() => {
+    dispatch(fetchReportSummary());
+    dispatch(fetchTrackerReport({}));
+  }, [dispatch]);
+
+  /* Re-fetch when redux filters change */
+  useEffect(() => {
+    dispatch(fetchTrackerReport(filters));
+  }, [dispatch, filters]);
+
+  /* ── Client-side perspective filter ── */
+  const visibleData: IPerspective[] =
+    activePerspective === "all"
+      ? data
+      : data.filter((p) =>
+          p.perspective.toUpperCase().startsWith(activePerspective.toUpperCase())
+        );
+
+  /* ── Client-side status filter ── */
+  const filteredData: IPerspective[] = statusFilter
+    ? visibleData
+        .map((p) => ({
+          ...p,
+          objectives: p.objectives
+            .map((o) => ({
+              ...o,
+              activities: o.activities
+                .map((a) => ({
+                  ...a,
+                  indicators: a.indicators.filter(
+                    (ind) => ind.status === statusFilter
+                  ),
+                }))
+                .filter((a) => a.indicators.length > 0),
+            }))
+            .filter((o) => o.activities.length > 0),
+        }))
+        .filter((p) => p.objectives.length > 0)
+    : visibleData;
+
+  /* ── PDF download ── */
+  const handleDownloadPdf = async () => {
+    setPdfLoading(true);
+    await dispatch(downloadTrackerPdf(filters));
+    setPdfLoading(false);
+  };
+
+  /* ── Clear all filters ── */
+  const handleClearFilters = () => {
+    setStatusFilter("");
+    setActivePerspective("all");
+    dispatch(clearReportFilters());
+  };
+
+  /* Running indicator counter (resets each render) */
+  let indicatorIndex = 0;
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+
+      {/* ── Page Header ── */}
+      <div className="mb-6 text-center">
+        <div className="flex items-center justify-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-red-700 flex items-center justify-center text-white font-bold text-xs">
+            KE
+          </div>
+          <div className="w-10 h-10 rounded-full bg-amber-700 flex items-center justify-center text-white font-bold text-xs">
+            JY
+          </div>
+        </div>
+        <h1 className="text-base font-semibold text-gray-800 tracking-wide">
+          RHC 2024/2025 PMMU 1ST JULY 2024 TO 30TH JUNE 2025
+        </h1>
+        <p className="text-sm font-semibold text-gray-700 tracking-widest mt-1">
+          IMPLEMENTATION AND EVALUATION TRACKER
+        </p>
+      </div>
+
+      {/* ── Summary Cards ── */}
+      <SummaryCards />
+
+      {/* ── Toolbar ── */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+
+        {/* Perspective tabs */}
+        <div className="flex flex-wrap gap-2">
+          {["all", "A", "B", "C", "D"].map((p) => (
+            <button
+              key={p}
+              onClick={() => setActivePerspective(p)}
+              className={`px-3 py-1 text-xs rounded border transition-colors ${
+                activePerspective === p
+                  ? "bg-green-700 text-white border-green-700"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100"
+              }`}
+            >
+              {p === "all" ? "All Sections" : `Section ${p}`}
+            </button>
+          ))}
+        </div>
+
+        {/* Right-side controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+
+          {/* Status dropdown */}
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="text-xs border border-gray-300 rounded px-2 py-1.5 bg-white text-gray-700
+                       focus:outline-none focus:ring-1 focus:ring-green-500"
+          >
+            <option value="">All Statuses</option>
+            <option value="Completed">Completed</option>
+            <option value="Pending">Pending</option>
+            <option value="Awaiting Admin Approval">Awaiting Admin Approval</option>
+            <option value="Awaiting Super Admin">Awaiting Super Admin</option>
+            <option value="Rejected by Admin">Rejected by Admin</option>
+            <option value="Rejected by Super Admin">Rejected by Super Admin</option>
+          </select>
+
+          {/* Clear filters — only shown when something is active */}
+          {(statusFilter || activePerspective !== "all") && (
+            <button
+              onClick={handleClearFilters}
+              className="text-xs text-gray-500 hover:text-red-500 border border-gray-300
+                         rounded px-2 py-1.5 bg-white transition-colors"
+            >
+              Clear
+            </button>
+          )}
+
+          {/* Refresh */}
+          <button
+            onClick={() => dispatch(fetchTrackerReport(filters))}
+            disabled={loading}
+            className="text-xs border border-gray-300 rounded px-3 py-1.5 bg-white
+                       text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+          >
+            {loading ? "Loading…" : "↻ Refresh"}
+          </button>
+
+          {/* Download PDF */}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={pdfLoading || loading}
+            className="text-xs bg-green-700 text-white rounded px-3 py-1.5
+                       hover:bg-green-800 disabled:opacity-50 transition-colors
+                       flex items-center gap-1"
+          >
+            {pdfLoading ? "Generating…" : "⬇ Download PDF"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Error banner ── */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* ── Loading skeleton ── */}
+      {loading && <TableSkeleton />}
+
+      {/* ── Tracker Table ── */}
+      {!loading && (
+        <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
+          <table className="min-w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-green-200 text-green-900">
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-28">
+                  INDICATORS
+                </th>
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-16">
+                  Unit of Measure
+                </th>
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-44">
+                  Explanatory Notes
+                </th>
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-36">
+                  Responsibility
+                </th>
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold">
+                  Evidence
+                </th>
+                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-28">
+                  Evaluation Point Person
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredData.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="text-center py-12 text-gray-400 text-sm"
+                  >
+                    No indicators found.
+                  </td>
+                </tr>
+              ) : (
+                filteredData.map((perspective) => (
+                  <TablePerspectiveRows
+                    key={perspective.perspective}
+                    perspective={perspective}
+                    getIndex={() => { indicatorIndex += 1; return indicatorIndex; }}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Footer ── */}
+      <div className="mt-4 text-center text-xs text-gray-400">
+        RHC PMMU Tracker · FY 2024/2025 · Generated{" "}
+        {new Date().toLocaleDateString("en-KE", {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        })}
+      </div>
+    </div>
+  );
+};
 
 export default SuperAdminReports;

@@ -26,6 +26,7 @@ import {
   setSelectedIndicator,
   type ISubmission,
   type IDocument,
+  type IReviewHistoryEntry,
   hasEverBeenRejected,
   getRejectionCount,
   getMaxResubmissionCount,
@@ -36,16 +37,18 @@ import FilePreviewModal from "../PreviewModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const formatDate = (dateStr?: string | Date): string => {
+// All timestamps now show date + time
+const formatDateTime = (dateStr?: string | Date): string => {
   if (!dateStr) return "N/A";
   const date = new Date(dateStr);
-  return isNaN(date.getTime())
-    ? "Invalid Date"
-    : date.toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      });
+  if (isNaN(date.getTime())) return "Invalid Date";
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 };
 
 const getQuarterLabel = (quarter: number, year: number): string =>
@@ -77,6 +80,22 @@ const getUniqueRejectedDocuments = (
   return Array.from(map.values());
 };
 
+/**
+ * Get the most recent rejection action from reviewHistory,
+ * including the reviewer name and timestamp.
+ */
+const getLatestRejectionFromHistory = (
+  reviewHistory?: IReviewHistoryEntry[]
+): IReviewHistoryEntry | undefined => {
+  if (!reviewHistory) return undefined;
+  return reviewHistory
+    .filter(
+      (entry) =>
+        entry.action.includes("Reject") || entry.action === "Correction Requested"
+    )
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminRejections = () => {
@@ -98,8 +117,6 @@ const AdminRejections = () => {
   /**
    * Show indicators that are currently rejected OR have ever been rejected
    * (i.e. have at least one preserved "Rejected" submission row).
-   * This survives resubmission because we now INSERT new rows instead of
-   * overwriting the rejected one.
    */
   const rejectedItems = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -205,6 +222,11 @@ const AdminRejections = () => {
             const latestRejection = getLatestRejectedSubmission(indicator);
             const allRejectedSubs = getRejectedSubmissions(indicator);
             const rejectedDocuments = getUniqueRejectedDocuments(allRejectedSubs);
+            
+            // Get the latest rejection entry from reviewHistory (includes admin name)
+            const latestRejectionHistory = getLatestRejectionFromHistory(indicator.reviewHistory);
+            const rejectionAdminName = latestRejectionHistory?.reviewerName || "Unknown Admin";
+            const rejectionTimestamp = latestRejectionHistory?.at || latestRejection?.submittedAt;
 
             return (
               <div
@@ -358,7 +380,7 @@ const AdminRejections = () => {
                       </div>
                     )}
 
-                    {/* Audit timeline */}
+                    {/* Audit timeline - all entries show date+time */}
                     <div className="space-y-6 relative before:absolute before:left-[17px] before:top-2 before:bottom-2 before:w-px before:bg-gray-100">
                       {indicator.reviewHistory?.map((log, idx) => (
                         <div key={idx} className="relative pl-12">
@@ -386,7 +408,7 @@ const AdminRejections = () => {
                                 </div>
                               </div>
                               <span className="text-[9px] font-bold text-gray-400 uppercase">
-                                {formatDate(log.at)}
+                                {formatDateTime(log.at)}
                               </span>
                             </div>
                             <p className="text-[12px] text-gray-600 font-medium leading-relaxed italic border-l-2 border-red-200 pl-3">
@@ -461,14 +483,14 @@ const AdminRejections = () => {
                       </div>
                     </div>
 
-                    {/* Centre — rejection narrative */}
+                    {/* Centre — rejection narrative with admin name and timestamp */}
                     <div className="p-6 flex-1">
                       <div className="flex justify-between items-start mb-3">
                         <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
                           <MessageSquare size={12} /> Rejection Narrative
                         </span>
                         <span className="text-[9px] font-bold text-gray-300">
-                          Updated: {formatDate(indicator.updatedAt)}
+                          Updated: {formatDateTime(indicator.updatedAt)}
                         </span>
                       </div>
 
@@ -480,6 +502,13 @@ const AdminRejections = () => {
                             "Documentation provided does not align with the statutory reporting guidelines."}
                           "
                         </p>
+                        {/* Show who rejected and when */}
+                        {rejectionTimestamp && (
+                          <div className="mt-2 text-[9px] font-bold text-red-500 border-t border-red-100 pt-2 flex justify-between items-center">
+                            <span>Rejected by: {rejectionAdminName}</span>
+                            <span>on {formatDateTime(rejectionTimestamp)}</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="mt-4 flex gap-6">
