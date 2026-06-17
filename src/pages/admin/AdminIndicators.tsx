@@ -419,7 +419,7 @@ const ObjectiveSection = ({
             <td className="px-6 py-6">
               <span
                 className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase border shadow-sm inline-flex items-center gap-2 ${
-                  assignment?.status === "Completed"
+                  assignment?.status === "Verified"
                     ? "bg-emerald-50 text-emerald-700 border-emerald-100"
                     : assignment?.status === "Awaiting Admin Approval"
                     ? "bg-orange-50 text-orange-700 border-orange-100"

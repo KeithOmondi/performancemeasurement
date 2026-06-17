@@ -80,6 +80,7 @@ export type IndicatorStatus =
   | "Awaiting Super Admin"
   | "Rejected by Super Admin"
   | "Verified";
+  
 
 export interface IAdminIndicator {
   id: string;

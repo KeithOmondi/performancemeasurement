@@ -359,7 +359,7 @@ const SuperAdminReports = () => {
           </div>
         </div>
         <h1 className="text-base font-semibold text-gray-800 tracking-wide">
-          RHC 2024/2025 PMMU 1ST JULY 2024 TO 30TH JUNE 2025
+          RHC 2025/2026 PMMU 1ST JULY 2025 TO 30TH JUNE 2026
         </h1>
         <p className="text-sm font-semibold text-gray-700 tracking-widest mt-1">
           IMPLEMENTATION AND EVALUATION TRACKER

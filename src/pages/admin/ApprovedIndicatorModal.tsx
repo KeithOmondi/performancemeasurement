@@ -173,7 +173,7 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                   </div>
                   <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-full text-emerald-700 text-[10px] font-black uppercase">
                     <CheckCircle2 size={10} />
-                    {selectedIndicator.status === "Completed"
+                    {selectedIndicator.status === "Verified"
                       ? "Finally Certified"
                       : selectedIndicator.status}
                   </div>
