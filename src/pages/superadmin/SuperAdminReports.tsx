@@ -10,6 +10,7 @@ import {
   type IDocument,
 } from "../../store/slices/reportSlice";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import ORHC from "../../assets/ORHC.jpg"
 
 /* ─── STATUS BADGE ────────────────────────────────────────────────────────── */
 const StatusBadge = ({ status }: { status: string }) => {
@@ -349,22 +350,23 @@ const SuperAdminReports = () => {
     <div className="min-h-screen bg-gray-50 p-6">
 
       {/* ── Page Header ── */}
-      <div className="mb-6 text-center">
-        <div className="flex items-center justify-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-red-700 flex items-center justify-center text-white font-bold text-xs">
-            KE
-          </div>
-          <div className="w-10 h-10 rounded-full bg-amber-700 flex items-center justify-center text-white font-bold text-xs">
-            JY
-          </div>
-        </div>
-        <h1 className="text-base font-semibold text-gray-800 tracking-wide">
-          RHC 2025/2026 PMMU 1ST JULY 2025 TO 30TH JUNE 2026
-        </h1>
-        <p className="text-sm font-semibold text-gray-700 tracking-widest mt-1">
-          IMPLEMENTATION AND EVALUATION TRACKER
-        </p>
-      </div>
+<div className="mb-6 text-center">
+  <div className="flex items-center justify-center gap-3 mb-3">
+    <div className="w-100 h-50 rounded-[0.5rem] overflow-hidden flex items-center justify-center bg-white">
+      <img
+        src={ORHC}
+        alt="ORHC logo"
+        className="w-full h-full object-contain"
+      />
+    </div>
+  </div>
+  <h1 className="text-base font-serif font-semibold text-gray-800 tracking-wide">
+    RHC 2025/2026 PMMU 1ST JULY 2025 TO 30TH JUNE 2026
+  </h1>
+  <p className="text-sm font-semibold font-serif text-gray-700 tracking-widest mt-1">
+    IMPLEMENTATION AND EVALUATION TRACKER
+  </p>
+</div>
 
       {/* ── Summary Cards ── */}
       <SummaryCards />
