@@ -14,12 +14,14 @@ import {
   RotateCcw,
   User,
   MessageSquareWarning,
+  Trash2,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   approveSubmission,
   rejectSubmission,
   rejectDocument,
+  deleteSubmission,
   getIndicatorByIdAdmin,
   getSubmitterName,
   getPreviousRejectionReason,
@@ -102,6 +104,9 @@ const AdminIndicatorReview: React.FC = () => {
   >({});
   const [submittingDocId, setSubmittingDocId] = useState<string | null>(null);
 
+  // ── Delete submission state ──────────────────────────────────────────────
+  const [deletingSubmissionId, setDeletingSubmissionId] = useState<string | null>(null);
+
   // ── Shared UI state ───────────────────────────────────────────────────────
   const [previewFile, setPreviewFile] = useState<{
     url: string;
@@ -145,7 +150,6 @@ const AdminIndicatorReview: React.FC = () => {
     });
 
     // Per period keep only the single latest submission
-    // (highest resubmissionCount wins; ties broken by submittedAt)
     const deduplicated: Record<string, ISubmission[]> = {};
     Object.entries(grouped).forEach(([key, subs]) => {
       const latest = [...subs].sort((a, b) => {
@@ -171,6 +175,43 @@ const AdminIndicatorReview: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
+  // ─── Reset review state (defined before it's used) ─────────────────────────
+  const resetReviewState = useCallback(() => {
+    setOverallComment("");
+    setIndividualComments({});
+    setDocRejectionDrafts({});
+    setExplicitRejectionToggle(false);
+  }, []);
+
+  // ─── Delete submission ──────────────────────────────────────────────────────
+
+  const handleDeleteSubmission = useCallback(
+    async (submissionId: string) => {
+      if (!indicator) return;
+      if (
+        !window.confirm(
+          "Are you sure you want to delete this submission? This action cannot be undone.",
+        )
+      ) {
+        return;
+      }
+      setDeletingSubmissionId(submissionId);
+      try {
+        await dispatch(
+          deleteSubmission({ indicatorId: indicator.id, submissionId }),
+        ).unwrap();
+        showToast("success", "Submission deleted successfully.");
+        dispatch(getIndicatorByIdAdmin(indicator.id));
+        resetReviewState();
+      } catch (error) {
+        showToast("error", (error as string) || "Deletion failed.");
+      } finally {
+        setDeletingSubmissionId(null);
+      }
+    },
+    [dispatch, indicator, showToast, resetReviewState],
+  );
+
   // ── Doc rejection draft helpers ───────────────────────────────────────────
 
   const toggleFileRejection = useCallback(
@@ -195,13 +236,6 @@ const AdminIndicatorReview: React.FC = () => {
       ...prev,
       [documentId]: { ...prev[documentId], reason },
     }));
-  }, []);
-
-  const resetReviewState = useCallback(() => {
-    setOverallComment("");
-    setIndividualComments({});
-    setDocRejectionDrafts({});
-    setExplicitRejectionToggle(false);
   }, []);
 
   // ── Per-document reject ───────────────────────────────────────────────────
@@ -446,7 +480,6 @@ const AdminIndicatorReview: React.FC = () => {
       {/* ── Main Content ── */}
       <div className="flex-1 p-6 md:p-12">
         <div className="w-full max-w-6xl mx-auto space-y-10">
-
           {/* Summary Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
@@ -568,6 +601,10 @@ const AdminIndicatorReview: React.FC = () => {
                         sub.reviewStatus === "Pending" ||
                         sub.reviewStatus === "Correction Needed";
 
+                      const canDelete =
+                        sub.reviewStatus === "Rejected" ||
+                        sub.reviewStatus === "Pending";
+
                       return (
                         <div
                           key={sub.id}
@@ -581,7 +618,6 @@ const AdminIndicatorReview: React.FC = () => {
                         >
                           <div className="flex flex-col md:flex-row justify-between gap-8">
                             <div className="flex-1 space-y-6">
-
                               {/* Submission header */}
                               <div className="flex items-center justify-between flex-wrap gap-4">
                                 <div className="flex items-center gap-4">
@@ -635,6 +671,27 @@ const AdminIndicatorReview: React.FC = () => {
                                   >
                                     {sub.reviewStatus || "Pending"}
                                   </span>
+
+                                  {/* ── Delete button ── */}
+                                  {canDelete && (
+                                    <button
+                                      onClick={() =>
+                                        handleDeleteSubmission(sub.id)
+                                      }
+                                      disabled={deletingSubmissionId === sub.id}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all disabled:opacity-50"
+                                      title="Delete this submission"
+                                    >
+                                      {deletingSubmissionId === sub.id ? (
+                                        <Loader2
+                                          size={14}
+                                          className="animate-spin"
+                                        />
+                                      ) : (
+                                        <Trash2 size={14} />
+                                      )}
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 

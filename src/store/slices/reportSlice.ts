@@ -18,13 +18,14 @@ export interface ISubmission {
   year: number;
   achievedValue: number;
   notes: string;
-  reviewStatus: string;
+  reviewStatus: string;   // kept in the data but not rendered in the UI
   submittedAt: string;
   documents: IDocument[];
 }
 
 export interface IIndicator {
   indicatorId: string;
+  indicatorName: string;
   status: string;
   weight: number;
   unit: string;
@@ -38,7 +39,7 @@ export interface IIndicator {
   assignmentType: "User" | "Team";
   assigneeId: string;
   assigneeDisplayName: string;
-  assignedByName: string;
+  // assignedByName: string;   // <-- removed – no longer returned by the API
   submissions: ISubmission[];
 }
 
@@ -100,6 +101,7 @@ interface ReportState {
   filters: ReportFilters;
   loading: boolean;
   summaryLoading: boolean;
+  pdfLoading: boolean;
   error: string | null;
   selectedPlanId: string | null;
 }
@@ -111,6 +113,7 @@ const initialState: ReportState = {
   filters: {},
   loading: false,
   summaryLoading: false,
+  pdfLoading: false,
   error: null,
   selectedPlanId: null,
 };
@@ -136,7 +139,7 @@ function buildParams(filters: ReportFilters): string {
 
 /* ─── THUNKS ──────────────────────────────────────────────────────────────── */
 
-export const fetchTrackerReport = createAsyncThunk <
+export const fetchTrackerReport = createAsyncThunk<
   TrackerReportResponse,
   ReportFilters,
   { rejectValue: string }
@@ -154,7 +157,7 @@ export const fetchTrackerReport = createAsyncThunk <
   }
 );
 
-export const fetchReportByPlan = createAsyncThunk <
+export const fetchReportByPlan = createAsyncThunk<
   TrackerReportResponse,
   string,
   { rejectValue: string }
@@ -170,7 +173,7 @@ export const fetchReportByPlan = createAsyncThunk <
   }
 );
 
-export const fetchReportSummary = createAsyncThunk <
+export const fetchReportSummary = createAsyncThunk<
   SummaryResponse,
   void,
   { rejectValue: string }
@@ -186,7 +189,7 @@ export const fetchReportSummary = createAsyncThunk <
   }
 );
 
-export const downloadTrackerPdf = createAsyncThunk <
+export const downloadTrackerPdf = createAsyncThunk<
   boolean,
   ReportFilters,
   { rejectValue: string }
@@ -278,6 +281,20 @@ const reportSlice = createSlice({
       .addCase(fetchReportSummary.rejected, (state, action) => {
         state.summaryLoading = false;
         state.error          = action.payload ?? "Something went wrong.";
+      });
+
+    /* downloadTrackerPdf */
+    builder
+      .addCase(downloadTrackerPdf.pending, (state) => {
+        state.pdfLoading = true;
+        state.error      = null;
+      })
+      .addCase(downloadTrackerPdf.fulfilled, (state) => {
+        state.pdfLoading = false;
+      })
+      .addCase(downloadTrackerPdf.rejected, (state, action) => {
+        state.pdfLoading = false;
+        state.error       = action.payload ?? "Something went wrong.";
       });
   },
 });

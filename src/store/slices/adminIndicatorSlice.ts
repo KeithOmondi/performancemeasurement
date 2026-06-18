@@ -71,7 +71,6 @@ export interface IRejectDocumentPayload {
   reason: string;
 }
 
-// Indicator statuses as returned by backend recalcIndicatorStatus
 export type IndicatorStatus =
   | "Assigned"
   | "Awaiting Admin Approval"
@@ -80,7 +79,6 @@ export type IndicatorStatus =
   | "Awaiting Super Admin"
   | "Rejected by Super Admin"
   | "Verified";
-  
 
 export interface IAdminIndicator {
   id: string;
@@ -136,7 +134,7 @@ const initialState: IAdminIndicatorState = {
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
 
-// ─── Exported Helpers (for components) ───────────────────────────────────────
+// ─── Exported Helpers ───────────────────────────────────────────────────────
 
 export const getDocumentDescription = (doc: IDocument): string =>
   doc.description || doc.fileDescription || "";
@@ -194,26 +192,14 @@ export const getCorrectionNeededSubmissions = (
     (s) => s.reviewStatus === "Correction Needed"
   );
 
-// ─── Queue Refresh (updated logic) ───────────────────────────────────────────
+// ─── Queue Refresh ───────────────────────────────────────────────────────────
 
-/**
- * Refreshes derived queues based on current allAssignments.
- * - pendingAdminReview: Indicators that need admin attention (either first-time or correction)
- * - resubmittedWork: Indicators that have at least one resubmission awaiting review
- */
 const refreshQueues = (state: IAdminIndicatorState) => {
-  // Pending review includes:
-  // - "Awaiting Admin Approval" (new submission)
-  // - "Correction Needed" (after doc rejection or overall flag)
-  // Note: "Rejected by Admin" is NOT included because further actions require user resubmission.
-  // After resubmission, the status will become "Awaiting Admin Approval" again.
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) =>
       ind.status === "Awaiting Admin Approval" || ind.status === "Correction Needed"
   );
 
-  // Resubmitted work: indicators where any submission has resubmissionCount > 0
-  // and that submission is still pending admin review (not yet verified)
   state.resubmittedWork = state.allAssignments.filter((ind) =>
     Object.values(ind.submissions ?? {}).some((periodRows) =>
       periodRows.some(
@@ -316,7 +302,6 @@ export const approveSubmission = createAsyncThunk<
 >("adminIndicators/approve", async ({ id, payload }, { rejectWithValue }) => {
   try {
     await apiPrivate.patch(`/admin/${id}/approve`, payload);
-    // Re-fetch updated indicator
     const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
     return res.data?.data;
   } catch (error) {
@@ -345,7 +330,7 @@ export const reopenIndicator = createAsyncThunk<
 >("adminIndicators/reopen", async ({ id, payload }, { rejectWithValue }) => {
   try {
     const res = await apiPrivate.patch<{ data: IAdminIndicator }>(
-      `/admin/${id}/reopen`, // Ensure backend route exists
+      `/admin/${id}/reopen`,
       payload
     );
     return res.data.data;
@@ -382,6 +367,22 @@ export const rejectDocument = createAsyncThunk<
     return res.data?.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Document rejection failed"));
+  }
+});
+
+// ─── NEW: Delete Submission ──────────────────────────────────────────────────
+
+export const deleteSubmission = createAsyncThunk<
+  IAdminIndicator,
+  { indicatorId: string; submissionId: string },
+  { rejectValue: string }
+>("adminIndicators/deleteSubmission", async ({ indicatorId, submissionId }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.delete(`/admin/${indicatorId}/submissions/${submissionId}`);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${indicatorId}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Deletion failed"));
   }
 });
 
@@ -477,6 +478,14 @@ const adminIndicatorSlice = createSlice({
         upsertAndRefresh(state, action.payload);
       })
       .addCase(rejectDocument.rejected, setRejected("isReviewing"))
+
+      // ─── NEW: deleteSubmission ─────────────────────────────────────────────
+      .addCase(deleteSubmission.pending, setPending("isReviewing"))
+      .addCase(deleteSubmission.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(deleteSubmission.rejected, setRejected("isReviewing"))
 
       // reopenIndicator
       .addCase(reopenIndicator.pending, setPending("isReopening"))
