@@ -3,10 +3,34 @@ import { api } from "../../api/axios";
 
 /* ─── TYPES ──────────────────────────────────────────────────────────────── */
 
+export interface IDocument {
+  id: string;
+  submissionId: string;
+  evidenceUrl: string;
+  evidencePublicId: string;
+  fileType: string;
+  fileName: string;
+  description: string;
+  status: string;
+  rejectionReason: string | null;
+  uploadedAt: string;
+}
+
 export interface IExaminer {
   id:    string;
   name:  string;
   email: string;
+}
+
+export interface ISubmission {
+  submissionId: string;
+  quarter: number;
+  year: number;
+  achievedValue: number;
+  notes: string;
+  reviewStatus: string;
+  submittedAt: string;
+  documents: IDocument[];
 }
 
 export interface IFolderAssignment {
@@ -32,6 +56,7 @@ export interface ICompletedIndicator {
   assigneeDisplayName: string;
   deadline:            string;
   updatedAt:           string;
+  submissions?:        ISubmission[];
 }
 
 export interface IMyFolder {

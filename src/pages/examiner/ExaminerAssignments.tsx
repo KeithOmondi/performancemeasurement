@@ -2,11 +2,12 @@ import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   Loader2, Folder, Search, ShieldCheck,
-  AlertCircle, ChevronDown, ChevronUp, FileText,
+  AlertCircle, ChevronDown, ChevronUp, FileText, Eye,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchMyFolders } from "../../store/slices/examinerSlice";
-import type { IMyFolder, ICompletedIndicator } from "../../store/slices/examinerSlice";
+import type { IMyFolder, ICompletedIndicator, ISubmission, IDocument } from "../../store/slices/examinerSlice";
+import FilePreviewModal from "../PreviewModal";
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
 
@@ -28,37 +29,135 @@ const formatDate = (dateString: string): string => {
   });
 };
 
+/* ─── EVIDENCE CELL ──────────────────────────────────────────────────────── */
+
+interface EvidenceCellProps {
+  submissions?: ISubmission[];
+  onPreview: (doc: IDocument) => void;
+}
+
+const EvidenceCell = ({ submissions, onPreview }: EvidenceCellProps) => {
+  if (!submissions || submissions.length === 0) {
+    return (
+      <span className="text-gray-400 italic text-[11px]">No submissions yet</span>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {submissions.map((sub) => (
+        <div key={sub.submissionId}>
+          <p className="font-medium text-gray-800 text-[11px]">
+            • {sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`} {sub.year}
+          </p>
+
+          {sub.notes && (
+            <p className="text-gray-500 text-[11px] mb-1 pl-2 italic">
+              {sub.notes}
+            </p>
+          )}
+
+          {sub.documents && sub.documents.length > 0 ? (
+            <ul className="space-y-1.5 pl-2 mt-1">
+              {sub.documents.map((doc, idx) => {
+                const desc = doc.description?.trim();
+                return (
+                  <li
+                    key={idx}
+                    className="flex items-start justify-between gap-3 py-1.5 px-2 rounded-lg bg-slate-50 border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition-colors group"
+                  >
+                    <div className="flex items-start gap-2 min-w-0">
+                      <FileText
+                        size={12}
+                        className="text-emerald-600 mt-0.5 flex-shrink-0"
+                      />
+                      <div className="min-w-0">
+                        {desc ? (
+                          <p className="text-[11px] font-medium text-gray-700 leading-snug">
+                            {desc}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 italic leading-snug truncate max-w-[220px]">
+                            {doc.fileName || "Unnamed file"}
+                          </p>
+                        )}
+                        {desc && doc.fileName && (
+                          <p className="text-[9px] text-slate-400 truncate max-w-[220px] mt-0.5">
+                            {doc.fileName}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => onPreview(doc)}
+                      title="Preview file"
+                      className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-[9px] font-black uppercase tracking-wider text-slate-500 hover:border-emerald-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Eye size={10} />
+                      View
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-gray-400 italic text-[11px] pl-2">
+              No documents uploaded
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 /* ─── INDICATOR ROW ──────────────────────────────────────────────────────── */
 
-const IndicatorRow = ({ indicator }: { indicator: ICompletedIndicator }) => {
+interface IndicatorRowProps {
+  indicator: ICompletedIndicator;
+  onPreview: (doc: IDocument) => void;
+}
+
+const IndicatorRow = ({ indicator, onPreview }: IndicatorRowProps) => {
   const isOverdue =
     indicator.deadline &&
     new Date(indicator.deadline) < new Date() &&
     indicator.status !== "Completed";
 
   return (
-    <div className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl group hover:border-emerald-200 hover:shadow-sm transition-all">
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 flex-shrink-0">
-          <ShieldCheck size={16} />
-        </div>
-        <div className="min-w-0">
-          <p className="text-[12px] font-bold text-[#1a2c2c] truncate">
-            {indicator.activityDescription}
-          </p>
-          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-            <span className="text-[10px] text-slate-400 font-medium">
-              {indicator.assigneeDisplayName}
-            </span>
-            {indicator.deadline && (
-              <span
-                className={`text-[10px] font-bold ${
-                  isOverdue ? "text-red-500" : "text-slate-400"
-                }`}
-              >
-                Due {formatDate(indicator.deadline)}
+    <div className="flex items-start justify-between p-4 bg-white border border-slate-100 rounded-2xl group hover:border-emerald-200 hover:shadow-sm transition-all">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 flex-shrink-0 mt-0.5">
+            <ShieldCheck size={16} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-bold text-[#1a2c2c]">
+              {indicator.activityDescription}
+            </p>
+            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+              <span className="text-[10px] text-slate-400 font-medium">
+                {indicator.assigneeDisplayName}
               </span>
-            )}
+              {indicator.deadline && (
+                <span
+                  className={`text-[10px] font-bold ${
+                    isOverdue ? "text-red-500" : "text-slate-400"
+                  }`}
+                >
+                  Due {formatDate(indicator.deadline)}
+                </span>
+              )}
+            </div>
+
+            {/* Evidence Section */}
+            <div className="mt-3">
+              <EvidenceCell
+                submissions={indicator.submissions}
+                onPreview={onPreview}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -84,12 +183,13 @@ const IndicatorRow = ({ indicator }: { indicator: ICompletedIndicator }) => {
 /* ─── FOLDER CARD ────────────────────────────────────────────────────────── */
 
 interface FolderCardProps {
-  folder:   IMyFolder;
-  expanded: boolean;
-  onToggle: () => void;
+  folder:    IMyFolder;
+  expanded:  boolean;
+  onToggle:  () => void;
+  onPreview: (doc: IDocument) => void;
 }
 
-const FolderCard = ({ folder, expanded, onToggle }: FolderCardProps) => {
+const FolderCard = ({ folder, expanded, onToggle, onPreview }: FolderCardProps) => {
   const total = folder.completedIndicators.length;
   const color = getPerspectiveColor(folder.perspective);
 
@@ -156,7 +256,11 @@ const FolderCard = ({ folder, expanded, onToggle }: FolderCardProps) => {
             </div>
           ) : (
             folder.completedIndicators.map((ind) => (
-              <IndicatorRow key={ind.id} indicator={ind} />
+              <IndicatorRow
+                key={ind.id}
+                indicator={ind}
+                onPreview={onPreview}
+              />
             ))
           )}
         </div>
@@ -169,37 +273,35 @@ const FolderCard = ({ folder, expanded, onToggle }: FolderCardProps) => {
 
 const ExaminerAssignments = () => {
   const dispatch = useAppDispatch();
-
   const { myFolders, loading, error } = useAppSelector((s) => s.examiner);
 
   const [search,            setSearch]            = useState("");
   const [filterPerspective, setFilterPerspective] = useState("All");
+  const [manualToggles,     setManualToggles]     = useState<Record<string, boolean>>({});
 
-  /* ── Manual toggle overrides per folder.
-        No setState in effects — auto-expand is derived below. ── */
-  const [manualToggles, setManualToggles] = useState<Record<string, boolean>>({});
+  /* ── Preview modal state ── */
+  const [previewDoc, setPreviewDoc] = useState<IDocument | null>(null);
+
+  const openPreview  = (doc: IDocument) => setPreviewDoc(doc);
+  const closePreview = ()               => setPreviewDoc(null);
 
   const toggleFolder = (id: string) =>
     setManualToggles((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  /* ── If the user hasn't touched a folder, auto-expand when only one exists ── */
   const isExpanded = (id: string): boolean => {
     if (id in manualToggles) return manualToggles[id];
     return myFolders.length === 1;
   };
 
-  /* ── Fetch ── */
   useEffect(() => {
     dispatch(fetchMyFolders());
   }, [dispatch]);
 
-  /* ── Perspective filter list ── */
   const perspectives = useMemo(() => {
     const set = new Set(myFolders.map((f) => f.perspective));
     return ["All", ...Array.from(set).sort()];
   }, [myFolders]);
 
-  /* ── Filtered folders ── */
   const filtered = useMemo(() => {
     return myFolders.filter((f) => {
       const matchPerspective =
@@ -210,7 +312,6 @@ const ExaminerAssignments = () => {
     });
   }, [myFolders, filterPerspective, search]);
 
-  /* ── Summary counts ── */
   const totalIndicators = myFolders.reduce(
     (acc, f) => acc + f.completedIndicators.length,
     0
@@ -338,11 +439,21 @@ const ExaminerAssignments = () => {
                   folder={folder}
                   expanded={isExpanded(folder.objectiveId)}
                   onToggle={() => toggleFolder(folder.objectiveId)}
+                  onPreview={openPreview}
                 />
               ))
             )}
           </div>
         </>
+      )}
+
+      {/* File Preview Modal — rendered at page level via portal */}
+      {previewDoc && (
+        <FilePreviewModal
+          url={previewDoc.evidenceUrl}
+          fileName={previewDoc.fileName || previewDoc.description || "File Preview"}
+          onClose={closePreview}
+        />
       )}
     </div>
   );

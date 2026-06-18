@@ -12,7 +12,18 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import ORHC from "../../assets/ORHC.jpg";
 
 /* ─── STATUS BADGE (only "Completed" is shown) ───────────────────── */
+const StatusBadge = ({ status }: { status: string }) => {
+  // Only show "Complete" for completed indicators, everything else is blank
+  if (status !== "Completed") {
+    return null;
+  }
 
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+      Complete
+    </span>
+  );
+};
 
 /* ─── EVIDENCE CELL – only shows period, notes, and document descriptions ── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
@@ -211,9 +222,9 @@ const TablePerspectiveRows = ({
               <EvidenceCell submissions={indicator.submissions} />
             </td>
 
-            {/* ── Evaluation Point Person ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-800 font-medium">
-              —
+            {/* ── Status ── */}
+            <td className="border border-gray-300 px-3 py-3 text-gray-800">
+              <StatusBadge status={indicator.status} />
               {indicator.deadline && (
                 <div className="text-[10px] text-gray-400 mt-1">
                   Due:{" "}
@@ -401,7 +412,7 @@ const SuperAdminReports = () => {
                   Evidence
                 </th>
                 <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-28">
-                  Evaluation Point Person
+                  Status
                 </th>
               </tr>
             </thead>
