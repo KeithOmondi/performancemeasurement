@@ -9,7 +9,7 @@ import { login, requestOTP, reset } from "../../store/slices/auth/authSlice";
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
   admin: "/admin/dashboard",
-  examiner: "/examiner/dashboard", // Updated route link reference
+  examiner: "/examiner/dashboard",
   user: "/user/dashboard",
 };
 
@@ -62,132 +62,121 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-      {/* Branding */}
-      <div className="text-center mb-8 space-y-2">
-        <div className="flex justify-center mb-4">
-          <span className="flex items-center gap-2 bg-slate-200/50 text-slate-600 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest border border-slate-300">
-            <ShieldCheck size={14} className="text-[#2d5a43]" /> PMMU Portal
-          </span>
-        </div>
-        <h1 className="text-3xl md:text-2xl font-serif font-bold text-[#2d5a43] tracking-tight uppercase">
-          Office of the Registrar
-        </h1>
-        <p className="text-[#b19149] font-serif font-bold tracking-[0.3em] text-xs uppercase">
-          High Court of Kenya
-        </p>
-      </div>
-
-      {/* Card */}
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl overflow-hidden border-t-4 border-[#2d5a43]">
-        <div className="p-8">
-          <div className="text-center mb-8">
-            <h2 className="text-xl font-bold text-slate-800 font-serif">
-              LOGIN PAGE
-            </h2>
-            <p className="text-slate-500 font-serif text-sm mt-1">
-              {otpSent
-                ? "Verification code sent to your email."
-                : "Enter your PJ Number to access resources."}
-            </p>
+    <div className="flex min-h-screen items-center justify-center bg-stone-50 font-sans antialiased">
+      <div className="w-full max-w-[420px] rounded-lg bg-white p-8 md:p-10 shadow-lg ring-1 ring-stone-200/60">
+        
+        {/* Branding */}
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#1E4620] text-[#C29B38]">
+            <ShieldCheck className="h-6 w-6" />
           </div>
+          <h1 className="text-xl font-bold tracking-tight font-serif text-stone-900 uppercase">Office of the Registrar</h1>
+          <p className="mt-1 text-xs font-semibold tracking-wider font-serif text-[#A37F2B] uppercase">High Court of Kenya</p>
+        </div>
 
-          {!otpSent ? (
-            // ── Phase 1: PJ Number ────────────────────────────────────────
-            <form onSubmit={handleRequestOTP} className="space-y-6">
-              <div>
-                <label className="block font-serif text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                  PJ Number
-                </label>
-                <div className="relative">
-                  <User
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                    size={18}
-                  />
-                  <input
-                    type="text"
-                    value={pjNumber}
-                    onChange={(e) => setPjNumber(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#b19149] focus:bg-white outline-none transition-all placeholder:text-slate-300"
-                    placeholder="e.g. 12345"
-                    autoComplete="username"
-                    autoFocus
-                    required
-                  />
-                </div>
+        {/* Error banner - using toast instead */}
+        {isError && message && (
+          <div className="mb-5 border-l-4 border-red-600 bg-red-50 p-3 text-sm text-red-700 rounded-r-md">
+            <span>{message}</span>
+          </div>
+        )}
+
+        {!otpSent ? (
+          // Step 1: Request OTP
+          <form onSubmit={handleRequestOTP} className="flex flex-col gap-5">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="pjNumber" className="text-xs font-serif font-bold text-stone-700 uppercase tracking-wider">
+                PJ / Personnel Number
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
+                <input
+                  id="pjNumber"
+                  type="text"
+                  placeholder="e.g., PJ1001"
+                  value={pjNumber}
+                  onChange={(e) => setPjNumber(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full rounded border border-stone-300 bg-white pl-10 pr-3 py-2.5 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-[#1E4620] focus:ring-1 focus:ring-[#1E4620] disabled:bg-stone-50 disabled:text-stone-400"
+                  required
+                  autoFocus
+                />
               </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full font-serif bg-[#2d5a43] hover:bg-[#1f3f2e] disabled:opacity-60 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold tracking-widest text-xs transition-all shadow-lg flex items-center justify-center gap-2 group"
-              >
-                {isLoading ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  <>
-                    SEND VERIFICATION CODE
-                    <ArrowLeft
-                      size={16}
-                      className="rotate-180 group-hover:translate-x-1 transition-transform"
-                    />
-                  </>
-                )}
-              </button>
-            </form>
-          ) : (
-            // ── Phase 2: OTP Entry ────────────────────────────────────────
-            <form onSubmit={handleLogin} className="space-y-6">
+            </div>
+            <button 
+              type="submit" 
+              disabled={isLoading} 
+              className="w-full rounded bg-[#1E4620] font-serif py-2.5 text-sm font-semibold text-white shadow transition hover:bg-[#163317] focus:outline-none focus:ring-2 focus:ring-[#1E4620] focus:ring-offset-2 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin h-4 w-4" />
+                  Processing Request...
+                </>
+              ) : (
+                'Request Access Code'
+              )}
+            </button>
+          </form>
+        ) : (
+          // Step 2: Verify OTP
+          <form onSubmit={handleLogin} className="flex flex-col gap-5">
+            <div className="border-l-4 border-[#1E4620] bg-emerald-50/60 p-3 text-sm text-[#1E4620] rounded-r-md flex items-center justify-between">
+              <p className="leading-relaxed text-xs">
+                A secure 6‑digit verification code has been sent to your email.
+              </p>
               <button
                 type="button"
                 onClick={handleBack}
-                className="group text-xs font-bold text-[#2d5a43] flex items-center gap-1 hover:opacity-70 transition-opacity mb-4"
+                className="text-xs font-bold text-[#1E4620] hover:text-[#163317] transition-colors flex items-center gap-1 whitespace-nowrap ml-4"
               >
-                <ArrowLeft size={14} /> BACK TO PJ NUMBER
+                <ArrowLeft size={14} /> Change
               </button>
+            </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                  6-Digit Verification Code
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  value={otp}
-                  onChange={(e) =>
-                    setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
-                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-3xl tracking-[0.4em] font-serif font-bold text-[#2d5a43] focus:ring-2 focus:ring-[#2d5a43] outline-none"
-                  placeholder="000000"
-                  autoComplete="one-time-code"
-                  autoFocus
-                  required
-                />
-              </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="otpCode" className="text-xs font-serif font-bold text-stone-700 uppercase tracking-wider">
+                Verification Token
+              </label>
+              <input
+                id="otpCode"
+                type="text"
+                placeholder="0 0 0 0 0 0"
+                maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                disabled={isLoading}
+                className="w-full rounded border border-stone-300 bg-white px-3 py-2.5 text-center text-xl font-bold tracking-[0.3em] text-stone-900 outline-none transition placeholder:tracking-normal placeholder:text-sm placeholder:font-normal placeholder:text-stone-400 focus:border-[#1E4620] focus:ring-1 focus:ring-[#1E4620] disabled:bg-stone-50 disabled:text-stone-400"
+                required
+                autoFocus
+              />
+            </div>
 
-              <button
-                type="submit"
-                disabled={isLoading || otp.length !== 6}
-                className="w-full bg-[#b19149] hover:bg-[#8e743a] disabled:opacity-60 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold tracking-widest text-xs transition-all shadow-lg flex items-center justify-center"
-              >
-                {isLoading ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  "VERIFY & ACCESS PORTAL"
-                )}
-              </button>
-            </form>
-          )}
-        </div>
-      </div>
+            <button 
+              type="submit" 
+              disabled={isLoading || otp.length !== 6} 
+              className="w-full font-serif rounded bg-[#1E4620] py-2.5 text-sm font-semibold text-white shadow transition hover:bg-[#163317] focus:outline-none focus:ring-2 focus:ring-[#1E4620] focus:ring-offset-2 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin h-4 w-4" />
+                  Verifying...
+                </>
+              ) : (
+                'Verify & Grant Access'
+              )}
+            </button>
 
-      {/* Footer */}
-      <div className="mt-8 border-t border-slate-200 pt-4 w-64 text-center">
-        <p className="text-[10px] font-serif text-slate-400 font-medium">
-          © 2026 PMMU PORTAL | SECURE ACCESS
-        </p>
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={handleBack}
+              className="mt-1 text-center font-serif text-xs text-stone-500 underline transition hover:text-[#A37F2B] disabled:no-underline"
+            >
+              Modify PJ Number Entry
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+//import { createPortal } from "react-dom";
 import {
   Folder, ChevronDown, Search, RefreshCcw, Loader2, FileText,
   Target, ShieldCheck, Lock, Archive, AlertTriangle,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
-import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import {
   fetchIndicators,
   fetchIndicatorById,
@@ -14,55 +14,132 @@ import {
   type IIndicator,
 } from "../../store/slices/indicatorSlice";
 import { fetchRegistryStatus } from "../../store/slices/registrySlice";
-import IndicatorsPageIdModal from "../IndicatorsPageIdModal";
+import FilePreviewModal from "../PreviewModal";
+
+/* ─── TYPES ──────────────────────────────────────────────────────────────── */
+
+interface PreviewTarget {
+  url:      string;
+  fileName: string;
+}
+
+/* ─── HELPERS ────────────────────────────────────────────────────────────── */
+
+const getIndicatorDocs = (indicator: IIndicator): PreviewTarget[] => {
+  if (!indicator.submissions) return [];
+  return indicator.submissions
+    .flatMap((sub) =>
+      (sub.documents ?? []).map((doc) => ({
+        url:      doc.evidenceUrl ?? "",
+        fileName: doc.description?.trim() || doc.fileName || "Document",
+      }))
+    )
+    .filter((d) => d.url);
+};
+
+/* ─── DOCUMENT PICKER MODAL ──────────────────────────────────────────────── */
+
+interface DocPickerProps {
+  docs:    PreviewTarget[];
+  onPick:  (doc: PreviewTarget) => void;
+  onClose: () => void;
+}
+
+const DocPickerModal = ({ docs, onPick, onClose }: DocPickerProps) => (
+  <div className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <p className="text-[11px] font-black uppercase tracking-widest text-[#1d3331]">
+          Select Document to Preview
+        </p>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded-full hover:bg-slate-100 transition-colors text-slate-400"
+        >
+          ✕
+        </button>
+      </div>
+      <ul className="p-4 space-y-2 max-h-80 overflow-y-auto">
+        {docs.map((doc, idx) => (
+          <li key={idx}>
+            <button
+              onClick={() => onPick(doc)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-slate-100 hover:border-[#c2a336]/40 hover:bg-[#c2a336]/5 transition-all text-left group"
+            >
+              <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0">
+                <FileText size={14} className="text-slate-400" />
+              </div>
+              <p className="text-[11px] font-semibold text-slate-700 truncate group-hover:text-[#1d3331]">
+                {doc.fileName}
+              </p>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+);
+
+/* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
 
 const SuperAdminRegistry = () => {
   const dispatch = useAppDispatch();
 
-  // ── Selectors ──────────────────────────────────────────────────────────────
-  const { plans = [], loading } = useAppSelector((state) => state.strategicPlan);
-  const { users = [] } = useAppSelector((state) => state.users);
-  const {
-    indicators = [],
-    selectedIndicator,   // ← full detail from Redux (has submissions + reviewHistory)
-    detailLoading,       // ← shows spinner inside drawer while fetching
-  } = useAppSelector((state) => state.indicators);
-  const { settings = [], loading: registryLoading } = useAppSelector((state) => state.registry);
+  const { plans = [], loading }                          = useAppSelector((s) => s.strategicPlan);
+  const { indicators = [], detailLoading }               = useAppSelector((s) => s.indicators);
+  const { settings = [], loading: registryLoading }      = useAppSelector((s) => s.registry);
 
   const [activePerspective, setActivePerspective] = useState("All Indicators");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [searchTerm,        setSearchTerm]        = useState("");
+  const [expandedFolders,   setExpandedFolders]   = useState<Record<string, boolean>>({});
+  const [preview,           setPreview]           = useState<PreviewTarget | null>(null);
+  const [pickerDocs,        setPickerDocs]        = useState<PreviewTarget[] | null>(null);
 
-  const currentRegistry = useMemo(() => {
-    return settings.find((s) => s.isOpen) || settings[0];
-  }, [settings]);
+  const currentRegistry = useMemo(
+    () => settings.find((s) => s.isOpen) || settings[0],
+    [settings]
+  );
 
   const perspectives = [
-    "All Indicators", "Core Business", "Customer", "Financial", "Innovation & Learning", "Internal Process",
+    "All Indicators", "Core Business", "Customer",
+    "Financial", "Innovation & Learning", "Internal Process",
   ];
 
   useEffect(() => {
     dispatch(getAllStrategicPlans());
-    dispatch(fetchAllUsers());
     dispatch(fetchRegistryStatus());
     dispatch(fetchIndicators());
-    return () => {
-      dispatch(clearIndicatorError());
-    };
+    return () => { dispatch(clearIndicatorError()); };
   }, [dispatch]);
 
-  const toggleFolder = (id: string) => {
+  const toggleFolder = (id: string) =>
     setExpandedFolders((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const handleViewClick = async (indicator: IIndicator) => {
+    try {
+      const result = await dispatch(fetchIndicatorById(indicator.id)).unwrap();
+      dispatch(clearSelectedIndicator());
+      const docs = getIndicatorDocs(result as IIndicator);
+      console.log('📄 Documents found:', docs.length, docs);
+      if (docs.length === 0) {
+        console.warn('No documents found for this indicator');
+        return;
+      }
+      if (docs.length === 1) {
+        console.log('📄 Setting single preview:', docs[0]);
+        setPreview(docs[0]);
+      } else {
+        console.log('📄 Setting picker with multiple docs:', docs.length);
+        setPickerDocs(docs);
+      }
+    } catch (error) {
+      console.error('Error fetching indicator:', error);
+    }
   };
 
-  // Dispatch fetchIndicatorById — Redux populates selectedIndicator with full detail
-  const handleActivityClick = (indicator: IIndicator) => {
-    dispatch(fetchIndicatorById(indicator.id));
-  };
-
-  // Clear Redux selectedIndicator on drawer close
-  const handleCloseDrawer = () => {
-    dispatch(clearSelectedIndicator());
+  const handlePickerSelect = (doc: PreviewTarget) => {
+    setPickerDocs(null);
+    setPreview(doc);
   };
 
   const filteredRegistry = useMemo(() => {
@@ -70,13 +147,15 @@ const SuperAdminRegistry = () => {
       .filter(
         (plan) =>
           activePerspective === "All Indicators" ||
-          plan.perspective?.toLowerCase().includes(activePerspective.toLowerCase().split(" ")[0])
+          plan.perspective?.toLowerCase().includes(
+            activePerspective.toLowerCase().split(" ")[0]
+          )
       )
       .map((plan) => {
         const filteredObjectives = (plan.objectives ?? [])
           .map((obj) => {
             const activitiesWithIndicators = (obj.activities ?? []).map((act) => ({
-              activity: act,
+              activity:  act,
               indicator: indicators.find((ind) => ind.activityId === act.id),
             }));
 
@@ -89,7 +168,9 @@ const SuperAdminRegistry = () => {
             return {
               ...obj,
               activitiesWithIndicators: matchedActivities,
-              certifiedCount: matchedActivities.filter((item) => item.indicator?.status === "Completed").length,
+              certifiedCount: matchedActivities.filter(
+                (item) => item.indicator?.status === "Completed"
+              ).length,
               totalCount: matchedActivities.length,
             };
           })
@@ -100,6 +181,7 @@ const SuperAdminRegistry = () => {
       .filter((plan) => plan.objectives.length > 0);
   }, [plans, indicators, activePerspective, searchTerm]);
 
+  /* ── Loading ── */
   if ((loading || registryLoading) && plans.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
@@ -111,6 +193,7 @@ const SuperAdminRegistry = () => {
     );
   }
 
+  /* ── Render ── */
   return (
     <div className="p-4 md:p-8 bg-[#fcfcf7] min-h-screen font-sans text-[#1a2c2c]">
 
@@ -121,7 +204,9 @@ const SuperAdminRegistry = () => {
             <div className="bg-[#1d3331] p-2 rounded-lg shadow-xl shadow-[#1d3331]/20">
               <Archive className="text-[#c2a336]" size={20} />
             </div>
-            <h1 className="text-2xl font-black font-serif text-[#1d3331] tracking-tight uppercase">PMMU Registry</h1>
+            <h1 className="text-2xl font-black font-serif text-[#1d3331] tracking-tight uppercase">
+              PMMU Registry
+            </h1>
           </div>
           <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] ml-12">
             All submitted evidence, filed automatically under each indicator
@@ -131,13 +216,17 @@ const SuperAdminRegistry = () => {
         <div className="flex items-center gap-3">
           {currentRegistry && (
             <div className={`px-4 py-2.5 rounded-xl border flex items-center gap-3 ${
-              currentRegistry.isLocked ? "bg-amber-50 border-amber-200" : "bg-emerald-50 border-emerald-200"
+              currentRegistry.isLocked
+                ? "bg-amber-50 border-amber-200"
+                : "bg-emerald-50 border-emerald-200"
             }`}>
               {currentRegistry.isLocked
                 ? <Lock className="text-amber-600" size={16} />
                 : <ShieldCheck className="text-emerald-600" size={16} />}
               <div>
-                <p className="text-[8px] font-black uppercase text-slate-500 leading-none mb-1">Q{currentRegistry.quarter} Window</p>
+                <p className="text-[8px] font-black uppercase text-slate-500 leading-none mb-1">
+                  Q{currentRegistry.quarter} Window
+                </p>
                 <p className={`text-[10px] font-bold uppercase tracking-tighter leading-none ${
                   currentRegistry.isLocked ? "text-amber-700" : "text-emerald-700"
                 }`}>
@@ -154,20 +243,25 @@ const SuperAdminRegistry = () => {
             }}
             className="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase hover:border-[#c2a336] transition-all group"
           >
-            <RefreshCcw size={14} className="group-hover:rotate-180 transition-transform duration-700" /> Sync
+            <RefreshCcw size={14} className="group-hover:rotate-180 transition-transform duration-700" />
+            Sync
           </button>
         </div>
       </div>
 
       {/* LOCK BANNER */}
       {currentRegistry?.isLocked && (
-        <div className="mb-8 p-4 bg-amber-600 text-white rounded-2xl flex items-center justify-between shadow-lg">
-          <div className="flex items-center gap-4">
-            <div className="bg-white/20 p-2.5 rounded-xl"><AlertTriangle size={20} /></div>
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-wider">Registry System Locked</p>
-              <p className="text-[10px] font-medium opacity-90">{currentRegistry.lockedReason || "Formal auditing process in progress."}</p>
-            </div>
+        <div className="mb-8 p-4 bg-amber-600 text-white rounded-2xl flex items-center gap-4 shadow-lg">
+          <div className="bg-white/20 p-2.5 rounded-xl">
+            <AlertTriangle size={20} />
+          </div>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-wider">
+              Registry System Locked
+            </p>
+            <p className="text-[10px] font-medium opacity-90">
+              {currentRegistry.lockedReason || "Formal auditing process in progress."}
+            </p>
           </div>
         </div>
       )}
@@ -180,7 +274,9 @@ const SuperAdminRegistry = () => {
               key={p}
               onClick={() => setActivePerspective(p)}
               className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${
-                activePerspective === p ? "bg-[#1d3331] text-white shadow-lg" : "bg-transparent text-slate-400 hover:text-[#1d3331]"
+                activePerspective === p
+                  ? "bg-[#1d3331] text-white shadow-lg"
+                  : "bg-transparent text-slate-400 hover:text-[#1d3331]"
               }`}
             >
               {p}
@@ -194,7 +290,7 @@ const SuperAdminRegistry = () => {
             placeholder="Search Objective Folders..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none ring-[#c2a336]/20 transition-all"
+            className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none"
           />
         </div>
       </div>
@@ -205,18 +301,23 @@ const SuperAdminRegistry = () => {
           <div key={plan.id} className="space-y-4">
             <div className="flex items-center gap-4 px-2">
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
-              <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em]">{plan.perspective}</span>
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em]">
+                {plan.perspective}
+              </span>
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
             </div>
 
             {plan.objectives.map((obj) => {
-              const isFullyCertified = obj.certifiedCount === obj.totalCount && obj.totalCount > 0;
+              const isFullyCertified =
+                obj.certifiedCount === obj.totalCount && obj.totalCount > 0;
 
               return (
                 <div
                   key={obj.id}
                   className={`bg-white rounded-[1.8rem] border transition-all duration-500 overflow-hidden ${
-                    expandedFolders[obj.id] ? "border-[#c2a336]/30 shadow-2xl scale-[1.01]" : "border-slate-100 shadow-sm"
+                    expandedFolders[obj.id]
+                      ? "border-[#c2a336]/30 shadow-2xl scale-[1.01]"
+                      : "border-slate-100 shadow-sm"
                   }`}
                 >
                   <div
@@ -225,9 +326,13 @@ const SuperAdminRegistry = () => {
                   >
                     <div className="flex items-center gap-5">
                       <div className={`p-4 rounded-2xl transition-all shadow-sm ${
-                        isFullyCertified ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-500"
+                        isFullyCertified
+                          ? "bg-emerald-50 text-emerald-600"
+                          : "bg-amber-50 text-amber-500"
                       }`}>
-                        {isFullyCertified ? <ShieldCheck size={24} /> : <Folder className="fill-current" size={24} />}
+                        {isFullyCertified
+                          ? <ShieldCheck size={24} />
+                          : <Folder className="fill-current" size={24} />}
                       </div>
                       <div>
                         <h3 className="text-[13px] font-black text-[#1d3331] uppercase tracking-tight group-hover:text-[#c2a336]">
@@ -235,7 +340,9 @@ const SuperAdminRegistry = () => {
                         </h3>
                         <div className="flex items-center gap-3 mt-1.5">
                           <span className={`text-[8px] font-black px-2.5 py-1 rounded-lg uppercase ${
-                            isFullyCertified ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                            isFullyCertified
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
                           }`}>
                             {obj.certifiedCount} / {obj.totalCount} Tasks Completed
                           </span>
@@ -252,7 +359,7 @@ const SuperAdminRegistry = () => {
                   {expandedFolders[obj.id] && (
                     <div className="p-5 bg-slate-50/40 border-t border-slate-50 space-y-3">
                       {obj.activitiesWithIndicators?.map(({ activity, indicator }) => {
-                        const isCompleted = indicator?.status === "Completed";
+                        const isCompleted  = indicator?.status === "Completed";
                         const hasIndicator = !!indicator;
 
                         return (
@@ -262,9 +369,13 @@ const SuperAdminRegistry = () => {
                           >
                             <div className="flex items-center gap-4">
                               <div className={`p-2.5 rounded-xl ${
-                                isCompleted ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-300"
+                                isCompleted
+                                  ? "bg-emerald-50 text-emerald-600"
+                                  : "bg-slate-100 text-slate-300"
                               }`}>
-                                {isCompleted ? <ShieldCheck size={18} /> : <FileText size={18} />}
+                                {isCompleted
+                                  ? <ShieldCheck size={18} />
+                                  : <FileText size={18} />}
                               </div>
                               <div>
                                 <p className="text-[11px] font-bold text-slate-700 max-w-md line-clamp-1">
@@ -276,7 +387,9 @@ const SuperAdminRegistry = () => {
                                   </p>
                                   {indicator && (
                                     <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase ${
-                                      isCompleted ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                                      isCompleted
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-slate-100 text-slate-500"
                                     }`}>
                                       {indicator.status}
                                     </span>
@@ -286,9 +399,9 @@ const SuperAdminRegistry = () => {
                             </div>
 
                             <button
-                              onClick={() => indicator && handleActivityClick(indicator)}
-                              disabled={!hasIndicator}
-                              className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                              onClick={() => indicator && handleViewClick(indicator)}
+                              disabled={!hasIndicator || detailLoading}
+                              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
                                 !hasIndicator
                                   ? "bg-slate-100 text-slate-300 cursor-not-allowed"
                                   : isCompleted
@@ -296,7 +409,10 @@ const SuperAdminRegistry = () => {
                                   : "bg-[#1d3331] text-white hover:bg-[#c2a336] hover:text-[#1d3331]"
                               }`}
                             >
-                              {!hasIndicator ? "No Record" : isCompleted ? "View More" : "Examine"}
+                              {detailLoading && hasIndicator
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : null}
+                              {!hasIndicator ? "No Record" : "View"}
                             </button>
                           </div>
                         );
@@ -310,42 +426,33 @@ const SuperAdminRegistry = () => {
         ))}
       </div>
 
-      {/* DRAWER */}
-      <div className={`fixed inset-0 z-[300] transition-all duration-300 ${
-        selectedIndicator || detailLoading ? "visible opacity-100" : "invisible opacity-0"
-      }`}>
-        {/* Backdrop */}
-        <div
-          className="absolute inset-0 bg-[#1d3331]/60 backdrop-blur-md"
-          onClick={handleCloseDrawer}
-        />
-
-        {/* Panel */}
-        <div className={`fixed right-0 top-0 h-full w-full max-w-3xl bg-white shadow-2xl transition-transform duration-500 transform ${
-          selectedIndicator || detailLoading ? "translate-x-0" : "translate-x-full"
-        }`}>
-          {detailLoading ? (
-            /* Spinner while fetching full detail */
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <Loader2 className="animate-spin text-[#1d3331]" size={36} />
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                Loading Record...
-              </p>
-            </div>
-          ) : selectedIndicator ? (
-            <IndicatorsPageIdModal
-              indicator={selectedIndicator}
-              allStaff={users}
-              onClose={handleCloseDrawer}
-            />
-          ) : null}
-        </div>
-      </div>
-
+      {/* EMPTY STATE */}
       {filteredRegistry.length === 0 && (
         <div className="py-40 text-center bg-white rounded-[3rem] border-2 border-dashed border-slate-100 mt-10">
           <Target className="mx-auto text-slate-200 mb-4" size={48} />
-          <h3 className="text-xs font-black text-[#1d3331] uppercase tracking-[0.3em]">No Matching Records</h3>
+          <h3 className="text-xs font-black text-[#1d3331] uppercase tracking-[0.3em]">
+            No Matching Records
+          </h3>
+        </div>
+      )}
+
+      {/* MODALS - Rendered at the end with proper z-index */}
+      {pickerDocs && (
+        <DocPickerModal
+          docs={pickerDocs}
+          onPick={handlePickerSelect}
+          onClose={() => setPickerDocs(null)}
+        />
+      )}
+
+      {/* File Preview with high z-index wrapper */}
+      {preview && (
+        <div className="relative z-[9999]">
+          <FilePreviewModal
+            url={preview.url}
+            fileName={preview.fileName}
+            onClose={() => setPreview(null)}
+          />
         </div>
       )}
     </div>

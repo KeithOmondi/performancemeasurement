@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Target,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
@@ -105,6 +106,7 @@ interface HealthPanelProps {
   pendingReview: number;
   returned: number;
   approved: number;
+  onTrack: number;
 }
 
 const HealthPanel = ({
@@ -114,9 +116,8 @@ const HealthPanel = ({
   pendingReview,
   returned,
   approved,
+  onTrack,
 }: HealthPanelProps) => {
-  const onTrack = Math.max(0, assigned - overdue - pendingReview - returned - approved);
-
   const pipeline = [
     { label: "Assigned", value: assigned, color: "#185FA5" },
     { label: "Pending review", value: pendingReview, color: "#BA7517" },
@@ -248,6 +249,7 @@ const SuperAdminDashboard = () => {
         pendingReview: 0,
         approved: 0,
         returnedForCorrection: 0,
+        onTrack: 0,
       };
     }
 
@@ -272,7 +274,10 @@ const SuperAdminDashboard = () => {
       ["Rejected by Admin", "Rejected by Super Admin"].includes(ind.status)
     ).length;
 
-    return { total, assigned, unassigned, overdue, pendingReview, approved, returnedForCorrection };
+    // On track = assigned - overdue - pendingReview - returnedForCorrection - approved
+    const onTrack = Math.max(0, assigned - overdue - pendingReview - returnedForCorrection - approved);
+
+    return { total, assigned, unassigned, overdue, pendingReview, approved, returnedForCorrection, onTrack };
   }, [indicators]);
 
   // Perspectives (unchanged)
@@ -347,6 +352,7 @@ const SuperAdminDashboard = () => {
     { label: "Total indicators", value: stats.total, color: "bg-[#1d3331]", icon: FileText, filter: "ALL" },
     { label: "Assigned", value: stats.assigned, color: "bg-emerald-600", icon: CheckCircle2, filter: "ASSIGNED" },
     { label: "Unassigned", value: stats.unassigned, color: "bg-amber-500", icon: AlertCircle, filter: "UNASSIGNED" },
+    { label: "On track", value: stats.onTrack, color: "bg-emerald-600", icon: Target, filter: "ON_TRACK" },
     { label: "Pending review", value: stats.pendingReview, color: "bg-blue-500", icon: Clock, filter: "REVIEW" },
     { label: "Approved", value: stats.approved, color: "bg-emerald-600", icon: CheckCircle2, filter: "ALL" },
   ];
@@ -373,7 +379,7 @@ const SuperAdminDashboard = () => {
       )}
 
       <div className="space-y-6 mb-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           {statCards.map((card) => (
             <Link
               key={card.label}
@@ -452,6 +458,7 @@ const SuperAdminDashboard = () => {
         pendingReview={stats.pendingReview}
         returned={stats.returnedForCorrection}
         approved={stats.approved}
+        onTrack={stats.onTrack}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-12">

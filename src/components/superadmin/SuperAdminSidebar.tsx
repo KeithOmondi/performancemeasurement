@@ -135,7 +135,7 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
     },
     {
       type: "link",
-      name: "PMMU Registry",
+      name: "ORHC Registry",
       path: "/superadmin/registry",
       icon: <Folder size={18} />,
     },

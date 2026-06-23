@@ -4,13 +4,13 @@ import { useDispatch } from "react-redux";
 import {
   LayoutDashboard,
   FileCheck,
-  Users,
   Settings,
   LogOut,
   X,
   BarChart3,
   CheckCircle,
   AlertCircle,
+  File,
 } from "lucide-react";
 import type { AppDispatch } from "../../store/store";
 import { logout } from "../../store/slices/auth/authSlice";
@@ -60,7 +60,7 @@ const menuItems: MenuItem[] = [
 
   { type: "label", title: "MANAGEMENT" },
 
-  { name: "Staff Overview", path: "/admin/staff", icon: <Users size={18} /> },
+  { name: "Reports", path: "/admin/reports", icon: <File size={18} /> },
   { name: "System Settings", path: "/admin/settings", icon: <Settings size={18} /> },
 ];
 

@@ -11,25 +11,28 @@ import {
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import ORHC from "../../assets/ORHC.jpg";
 
-/* ─── STATUS BADGE (only "Completed" is shown) ───────────────────── */
+/* ─── STATUS BADGE ──────────────────────────────────────────────────── */
 const StatusBadge = ({ status }: { status: string }) => {
-  // Only show "Complete" for completed indicators, everything else is blank
-  if (status !== "Completed") {
-    return null;
-  }
-
+  const isCompleted = status === "Completed";
+  
   return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-      Complete
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+        isCompleted
+          ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
+          : "bg-amber-100 text-amber-700 border border-amber-200"
+      }`}
+    >
+      {isCompleted ? "Complete" : "Incomplete"}
     </span>
   );
 };
 
-/* ─── EVIDENCE CELL – only shows period, notes, and document descriptions ── */
+/* ─── EVIDENCE CELL – only shows notes and document descriptions ── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
     return (
-      <span className="text-gray-400 italic text-[11px]">
+      <span className="text-slate-400 italic text-[10px] font-medium">
         No submissions yet
       </span>
     );
@@ -39,22 +42,19 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
     <div className="space-y-3">
       {submissions.map((sub) => (
         <div key={sub.submissionId}>
-          <p className="font-semibold text-gray-800 mb-1">
-            • {sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`} {sub.year}
-          </p>
           {sub.notes && (
-            <p className="text-gray-600 text-[11px] mb-1 italic pl-2">
+            <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
               {sub.notes}
             </p>
           )}
           {sub.documents && sub.documents.length > 0 && (
-            <ul className="space-y-1 pl-2">
+            <ul className="space-y-1 pl-3 mt-1.5">
               {sub.documents.map((doc, idx) => {
                 const desc = doc.description?.trim();
                 return desc ? (
-                  <li key={idx} className="flex gap-2 text-gray-700">
-                    <span className="text-gray-400 mt-0.5 shrink-0">❖</span>
-                    <span>{desc}</span>
+                  <li key={idx} className="flex gap-2 text-[10px] text-slate-700">
+                    <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
+                    <span className="font-medium">{desc}</span>
                   </li>
                 ) : null;
               })}
@@ -76,10 +76,10 @@ const SummaryCards = () => {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="bg-white rounded-lg border border-gray-200 p-4 animate-pulse"
+            className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse shadow-sm"
           >
-            <div className="h-3 bg-gray-200 rounded w-2/3 mb-2" />
-            <div className="h-6 bg-gray-200 rounded w-1/3" />
+            <div className="h-3 bg-slate-200 rounded w-2/3 mb-2" />
+            <div className="h-7 bg-slate-200 rounded w-1/3" />
           </div>
         ))}
       </div>
@@ -96,11 +96,11 @@ const SummaryCards = () => {
     { total: 0, completed: 0, awaitingReview: 0, overdue: 0 }
   );
 
-  const cards: { label: string; value: number; colour: string }[] = [
-    { label: "Total Indicators", value: totals.total,          colour: "text-gray-800" },
-    { label: "Completed",        value: totals.completed,       colour: "text-green-700" },
-    { label: "Awaiting Review",  value: totals.awaitingReview,  colour: "text-blue-700" },
-    { label: "Overdue",          value: totals.overdue,         colour: "text-red-600" },
+  const cards: { label: string; value: number; colour: string; bg: string }[] = [
+    { label: "Total Indicators", value: totals.total,          colour: "text-[#1d3331]", bg: "bg-slate-50" },
+    { label: "Complete",         value: totals.completed,      colour: "text-emerald-700", bg: "bg-emerald-50" },
+    { label: "Incomplete",       value: totals.total - totals.completed, colour: "text-amber-700", bg: "bg-amber-50" },
+    { label: "Overdue",          value: totals.overdue,        colour: "text-red-600", bg: "bg-red-50" },
   ];
 
   return (
@@ -108,10 +108,12 @@ const SummaryCards = () => {
       {cards.map((c) => (
         <div
           key={c.label}
-          className="bg-white rounded-lg border border-gray-200 p-4"
+          className={`${c.bg} rounded-xl border border-slate-200 p-5 shadow-sm`}
         >
-          <p className="text-[11px] text-gray-500 mb-1">{c.label}</p>
-          <p className={`text-2xl font-semibold ${c.colour}`}>{c.value}</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+            {c.label}
+          </p>
+          <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
         </div>
       ))}
     </div>
@@ -122,7 +124,7 @@ const SummaryCards = () => {
 const TableSkeleton = () => (
   <div className="space-y-2">
     {Array.from({ length: 5 }).map((_, i) => (
-      <div key={i} className="h-10 bg-gray-200 rounded animate-pulse" />
+      <div key={i} className="h-12 bg-slate-200 rounded-xl animate-pulse" />
     ))}
   </div>
 );
@@ -167,74 +169,61 @@ const TablePerspectiveRows = ({
       <tr>
         <td
           colSpan={6}
-          className="border border-gray-300 px-3 py-2 font-semibold
-                     text-green-900 text-xs bg-green-100"
+          className="border border-slate-200 px-4 py-2.5 font-black text-[10px]
+                     text-[#1d3331] uppercase tracking-wider bg-[#1d3331]/5"
         >
           {perspective.perspective}
         </td>
       </tr>
 
       {flatRows.map(({ objective, activity, indicator, isFirstForObjective }) => {
-        // getIndex() still called to keep numbering consistent elsewhere
-        // (e.g. if the PDF or another view still needs it), but it's no
-        // longer rendered in this column.
         getIndex();
         const indicatorLabel = objective.title?.trim() || activity.description;
 
         return (
           <tr
             key={indicator.indicatorId}
-            className="align-top hover:bg-gray-50 transition-colors"
+            className="align-top hover:bg-slate-50/80 transition-colors"
           >
             {/* ── Indicators column ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-800">
+            <td className="border border-slate-200 px-4 py-3 text-[11px] font-bold text-[#1a2c2c]">
               {isFirstForObjective && (
-                <div className="font-medium">
+                <div className="font-bold">
                   {indicatorLabel}
                 </div>
               )}
             </td>
 
             {/* ── Unit of Measure ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-700 text-center">
+            <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-600 text-center">
               {indicator.unit || "%"}
             </td>
 
             {/* ── Explanatory Notes ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-800">
+            <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
               {indicator.instructions && (
-                <p className="mt-1 text-[11px] text-gray-500 italic">
+                <p className="mt-1 text-[10px] text-slate-400 italic font-medium">
                   {indicator.instructions}
                 </p>
               )}
             </td>
 
             {/* ── Responsibility ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-800">
-              <div className="font-medium" title={indicator.assigneeDisplayName || undefined}>
+            <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
+              <div className="font-semibold" title={indicator.assigneeDisplayName || undefined}>
                 {indicator.assigneeDisplayName || "Unassigned"}
               </div>
             </td>
 
             {/* ── Evidence ── */}
-            <td className="border border-gray-300 px-3 py-3">
+            <td className="border border-slate-200 px-4 py-3">
               <EvidenceCell submissions={indicator.submissions} />
             </td>
 
             {/* ── Status ── */}
-            <td className="border border-gray-300 px-3 py-3 text-gray-800">
+            <td className="border border-slate-200 px-4 py-3">
               <StatusBadge status={indicator.status} />
-              {indicator.deadline && (
-                <div className="text-[10px] text-gray-400 mt-1">
-                  Due:{" "}
-                  {new Date(indicator.deadline).toLocaleDateString("en-KE", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </div>
-              )}
             </td>
           </tr>
         );
@@ -301,39 +290,41 @@ const AdminReports = () => {
   let indicatorIndex = 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 font-sans text-[#1a2c2c]">
 
-      <div className="mb-6 text-center">
-        <div className="flex items-center justify-center gap-3 mb-3">
-          <div className="w-100 h-50 rounded-[0.5rem] overflow-hidden flex items-center justify-center bg-white">
+      {/* ── HEADER ── */}
+      <div className="mb-8 text-center">
+        <div className="flex items-center justify-center mb-4">
+          <div className="w-32 h-20 rounded-lg overflow-hidden flex items-center justify-center bg-white shadow-sm border border-slate-200">
             <img
               src={ORHC}
               alt="ORHC logo"
-              className="w-full h-full object-contain"
+              className="w-full h-full object-contain p-2"
             />
           </div>
         </div>
-        <h1 className="text-base font-serif font-semibold text-gray-800 tracking-wide">
+        <h1 className="text-xl font-black font-serif text-[#1d3331] tracking-tight uppercase">
           RHC 2025/2026 PMMU 1ST JULY 2025 TO 30TH JUNE 2026
         </h1>
-        <p className="text-sm font-semibold font-serif text-gray-700 tracking-widest mt-1">
-          IMPLEMENTATION AND EVALUATION TRACKER
+        <p className="text-[10px] font-black font-serif text-[#c2a336] uppercase tracking-[0.3em] mt-1">
+          Implementation and Evaluation Tracker
         </p>
       </div>
 
+      {/* ── SUMMARY CARDS ── */}
       <SummaryCards />
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-
-        <div className="flex flex-wrap gap-2">
+      {/* ── FILTERS ── */}
+      <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1">
           {["all", "A", "B", "C", "D"].map((p) => (
             <button
               key={p}
               onClick={() => setActivePerspective(p)}
-              className={`px-3 py-1 text-xs rounded border transition-colors ${
+              className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${
                 activePerspective === p
-                  ? "bg-green-700 text-white border-green-700"
-                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100"
+                  ? "bg-[#1d3331] text-white shadow-lg"
+                  : "bg-transparent text-slate-400 hover:text-[#1d3331]"
               }`}
             >
               {p === "all" ? "All Sections" : `Section ${p}`}
@@ -345,18 +336,19 @@ const AdminReports = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs border border-gray-300 rounded px-2 py-1.5 bg-white text-gray-700
-                       focus:outline-none focus:ring-1 focus:ring-green-500"
+            className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white text-slate-600
+                       focus:outline-none focus:ring-2 focus:ring-[#1d3331]/20 focus:border-[#1d3331] transition-all"
           >
             <option value="">All Statuses</option>
-            <option value="Completed">Completed</option>
+            <option value="Completed">Complete</option>
+            <option value="Incomplete">Incomplete</option>
           </select>
 
           {(statusFilter || activePerspective !== "all") && (
             <button
               onClick={handleClearFilters}
-              className="text-xs text-gray-500 hover:text-red-500 border border-gray-300
-                         rounded px-2 py-1.5 bg-white transition-colors"
+              className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
+                         rounded-xl px-4 py-2.5 bg-white transition-all hover:border-red-300"
             >
               Clear
             </button>
@@ -365,8 +357,8 @@ const AdminReports = () => {
           <button
             onClick={() => dispatch(fetchTrackerReport(filters))}
             disabled={loading}
-            className="text-xs border border-gray-300 rounded px-3 py-1.5 bg-white
-                       text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition-colors"
+            className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white
+                       text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-all"
           >
             {loading ? "Loading…" : "↻ Refresh"}
           </button>
@@ -374,44 +366,46 @@ const AdminReports = () => {
           <button
             onClick={handleDownloadPdf}
             disabled={pdfLoading || loading}
-            className="text-xs bg-green-700 text-white rounded px-3 py-1.5
-                       hover:bg-green-800 disabled:opacity-50 transition-colors
-                       flex items-center gap-1"
+            className="text-[9px] font-black uppercase tracking-wider bg-[#1d3331] text-white rounded-xl px-5 py-2.5
+                       hover:bg-[#c2a336] hover:text-[#1d3331] disabled:opacity-50 transition-all
+                       flex items-center gap-2"
           >
             {pdfLoading ? "Generating…" : "⬇ Download PDF"}
           </button>
         </div>
       </div>
 
+      {/* ── ERROR ── */}
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+        <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-600 rounded-r-xl text-[11px] text-red-700 font-medium">
           {error}
         </div>
       )}
 
+      {/* ── TABLE ── */}
       {loading && <TableSkeleton />}
 
       {!loading && (
-        <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-xs border-collapse">
             <thead>
-              <tr className="bg-green-200 text-green-900">
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-28">
-                  INDICATORS
+              <tr className="bg-[#1d3331] text-white">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider w-28">
+                  Indicators
                 </th>
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-16">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider w-20">
                   Unit of Measure
                 </th>
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-44">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider w-44">
                   Explanatory Notes
                 </th>
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-36">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider w-36">
                   Responsibility
                 </th>
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider">
                   Evidence
                 </th>
-                <th className="border border-gray-300 px-3 py-3 text-left font-semibold w-28">
+                <th className="border border-[#2d4a48] px-4 py-3.5 text-left font-black text-[9px] uppercase tracking-wider w-32">
                   Status
                 </th>
               </tr>
@@ -422,7 +416,7 @@ const AdminReports = () => {
                 <tr>
                   <td
                     colSpan={6}
-                    className="text-center py-12 text-gray-400 text-sm"
+                    className="text-center py-16 text-[11px] text-slate-400 font-bold uppercase tracking-widest"
                   >
                     No indicators found.
                   </td>
@@ -441,13 +435,16 @@ const AdminReports = () => {
         </div>
       )}
 
-      <div className="mt-4 text-center text-xs text-gray-400">
-        RHC PMMU Tracker · FY 2024/2025 · Generated{" "}
-        {new Date().toLocaleDateString("en-KE", {
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        })}
+      {/* ── FOOTER ── */}
+      <div className="mt-6 text-center">
+        <p className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-300">
+          RHC PMMU Tracker · FY 2024/2025 · Generated{" "}
+          {new Date().toLocaleDateString("en-KE", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+        </p>
       </div>
     </div>
   );

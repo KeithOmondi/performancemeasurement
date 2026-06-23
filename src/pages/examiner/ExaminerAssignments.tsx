@@ -1,115 +1,30 @@
 import { useEffect, useState, useMemo } from "react";
-import { Link } from "react-router-dom";
 import {
-  Loader2, Folder, Search, ShieldCheck,
-  AlertCircle, ChevronDown, ChevronUp, FileText, Eye,
+  Loader2, Folder, Search, AlertCircle,
+  ChevronDown, FileText, RefreshCcw, FolderOpen,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchMyFolders } from "../../store/slices/examinerSlice";
 import type { IMyFolder, ICompletedIndicator, ISubmission, IDocument } from "../../store/slices/examinerSlice";
 import FilePreviewModal from "../PreviewModal";
 
-/* ─── HELPERS ────────────────────────────────────────────────────────────── */
+/* ─── HELPERS ─────────────────────────────────────────────────────────────── */
 
-const getPerspectiveColor = (perspective: string): string => {
-  const map: Record<string, string> = {
-    "Core Business / Mandate": "#1d3331",
-    "Customer Perspective":    "#185FA5",
-    "Finance Perspective":     "#3B6D11",
-    "Innovation & Learning":   "#BA7517",
-    "Internal Process":        "#7C3B8C",
-  };
-  return map[perspective] ?? "#475569";
-};
+const PERSPECTIVE_TABS = [
+  "All Indicators",
+  "Core Business",
+  "Customer",
+  "Financial",
+  "Innovation & Learning",
+  "Internal Process",
+] as const;
 
-const formatDate = (dateString: string): string => {
-  if (!dateString) return "—";
-  return new Date(dateString).toLocaleDateString("en-GB", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
-};
-
-/* ─── EVIDENCE CELL ──────────────────────────────────────────────────────── */
-
-interface EvidenceCellProps {
-  submissions?: ISubmission[];
-  onPreview: (doc: IDocument) => void;
-}
-
-const EvidenceCell = ({ submissions, onPreview }: EvidenceCellProps) => {
-  if (!submissions || submissions.length === 0) {
-    return (
-      <span className="text-gray-400 italic text-[11px]">No submissions yet</span>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {submissions.map((sub) => (
-        <div key={sub.submissionId}>
-          <p className="font-medium text-gray-800 text-[11px]">
-            • {sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`} {sub.year}
-          </p>
-
-          {sub.notes && (
-            <p className="text-gray-500 text-[11px] mb-1 pl-2 italic">
-              {sub.notes}
-            </p>
-          )}
-
-          {sub.documents && sub.documents.length > 0 ? (
-            <ul className="space-y-1.5 pl-2 mt-1">
-              {sub.documents.map((doc, idx) => {
-                const desc = doc.description?.trim();
-                return (
-                  <li
-                    key={idx}
-                    className="flex items-start justify-between gap-3 py-1.5 px-2 rounded-lg bg-slate-50 border border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition-colors group"
-                  >
-                    <div className="flex items-start gap-2 min-w-0">
-                      <FileText
-                        size={12}
-                        className="text-emerald-600 mt-0.5 flex-shrink-0"
-                      />
-                      <div className="min-w-0">
-                        {desc ? (
-                          <p className="text-[11px] font-medium text-gray-700 leading-snug">
-                            {desc}
-                          </p>
-                        ) : (
-                          <p className="text-[11px] text-slate-400 italic leading-snug truncate max-w-[220px]">
-                            {doc.fileName || "Unnamed file"}
-                          </p>
-                        )}
-                        {desc && doc.fileName && (
-                          <p className="text-[9px] text-slate-400 truncate max-w-[220px] mt-0.5">
-                            {doc.fileName}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => onPreview(doc)}
-                      title="Preview file"
-                      className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-[9px] font-black uppercase tracking-wider text-slate-500 hover:border-emerald-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      <Eye size={10} />
-                      View
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="text-gray-400 italic text-[11px] pl-2">
-              No documents uploaded
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+const PERSPECTIVE_MATCH: Record<string, string> = {
+  "Core Business":         "Core Business / Mandate",
+  "Customer":              "Customer Perspective",
+  "Financial":             "Finance Perspective",
+  "Innovation & Learning": "Innovation & Learning",
+  "Internal Process":      "Internal Process",
 };
 
 /* ─── INDICATOR ROW ──────────────────────────────────────────────────────── */
@@ -119,66 +34,43 @@ interface IndicatorRowProps {
   onPreview: (doc: IDocument) => void;
 }
 
-const IndicatorRow = ({ indicator, onPreview }: IndicatorRowProps) => {
-  const isOverdue =
-    indicator.deadline &&
-    new Date(indicator.deadline) < new Date() &&
-    indicator.status !== "Completed";
-
-  return (
-    <div className="flex items-start justify-between p-4 bg-white border border-slate-100 rounded-2xl group hover:border-emerald-200 hover:shadow-sm transition-all">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 flex-shrink-0 mt-0.5">
-            <ShieldCheck size={16} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-bold text-[#1a2c2c]">
-              {indicator.activityDescription}
-            </p>
-            <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-              <span className="text-[10px] text-slate-400 font-medium">
-                {indicator.assigneeDisplayName}
-              </span>
-              {indicator.deadline && (
-                <span
-                  className={`text-[10px] font-bold ${
-                    isOverdue ? "text-red-500" : "text-slate-400"
-                  }`}
-                >
-                  Due {formatDate(indicator.deadline)}
-                </span>
-              )}
-            </div>
-
-            {/* Evidence Section */}
-            <div className="mt-3">
-              <EvidenceCell
-                submissions={indicator.submissions}
-                onPreview={onPreview}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-        <span className="text-[13px] font-bold text-emerald-700">
-          {indicator.progress}%
-        </span>
-        <span className="text-[8px] font-black px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 uppercase tracking-wider border border-emerald-100">
-          Completed
-        </span>
-        <Link
-          to={`/examiner/review/${indicator.id}`}
-          className="px-3 py-1.5 bg-[#1d3331] text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-800 transition-colors"
-        >
-          Review
-        </Link>
-      </div>
+const IndicatorRow = ({ indicator, onPreview }: IndicatorRowProps) => (
+  <div className="flex items-start px-5 py-4 bg-white rounded-2xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all gap-4">
+    <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+      <FileText size={16} className="text-slate-400" />
     </div>
-  );
-};
+
+    <div className="min-w-0 flex-1">
+      <p className="text-[12px] font-bold text-[#1a2c2c] leading-snug">
+        {indicator.activityDescription}
+      </p>
+
+      {/* Documents only — no period label, no metadata row, no Examine button */}
+      {indicator.submissions && indicator.submissions.length > 0 && (
+        <div className="mt-2.5 space-y-1">
+          {indicator.submissions.map((sub: ISubmission) =>
+            sub.documents?.map((doc: IDocument, idx: number) => (
+              <div
+                key={`${sub.submissionId}-${idx}`}
+                className="flex items-center justify-between gap-2 pl-3 py-1 rounded-lg hover:bg-slate-50 transition-colors group"
+              >
+                <p className="text-[10px] text-slate-500 truncate max-w-[400px]">
+                  {doc.description?.trim() || doc.fileName || "Unnamed file"}
+                </p>
+                <button
+                  onClick={() => onPreview(doc)}
+                  className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[8px] font-black uppercase tracking-wider text-slate-400 hover:border-[#c2a336] hover:text-[#1d3331] transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  View
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+);
 
 /* ─── FOLDER CARD ────────────────────────────────────────────────────────── */
 
@@ -191,66 +83,52 @@ interface FolderCardProps {
 
 const FolderCard = ({ folder, expanded, onToggle, onPreview }: FolderCardProps) => {
   const total = folder.completedIndicators.length;
-  const color = getPerspectiveColor(folder.perspective);
 
   return (
-    <div
-      className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden ${
-        expanded ? "border-emerald-200 shadow-md" : "border-slate-100 shadow-sm"
-      }`}
-    >
-      {/* Perspective colour bar */}
-      <div className="h-1 w-full" style={{ background: color }} />
-
+    <div className={`bg-white rounded-2xl border transition-all duration-200 overflow-hidden ${
+      expanded ? "border-slate-200 shadow-md" : "border-slate-100 shadow-sm"
+    }`}>
       {/* Header */}
       <div
         onClick={onToggle}
-        className="p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50/50 transition-colors"
+        className="px-6 py-5 flex items-center justify-between cursor-pointer hover:bg-slate-50/60 transition-colors"
       >
-        <div className="flex items-center gap-4">
-          <div
-            className="p-3 rounded-2xl flex-shrink-0"
-            style={{ background: `${color}15`, color }}
-          >
-            {total > 0 ? <ShieldCheck size={20} /> : <Folder size={20} />}
+        <div className="flex items-center gap-5">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center flex-shrink-0">
+            {expanded
+              ? <FolderOpen size={28} className="text-amber-500 fill-amber-400" />
+              : <Folder     size={28} className="text-amber-500 fill-amber-400" />
+            }
           </div>
+
           <div>
             <h3 className="text-[13px] font-black text-[#1d3331] uppercase tracking-tight">
               {folder.objectiveTitle}
             </h3>
-            <div className="flex items-center gap-3 mt-1 flex-wrap">
-              <span
-                className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full"
-                style={{
-                  color,
-                  background: `${color}15`,
-                  border:     `1px solid ${color}30`,
-                }}
-              >
-                {folder.perspective}
-              </span>
-              <span className="text-[10px] text-slate-400 font-medium">
-                {total} completed indicator{total !== 1 ? "s" : ""}
-              </span>
-              <span className="text-[10px] text-slate-400">
-                · Assigned {formatDate(folder.assignedAt)}
+            {/* Removed: assignedAt date */}
+            <div className="flex items-center gap-3 mt-2">
+              <span className="text-[8px] font-black uppercase tracking-widest px-3 py-1 rounded-full bg-amber-50 text-amber-600 border border-amber-100">
+                {total} / {total} Task{total !== 1 ? "s" : ""} Completed
               </span>
             </div>
           </div>
         </div>
 
-        <div className={`transition-colors ${expanded ? "text-emerald-600" : "text-slate-300"}`}>
-          {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </div>
+        <ChevronDown
+          size={20}
+          className={`text-slate-400 transition-transform duration-300 flex-shrink-0 ${
+            expanded ? "rotate-180" : ""
+          }`}
+        />
       </div>
 
-      {/* Expanded indicators */}
+      {/* Expanded content */}
       {expanded && (
-        <div className="px-5 pb-5 space-y-3 border-t border-slate-50 pt-4">
+        <div className="px-5 pb-5 pt-1 space-y-3 border-t border-slate-50 bg-slate-50/40">
           {total === 0 ? (
-            <div className="py-8 text-center">
-              <FileText size={32} className="mx-auto text-slate-200 mb-2" />
-              <p className="text-[11px] text-slate-400 font-medium">
+            <div className="py-12 text-center">
+              <Folder size={32} className="mx-auto text-slate-200 mb-3" />
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                 No completed indicators in this folder yet.
               </p>
             </div>
@@ -269,185 +147,222 @@ const FolderCard = ({ folder, expanded, onToggle, onPreview }: FolderCardProps) 
   );
 };
 
+/* ─── PERSPECTIVE SECTION ────────────────────────────────────────────────── */
+
+interface PerspectiveSectionProps {
+  perspective: string;
+  folders:     IMyFolder[];
+  isExpanded:  (id: string) => boolean;
+  onToggle:    (id: string) => void;
+  onPreview:   (doc: IDocument) => void;
+}
+
+const PerspectiveSection = ({
+  perspective, folders, isExpanded, onToggle, onPreview,
+}: PerspectiveSectionProps) => (
+  <div>
+    <p className="text-[9px] font-black uppercase tracking-[0.25em] text-slate-400 mb-4 px-1">
+      {perspective} Perspective
+    </p>
+    <div className="space-y-4">
+      {folders.map((folder) => (
+        <FolderCard
+          key={folder.objectiveId}
+          folder={folder}
+          expanded={isExpanded(folder.objectiveId)}
+          onToggle={() => onToggle(folder.objectiveId)}
+          onPreview={onPreview}
+        />
+      ))}
+    </div>
+  </div>
+);
+
 /* ─── MAIN PAGE ──────────────────────────────────────────────────────────── */
 
 const ExaminerAssignments = () => {
   const dispatch = useAppDispatch();
   const { myFolders, loading, error } = useAppSelector((s) => s.examiner);
 
-  const [search,            setSearch]            = useState("");
-  const [filterPerspective, setFilterPerspective] = useState("All");
-  const [manualToggles,     setManualToggles]     = useState<Record<string, boolean>>({});
+  const [search,         setSearch]        = useState("");
+  const [activeTab,      setActiveTab]     = useState<string>("All Indicators");
+  const [manualExpanded, setManualExpanded] = useState<Record<string, boolean>>({});
 
-  /* ── Preview modal state ── */
   const [previewDoc, setPreviewDoc] = useState<IDocument | null>(null);
-
   const openPreview  = (doc: IDocument) => setPreviewDoc(doc);
-  const closePreview = ()               => setPreviewDoc(null);
-
-  const toggleFolder = (id: string) =>
-    setManualToggles((prev) => ({ ...prev, [id]: !prev[id] }));
-
-  const isExpanded = (id: string): boolean => {
-    if (id in manualToggles) return manualToggles[id];
-    return myFolders.length === 1;
-  };
+  const closePreview = ()              => setPreviewDoc(null);
 
   useEffect(() => {
     dispatch(fetchMyFolders());
   }, [dispatch]);
 
-  const perspectives = useMemo(() => {
-    const set = new Set(myFolders.map((f) => f.perspective));
-    return ["All", ...Array.from(set).sort()];
-  }, [myFolders]);
+  const toggleFolder = (id: string) =>
+    setManualExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  // Auto-expand when there's only one folder — pure derivation, no effect needed
+  const isExpanded = (id: string): boolean => {
+    if (id in manualExpanded) return manualExpanded[id];
+    return myFolders.length === 1;
+  };
+
+  const totalIndicators = myFolders.reduce(
+    (acc, f) => acc + f.completedIndicators.length, 0
+  );
 
   const filtered = useMemo(() => {
     return myFolders.filter((f) => {
-      const matchPerspective =
-        filterPerspective === "All" || f.perspective === filterPerspective;
+      const matchTab =
+        activeTab === "All Indicators" ||
+        f.perspective === PERSPECTIVE_MATCH[activeTab] ||
+        f.perspective.toLowerCase().includes(activeTab.toLowerCase());
       const matchSearch =
         f.objectiveTitle.toLowerCase().includes(search.toLowerCase());
-      return matchPerspective && matchSearch;
+      return matchTab && matchSearch;
     });
-  }, [myFolders, filterPerspective, search]);
+  }, [myFolders, activeTab, search]);
 
-  const totalIndicators = myFolders.reduce(
-    (acc, f) => acc + f.completedIndicators.length,
-    0
-  );
+  const grouped = useMemo(() => {
+    const map = new Map<string, IMyFolder[]>();
+    filtered.forEach((f) => {
+      if (!map.has(f.perspective)) map.set(f.perspective, []);
+      map.get(f.perspective)!.push(f);
+    });
+    return map;
+  }, [filtered]);
 
-  /* ─── LOADING ── */
+  /* ── Loading ── */
   if (loading && myFolders.length === 0) {
     return (
-      <div className="min-h-screen bg-[#fcfcf7] flex flex-col items-center justify-center">
-        <Loader2 className="animate-spin text-[#1d3331] mb-4" size={36} />
-        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-[#fcfcf7]">
+        <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
+        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
           Loading your folders...
         </p>
       </div>
     );
   }
 
-  /* ─── ERROR ── */
+  /* ── Error ── */
   if (error) {
     return (
-      <div className="min-h-screen bg-[#fcfcf7] flex flex-col items-center justify-center gap-3">
-        <AlertCircle className="text-red-500" size={36} />
-        <p className="text-sm text-slate-600">{error}</p>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-[#fcfcf7] gap-4">
+        <AlertCircle className="text-red-500" size={40} />
+        <p className="text-[11px] font-bold text-slate-600">{error}</p>
+        <button
+          onClick={() => dispatch(fetchMyFolders())}
+          className="px-6 py-3 bg-[#1d3331] text-white rounded-xl text-[10px] font-black uppercase tracking-wider"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  /* ─── RENDER ─────────────────────────────────────────────────────────── */
-
-  return (
-    <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 font-sans text-[#1a2c2c]">
-
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="bg-[#1d3331] p-2 rounded-lg shadow-lg shadow-[#1d3331]/20">
-            <Folder className="text-[#c2a336]" size={20} />
-          </div>
-          <h1 className="text-2xl font-black font-serif text-[#1d3331] uppercase tracking-tight">
-            Assigned Folders
-          </h1>
-        </div>
-        <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] ml-12">
-          Objective folders assigned to you for examination
-        </p>
-      </div>
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-          <p className="text-3xl font-serif font-bold text-[#1d3331]">
-            {myFolders.length}
-          </p>
-          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">
-            Folders assigned
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-          <p className="text-3xl font-serif font-bold text-emerald-700">
-            {totalIndicators}
-          </p>
-          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">
-            Completed indicators
-          </p>
-        </div>
-      </div>
-
-      {/* No folders state */}
-      {myFolders.length === 0 ? (
-        <div className="py-24 text-center bg-white rounded-2xl border-2 border-dashed border-slate-100">
-          <Folder size={48} className="mx-auto text-slate-200 mb-4" />
+  /* ── Empty ── */
+  if (myFolders.length === 0) {
+    return (
+      <div className="p-8 bg-[#fcfcf7] min-h-screen">
+        <div className="py-40 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
+          <Folder className="mx-auto text-slate-200 mb-4" size={48} />
           <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-widest">
             No folders assigned yet
           </h3>
-          <p className="text-sm text-slate-400 mt-2">
+          <p className="text-[10px] text-slate-400 font-medium mt-2">
             Your administrator will assign folders to you.
           </p>
         </div>
-      ) : (
-        <>
-          {/* Filters */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 mb-6 flex flex-col lg:flex-row gap-4 items-center">
-            <div className="flex flex-wrap gap-1 flex-1">
-              {perspectives.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setFilterPerspective(p)}
-                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${
-                    filterPerspective === p
-                      ? "bg-[#1d3331] text-white shadow-sm"
-                      : "text-slate-400 hover:text-[#1d3331]"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-            <div className="relative w-full lg:w-64">
-              <Search
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300"
-                size={14}
-              />
-              <input
-                type="text"
-                placeholder="Search folders..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 rounded-xl text-[12px] font-medium outline-none border border-slate-100 focus:border-[#1d3331] transition-colors"
-              />
-            </div>
-          </div>
+      </div>
+    );
+  }
 
-          {/* Folder list */}
-          <div className="space-y-4">
-            {filtered.length === 0 ? (
-              <div className="py-16 text-center bg-white rounded-2xl border border-dashed border-slate-100">
-                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
-                  No folders match your search.
-                </p>
-              </div>
-            ) : (
-              filtered.map((folder) => (
-                <FolderCard
-                  key={folder.objectiveId}
-                  folder={folder}
-                  expanded={isExpanded(folder.objectiveId)}
-                  onToggle={() => toggleFolder(folder.objectiveId)}
-                  onPreview={openPreview}
-                />
-              ))
-            )}
+  /* ── Render ── */
+  return (
+    <div className="p-4 md:p-8 bg-[#fcfcf7] min-h-screen font-sans text-[#1a2c2c]">
+
+      {/* Page header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+          <h1 className="text-xl font-black font-serif text-[#1d3331] uppercase tracking-tight">
+            Assigned Folders
+          </h1>
+          <p className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] mt-1">
+            Objective folders assigned to you for examination
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl flex items-center gap-2">
+            <span className="text-[8px] font-black uppercase text-slate-400">Folders</span>
+            <span className="text-[14px] font-black text-[#1d3331]">{myFolders.length}</span>
           </div>
-        </>
+          <div className="px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2">
+            <span className="text-[8px] font-black uppercase text-emerald-600">Indicators</span>
+            <span className="text-[14px] font-black text-emerald-700">{totalIndicators}</span>
+          </div>
+          <button
+            onClick={() => dispatch(fetchMyFolders())}
+            className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 rounded-xl text-[9px] font-black uppercase hover:border-[#c2a336] transition-all group"
+          >
+            <RefreshCcw size={13} className="group-hover:rotate-180 transition-transform duration-500" />
+            Sync
+          </button>
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm mb-8 p-2 flex flex-col lg:flex-row items-center gap-3">
+        <div className="flex flex-wrap gap-1 flex-1">
+          {PERSPECTIVE_TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all ${
+                activeTab === tab
+                  ? "bg-[#1d3331] text-white shadow-md"
+                  : "text-slate-400 hover:text-[#1d3331] hover:bg-slate-50"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative w-full lg:w-72 flex-shrink-0">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
+          <input
+            type="text"
+            placeholder="Search Objective Folders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-slate-50 rounded-xl text-[11px] font-semibold text-slate-600 placeholder:text-slate-300 outline-none focus:ring-2 focus:ring-[#c2a336]/20 transition-all"
+          />
+        </div>
+      </div>
+
+      {/* Folder list grouped by perspective */}
+      {filtered.length === 0 ? (
+        <div className="py-32 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
+          <Search size={40} className="mx-auto text-slate-200 mb-4" />
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            No folders match your search.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-10">
+          {Array.from(grouped.entries()).map(([perspective, folders]) => (
+            <PerspectiveSection
+              key={perspective}
+              perspective={perspective}
+              folders={folders}
+              isExpanded={isExpanded}
+              onToggle={toggleFolder}
+              onPreview={openPreview}
+            />
+          ))}
+        </div>
       )}
 
-      {/* File Preview Modal — rendered at page level via portal */}
+      {/* File preview modal */}
       {previewDoc && (
         <FilePreviewModal
           url={previewDoc.evidenceUrl}

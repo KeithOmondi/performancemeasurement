@@ -3,7 +3,6 @@ import { useEffect } from "react";
 import {
   LayoutDashboard,
   ClipboardCheck,
-  FileText,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -57,18 +56,14 @@ const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
     },
     {
       type: "link",
-      name: "Assigned Folders",
+      name: "ORHC Registry",
       path: "/examiner/assigned",
       icon: <ClipboardCheck size={18} />,
     },
     
-    { type: "label", title: "RECORDS" },
-    {
-      type: "link",
-      name: "Reports",
-      path: "/examiner/reports",
-      icon: <FileText size={18} />,
-    },
+
+    
+   
   ];
 
   return (

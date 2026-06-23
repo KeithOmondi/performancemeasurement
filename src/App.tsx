@@ -54,6 +54,7 @@ import ExaminerAssignments from "./pages/examiner/ExaminerAssignments";
 import SuperAdminArchives from "./pages/superadmin/SuperAdminArchives";
 import SuperAdminApproved from "./pages/superadmin/SuperAdminApproved";
 import SuperAdminApprovalPage from "./pages/superadmin/SuperAdminApprovalPage";
+import AdminReports from "./pages/admin/AdminReports";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -147,7 +148,7 @@ const App = () => {
 
         {/* ── Admin & Examiner ─────────────────────────────────────────── */}
         <Route
-          element={<ProtectedRoute allowedRoles={["admin", "examiner"]} />}
+          element={<ProtectedRoute allowedRoles={["admin"]} />}
         >
           <Route element={<AdminLayout />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
@@ -155,6 +156,7 @@ const App = () => {
             <Route path="/admin/reviews" element={<AdminPendingReviews />} />
             <Route path="/admin/rejects" element={<AdminRejections />} />
             <Route path="/admin/approvals" element={<AdminApprovals />} />
+            <Route path="/admin/reports" element={<AdminReports />} />
             <Route path="/admin/review/:indicatorId" element={<AdminIndicatorReview />} />
           </Route>
         </Route>
