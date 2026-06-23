@@ -1,10 +1,19 @@
-// SuperAdminIndicators.tsx – fully corrected with proper JSX closing tags
+// SuperAdminIndicators.tsx – with proper activity addition
 import React from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, Search, Filter, ChevronDown, ChevronUp } from "lucide-react";
+import { 
+  Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, 
+  Search, Filter, ChevronDown, ChevronUp, FolderPlus, FilePlus 
+} from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
+import { 
+  getAllStrategicPlans,
+  //addObjective,
+  //updateObjective,
+  //addActivity,
+  //updateActivity,
+} from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
   fetchIndicators,
   fetchAssignedIndicators,
@@ -30,6 +39,9 @@ import {
 import type { AssignPrefill } from "../../types/types";
 import SuperAdminAssign from "./SuperAdminAssign";
 import SuperAdminEditIndicator from "./SuperAdminEditIndicator";
+import type { ModalMode } from "./ActivityIndicatorModal";
+import StrategicPlanEditModal from "./ActivityIndicatorModal";
+//import StrategicPlanEditModal, { type ModalMode } from "./StrategicPlanEditModal";
 
 /* ─── TYPES ──────────────────────────────────────────────────────────────── */
 
@@ -54,6 +66,10 @@ interface IndicatorSectionProps {
   onViewIndicator: (indicatorId: string) => void;
   onUnassign: (indicatorId: string) => void;
   onEdit: (indicator: IIndicator) => void;
+  onAddObjective: (planId: string, planPerspective: string) => void;
+  onEditObjective: (planId: string, objectiveId: string, currentTitle: string) => void;
+  onAddActivity: (planId: string, objectiveId: string, objectiveTitle: string) => void;
+  onEditActivity: (planId: string, objectiveId: string, activityId: string, currentDescription: string) => void;
   activeFilter: string;
   optimisticUnassignId?: string | null;
   optimisticAssignId?: string | null;
@@ -129,6 +145,10 @@ const IndicatorSection = ({
   onViewIndicator,
   onUnassign,
   onEdit,
+  //onAddObjective,
+  onEditObjective,
+  onAddActivity,
+  onEditActivity,
   optimisticUnassignId,
   optimisticAssignId,
 }: IndicatorSectionProps) => {
@@ -144,14 +164,34 @@ const IndicatorSection = ({
       {/* Objective header row */}
       <tr className="bg-white border-b border-gray-50">
         <td className="p-4 py-6 align-top">
-          <h3 className="font-bold text-[#1a3a32] text-[15px] leading-tight mb-2">
-            {objective.title}
-          </h3>
-          <div className="flex gap-2 text-[10px] font-black uppercase tracking-tight">
-            <span className="text-orange-600">{total} activities</span>
-            <span className="text-gray-300">
-              • {assignedCount}/{total} assigned
-            </span>
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="font-bold text-[#1a3a32] text-[15px] leading-tight mb-2">
+                {objective.title}
+              </h3>
+              <div className="flex gap-2 text-[10px] font-black uppercase tracking-tight">
+                <span className="text-orange-600">{total} activities</span>
+                <span className="text-gray-300">
+                  • {assignedCount}/{total} assigned
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => onEditObjective(plan.id, objective.id, objective.title)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                title="Edit objective"
+              >
+                <Pencil size={14} />
+              </button>
+              <button
+                onClick={() => onAddActivity(plan.id, objective.id, objective.title)}
+                className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-500 hover:text-emerald-700 transition-colors"
+                title="Add activity"
+              >
+                <FilePlus size={14} />
+              </button>
+            </div>
           </div>
         </td>
         <td className="p-4 align-top">
@@ -212,7 +252,7 @@ const IndicatorSection = ({
             <td className="p-4 pl-12">
               <div className="flex items-start gap-3">
                 <span className="text-amber-400 text-lg leading-none">↳</span>
-                <div>
+                <div className="flex-1">
                   <span className="italic text-[13px] font-medium text-gray-600 leading-relaxed">
                     {activity.description}
                   </span>
@@ -222,6 +262,13 @@ const IndicatorSection = ({
                     </span>
                   )}
                 </div>
+                <button
+                  onClick={() => onEditActivity(plan.id, objective.id, activity.id, activity.description)}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
+                  title="Edit activity"
+                >
+                  <Pencil size={12} />
+                </button>
               </div>
             </td>
 
@@ -381,6 +428,9 @@ const SuperAdminIndicators = () => {
   const [optimisticUnassignId, setOptimisticUnassignId] = useState<string | null>(null);
   const [optimisticAssignId, setOptimisticAssignId] = useState<string | null>(null);
 
+  // Modal state
+  const [editModalMode, setEditModalMode] = useState<ModalMode | null>(null);
+
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -492,6 +542,7 @@ const SuperAdminIndicators = () => {
     setIsRefreshing(true);
     try {
       await Promise.all([
+        dispatch(getAllStrategicPlans()).unwrap(),
         dispatch(fetchIndicators()).unwrap(),
         dispatch(fetchAssignedIndicators()).unwrap(),
         dispatch(fetchUnassignedIndicators()).unwrap(),
@@ -545,6 +596,19 @@ const SuperAdminIndicators = () => {
       setOptimisticUnassignId(null);
     }
   }, [dispatch, refreshAllLists]);
+
+  // Strategic Plan Modal handlers
+  const handleOpenEditModal = useCallback((mode: ModalMode) => {
+    setEditModalMode(mode);
+  }, []);
+
+  const handleCloseEditModal = useCallback(async () => {
+    setEditModalMode(null);
+    // Wait a moment for the modal to close, then refresh
+    setTimeout(async () => {
+      await refreshAllLists();
+    }, 300);
+  }, [refreshAllLists]);
 
   /* User map */
   const userMap = useMemo(() => {
@@ -646,9 +710,8 @@ const SuperAdminIndicators = () => {
               );
               const hasIndicator = !!indicator;
 
-              // ✅ FIXED: UNASSIGNED now shows activities that HAVE an indicator (unassigned indicator)
               if (activeFilter === "ASSIGNED")   return hasIndicator;
-              if (activeFilter === "UNASSIGNED") return hasIndicator;   // FIXED
+              if (activeFilter === "UNASSIGNED") return hasIndicator;
               if (activeFilter === "REVIEW") {
                 return hasIndicator && (
                   indicator.needsAction ||
@@ -765,7 +828,7 @@ const SuperAdminIndicators = () => {
             )}
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <button
             onClick={() => setShowFilters(!showFilters)}
             className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:bg-gray-50 transition-all"
@@ -773,6 +836,23 @@ const SuperAdminIndicators = () => {
             <Filter size={14} />
             Filters
             {showFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <button
+            onClick={() => {
+              if (plans && plans.length > 0) {
+                handleOpenEditModal({ 
+                  type: "add-objective", 
+                  planId: plans[0]?.id || "", 
+                  planPerspective: plans[0]?.perspective || "" 
+                });
+              } else {
+                toast.error("No strategic plans found. Please create a plan first.");
+              }
+            }}
+            disabled={!plans || plans.length === 0}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-[11px] font-bold flex items-center gap-2 uppercase tracking-wider hover:bg-emerald-700 transition-all disabled:opacity-50"
+          >
+            <FolderPlus size={14} /> Add Objective
           </button>
           {(actionLoading || isRefreshing) && (
             <Loader2 className="animate-spin text-[#1a3a32]" size={20} />
@@ -935,6 +1015,18 @@ const SuperAdminIndicators = () => {
                       onViewIndicator={handleViewIndicator}
                       onUnassign={handleUnassign}
                       onEdit={setEditingIndicator}
+                      onAddObjective={(planId, planPerspective) => 
+                        handleOpenEditModal({ type: "add-objective", planId, planPerspective })
+                      }
+                      onEditObjective={(planId, objectiveId, currentTitle) =>
+                        handleOpenEditModal({ type: "edit-objective", planId, objectiveId, currentTitle })
+                      }
+                      onAddActivity={(planId, objectiveId, objectiveTitle) =>
+                        handleOpenEditModal({ type: "add-activity", planId, objectiveId, objectiveTitle })
+                      }
+                      onEditActivity={(planId, objectiveId, activityId, currentDescription) =>
+                        handleOpenEditModal({ type: "edit-activity", planId, objectiveId, activityId, currentDescription })
+                      }
                       activeFilter={activeFilter}
                       optimisticUnassignId={optimisticUnassignId}
                       optimisticAssignId={optimisticAssignId}
@@ -974,6 +1066,14 @@ const SuperAdminIndicators = () => {
         <SuperAdminEditIndicator
           indicator={editingIndicator}
           onClose={handleCloseEdit}
+        />
+      )}
+
+      {/* Strategic Plan Edit Modal */}
+      {editModalMode && (
+        <StrategicPlanEditModal
+          mode={editModalMode}
+          onClose={handleCloseEditModal}
         />
       )}
     </div>
