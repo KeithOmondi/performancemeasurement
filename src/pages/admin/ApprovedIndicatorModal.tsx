@@ -1,8 +1,19 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, CheckCircle2, FileText, Clock, ShieldCheck, ShieldAlert, UserCheck, Calendar, ArrowRight } from "lucide-react";
+import { 
+  X, CheckCircle2, FileText, Clock, ShieldCheck, ShieldAlert, 
+  UserCheck, Calendar, ArrowRight, File, ChevronDown, ChevronUp,
+  Eye
+} from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { getIndicatorByIdAdmin, setSelectedIndicator, type ISubmission } from "../../store/slices/adminIndicatorSlice";
+import { 
+  getIndicatorByIdAdmin, 
+  setSelectedIndicator, 
+  type ISubmission,
+  getDocumentDescription,
+  type IDocument
+} from "../../store/slices/adminIndicatorSlice";
+import FilePreviewModal from "../PreviewModal";
 
 interface ApprovedIndicatorModalProps {
   indicatorId: string;
@@ -12,6 +23,8 @@ interface ApprovedIndicatorModalProps {
 const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModalProps) => {
   const dispatch = useAppDispatch();
   const { selectedIndicator, isLoading } = useAppSelector((state) => state.adminIndicators);
+  const [expandedDocuments, setExpandedDocuments] = useState<Record<string, boolean>>({});
+  const [previewDocument, setPreviewDocument] = useState<{ url: string; fileName: string } | null>(null);
 
   useEffect(() => {
     if (indicatorId) {
@@ -29,6 +42,22 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
       document.body.style.overflow = "";
     };
   }, []);
+
+  const toggleDocumentExpand = (submissionId: string) => {
+    setExpandedDocuments(prev => ({
+      ...prev,
+      [submissionId]: !prev[submissionId]
+    }));
+  };
+
+  const handleDocumentClick = (doc: IDocument) => {
+    if (doc.evidenceUrl) {
+      setPreviewDocument({
+        url: doc.evidenceUrl,
+        fileName: doc.fileName
+      });
+    }
+  };
 
   const modalContent = (
     <div
@@ -180,14 +209,14 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                 </div>
               </div>
 
-              {/* Submissions Table with Submitted By column */}
+              {/* Submissions Table with Document Descriptions */}
               {Object.values(selectedIndicator.submissions || {}).flat().length > 0 && (
                 <div>
                   <h3 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-3 flex items-center gap-2">
                     <Calendar size={14} /> Submitted Reports
                   </h3>
                   <div className="border border-slate-100 rounded-xl overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[800px]">
+                    <table className="w-full text-left text-xs min-w-[900px]">
                       <thead className="bg-slate-50">
                         <tr>
                           <th className="px-4 py-3 font-bold text-slate-500">Period</th>
@@ -200,58 +229,116 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                       <tbody className="divide-y divide-slate-50">
                         {(Object.values(selectedIndicator.submissions || {}) as ISubmission[][])
                           .flat()
-                          .map((sub) => (
-                            <tr key={sub.id} className="hover:bg-slate-50/50">
-                              <td className="px-4 py-3 font-mono font-bold text-slate-600">
-                                Q{sub.quarter} {sub.year}
-                              </td>
-                              <td className="px-4 py-3 font-bold text-slate-700">
-                                {sub.achievedValue} {selectedIndicator.unit}
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  <UserCheck size={12} className="text-slate-400 shrink-0" />
-                                  <span className="text-slate-700 font-medium">
-                                    {sub.submittedByName || 
-                                      (sub.resubmissionCount > 0 ? "Resubmitted (name missing)" : "Unknown")}
+                          .map((sub) => {
+                            const isExpanded = expandedDocuments[sub.id] || false;
+                            const hasDescriptions = sub.documents.some(doc => getDocumentDescription(doc));
+                            
+                            return (
+                              <tr key={sub.id} className="hover:bg-slate-50/50">
+                                <td className="px-4 py-3 font-mono font-bold text-slate-600">
+                                  Q{sub.quarter} {sub.year}
+                                </td>
+                                <td className="px-4 py-3 font-bold text-slate-700">
+                                  {sub.achievedValue} {selectedIndicator.unit}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <UserCheck size={12} className="text-slate-400 shrink-0" />
+                                    <span className="text-slate-700 font-medium">
+                                      {sub.submittedByName || 
+                                        (sub.resubmissionCount > 0 ? "Resubmitted (name missing)" : "Unknown")}
+                                    </span>
+                                    {sub.resubmissionCount > 0 && (
+                                      <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                                        Resubmission #{sub.resubmissionCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="space-y-2">
+                                    {/* Document List - Now Clickable */}
+                                    <div className="flex flex-wrap gap-1">
+                                      {sub.documents.map((doc) => (
+                                        <button
+                                          key={doc.id}
+                                          onClick={() => handleDocumentClick(doc)}
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition-all hover:scale-105 ${
+                                            doc.status === "Accepted"
+                                              ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                                              : doc.status === "Rejected"
+                                              ? "bg-red-100 text-red-700 hover:bg-red-200"
+                                              : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+                                          } ${doc.evidenceUrl ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
+                                          disabled={!doc.evidenceUrl}
+                                          title={doc.evidenceUrl ? "Click to preview document" : "No document available"}
+                                        >
+                                          {doc.status === "Accepted" && <CheckCircle2 size={8} />}
+                                          <span>{doc.fileName.split(".")[0].slice(0, 15)}</span>
+                                          {doc.evidenceUrl && <Eye size={8} className="ml-0.5" />}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    
+                                    {/* Toggle button if there are descriptions */}
+                                    {hasDescriptions && (
+                                      <button
+                                        onClick={() => toggleDocumentExpand(sub.id)}
+                                        className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 hover:text-emerald-700 transition-colors"
+                                      >
+                                        {isExpanded ? (
+                                          <>
+                                            <ChevronUp size={14} />
+                                            Hide descriptions
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ChevronDown size={14} />
+                                            Show document descriptions
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                    
+                                    {/* Document Descriptions */}
+                                    {isExpanded && (
+                                      <div className="mt-2 space-y-1.5 bg-slate-50 rounded-lg p-2">
+                                        {sub.documents.map((doc) => {
+                                          const description = getDocumentDescription(doc);
+                                          return description ? (
+                                            <div key={doc.id} className="flex items-start gap-2 text-[11px]">
+                                              <File size={12} className="text-slate-400 mt-0.5 shrink-0" />
+                                              <div>
+                                                <span className="font-medium text-slate-700">
+                                                  {doc.fileName}:
+                                                </span>
+                                                <span className="text-slate-600 ml-1">
+                                                  {description}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          ) : null;
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={`inline-block px-2 py-1 rounded-full text-[9px] font-black uppercase ${
+                                      sub.reviewStatus === "Accepted" || sub.reviewStatus === "Verified"
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : sub.reviewStatus === "Rejected"
+                                        ? "bg-red-100 text-red-700"
+                                        : "bg-amber-100 text-amber-700"
+                                    }`}
+                                  >
+                                    {sub.reviewStatus}
                                   </span>
-                                  {sub.resubmissionCount > 0 && (
-                                    <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
-                                      Resubmission #{sub.resubmissionCount}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {sub.documents.map((doc) => (
-                                    <span
-                                      key={doc.id}
-                                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                                        doc.status === "Accepted"
-                                          ? "bg-emerald-100 text-emerald-700"
-                                          : "bg-slate-100 text-slate-400"
-                                      }`}
-                                    >
-                                      {doc.status === "Accepted" && <CheckCircle2 size={8} />}
-                                      {doc.fileName.split(".")[0].slice(0, 12)}
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span
-                                  className={`inline-block px-2 py-1 rounded-full text-[9px] font-black uppercase ${
-                                    sub.reviewStatus === "Accepted"
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : "bg-amber-100 text-amber-700"
-                                  }`}
-                                >
-                                  {sub.reviewStatus}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                     </table>
                   </div>
@@ -317,7 +404,20 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
     </div>
   );
 
-  return createPortal(modalContent, document.body);
+  return (
+    <>
+      {createPortal(modalContent, document.body)}
+      
+      {/* File Preview Modal */}
+      {previewDocument && (
+        <FilePreviewModal
+          url={previewDocument.url}
+          fileName={previewDocument.fileName}
+          onClose={() => setPreviewDocument(null)}
+        />
+      )}
+    </>
+  );
 };
 
 export default ApprovedIndicatorModal;

@@ -28,7 +28,7 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-/* ─── EVIDENCE CELL – only shows notes and document descriptions ── */
+/* ─── EVIDENCE CELL – only shows the latest submission's notes and document descriptions ── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
     return (
@@ -38,30 +38,50 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
     );
   }
 
+  // Find the latest submission based on submittedAt
+  const latestSubmission = submissions.reduce((latest, current) => {
+    const latestDate = new Date(latest.submittedAt);
+    const currentDate = new Date(current.submittedAt);
+    return currentDate > latestDate ? current : latest;
+  }, submissions[0]);
+
+  // Filter documents to only show those with descriptions
+  const documentsWithDescriptions = latestSubmission.documents?.filter(
+    (doc) => doc.description?.trim()
+  ) || [];
+
+  // Check if there's anything to show
+  const hasNotes = latestSubmission.notes?.trim();
+  const hasDocuments = documentsWithDescriptions.length > 0;
+
+  if (!hasNotes && !hasDocuments) {
+    return (
+      <span className="text-slate-400 italic text-[10px] font-medium">
+        No evidence provided
+      </span>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {submissions.map((sub) => (
-        <div key={sub.submissionId}>
-          {sub.notes && (
-            <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
-              {sub.notes}
-            </p>
-          )}
-          {sub.documents && sub.documents.length > 0 && (
-            <ul className="space-y-1 pl-3 mt-1.5">
-              {sub.documents.map((doc, idx) => {
-                const desc = doc.description?.trim();
-                return desc ? (
-                  <li key={idx} className="flex gap-2 text-[10px] text-slate-700">
-                    <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
-                    <span className="font-medium">{desc}</span>
-                  </li>
-                ) : null;
-              })}
-            </ul>
-          )}
-        </div>
-      ))}
+      {/* Notes from the latest submission */}
+      {hasNotes && (
+        <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
+          {latestSubmission.notes}
+        </p>
+      )}
+      
+      {/* Document descriptions from the latest submission */}
+      {hasDocuments && (
+        <ul className="space-y-1 pl-3 mt-1.5">
+          {documentsWithDescriptions.map((doc, idx) => (
+            <li key={idx} className="flex gap-2 text-[10px] text-slate-700">
+              <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
+              <span className="font-medium">{doc.description}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 };

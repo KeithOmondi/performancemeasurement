@@ -11,6 +11,9 @@ import {
   FileSearch,
   ShieldAlert,
   ArrowRight,
+  X,
+  Calendar,
+  Users,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchAdminApprovedIndicators } from "../../store/slices/adminIndicatorSlice";
@@ -42,26 +45,129 @@ const AdminApprovals = () => {
   const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(
     null
   );
+  
+  // ── Filter states ──
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedAssignee, setSelectedAssignee] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedReportingCycle, setSelectedReportingCycle] = useState<string>("all");
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
+    from: "",
+    to: "",
+  });
 
   useEffect(() => {
     dispatch(fetchAdminApprovedIndicators());
   }, [dispatch]);
 
-  // ── Client‑side search ──
+  // ── Extract unique values for filters ──
+  const uniqueAssignees = useMemo(() => {
+    const assignees = new Set<string>();
+    approvedIndicators.forEach(ind => {
+      if (ind.assigneeName) assignees.add(ind.assigneeName);
+    });
+    return Array.from(assignees).sort();
+  }, [approvedIndicators]);
+
+  const uniqueStatuses = useMemo(() => {
+    const statuses = new Set<string>();
+    approvedIndicators.forEach(ind => {
+      statuses.add(ind.status);
+    });
+    return Array.from(statuses).sort();
+  }, [approvedIndicators]);
+
+  const uniqueCycles = useMemo(() => {
+    const cycles = new Set<string>();
+    approvedIndicators.forEach(ind => {
+      if (ind.reportingCycle) cycles.add(ind.reportingCycle);
+    });
+    return Array.from(cycles).sort();
+  }, [approvedIndicators]);
+
+  // ── Apply all filters ──
   const filteredItems = useMemo(() => {
-    if (!searchTerm.trim()) return approvedIndicators;
-    const lower = searchTerm.toLowerCase();
-    return approvedIndicators.filter(
-      (ind) =>
-        ind.objective?.title?.toLowerCase().includes(lower) ||
-        ind.assigneeName?.toLowerCase().includes(lower) ||
-        ind.activity?.description?.toLowerCase().includes(lower)
-    );
-  }, [approvedIndicators, searchTerm]);
+    let result = approvedIndicators;
+
+    // Search filter
+    if (searchTerm.trim()) {
+      const lower = searchTerm.toLowerCase();
+      result = result.filter(
+        (ind) =>
+          ind.objective?.title?.toLowerCase().includes(lower) ||
+          ind.assigneeName?.toLowerCase().includes(lower) ||
+          ind.activity?.description?.toLowerCase().includes(lower) ||
+          ind.perspective?.toLowerCase().includes(lower)
+      );
+    }
+
+    // Assignee filter
+    if (selectedAssignee !== "all") {
+      result = result.filter(ind => ind.assigneeName === selectedAssignee);
+    }
+
+    // Status filter
+    if (selectedStatus !== "all") {
+      result = result.filter(ind => ind.status === selectedStatus);
+    }
+
+    // Reporting cycle filter
+    if (selectedReportingCycle !== "all") {
+      result = result.filter(ind => ind.reportingCycle === selectedReportingCycle);
+    }
+
+    // Date range filter (based on updatedAt)
+    if (dateRange.from) {
+      const fromDate = new Date(dateRange.from);
+      fromDate.setHours(0, 0, 0, 0);
+      result = result.filter(ind => {
+        const updatedDate = new Date(ind.updatedAt);
+        return updatedDate >= fromDate;
+      });
+    }
+    if (dateRange.to) {
+      const toDate = new Date(dateRange.to);
+      toDate.setHours(23, 59, 59, 999);
+      result = result.filter(ind => {
+        const updatedDate = new Date(ind.updatedAt);
+        return updatedDate <= toDate;
+      });
+    }
+
+    return result;
+  }, [
+    approvedIndicators,
+    searchTerm,
+    selectedAssignee,
+    selectedStatus,
+    selectedReportingCycle,
+    dateRange,
+  ]);
 
   const handleRowClick = (indicatorId: string) => {
     setSelectedIndicatorId(indicatorId);
   };
+
+  // ── Clear all filters ──
+  const clearAllFilters = () => {
+    setSearchTerm("");
+    setSelectedAssignee("all");
+    setSelectedStatus("all");
+    setSelectedReportingCycle("all");
+    setDateRange({ from: "", to: "" });
+  };
+
+  // ── Check if any filter is active ──
+  const hasActiveFilters = useMemo(() => {
+    return (
+      searchTerm.trim() !== "" ||
+      selectedAssignee !== "all" ||
+      selectedStatus !== "all" ||
+      selectedReportingCycle !== "all" ||
+      dateRange.from !== "" ||
+      dateRange.to !== ""
+    );
+  }, [searchTerm, selectedAssignee, selectedStatus, selectedReportingCycle, dateRange]);
 
   // ── Loading skeleton ──
   if (isLoading && approvedIndicators.length === 0) {
@@ -98,6 +204,15 @@ const AdminApprovals = () => {
                 <span className="bg-emerald-50 text-emerald-700 text-[9px] px-3 py-1 rounded-lg font-black border border-emerald-100 uppercase tracking-widest">
                   {filteredItems.length} Performance Records
                 </span>
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearAllFilters}
+                    className="bg-slate-100 text-slate-600 text-[9px] px-3 py-1 rounded-lg font-black hover:bg-slate-200 transition-colors flex items-center gap-1"
+                  >
+                    <X size={10} />
+                    Clear filters
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -114,17 +229,150 @@ const AdminApprovals = () => {
             />
             <input
               type="text"
-              placeholder="Search by activity or lead officer..."
+              placeholder="Search by activity, officer, or perspective..."
               className="pl-11 pr-6 py-3.5 bg-white border border-slate-200 rounded-2xl text-[11px] font-bold outline-none focus:ring-4 focus:ring-[#1a3a32]/5 transition-all w-full md:w-96 shadow-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <button className="p-3.5 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 transition-all shadow-sm">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`p-3.5 border rounded-2xl transition-all shadow-sm flex items-center gap-2 ${
+              showFilters || hasActiveFilters
+                ? "bg-[#1a3a32] border-[#1a3a32] text-white"
+                : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
             <Filter size={18} />
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">
+              Filters
+            </span>
+            {hasActiveFilters && (
+              <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            )}
           </button>
         </div>
       </div>
+
+      {/* ─── Filters Panel ─── */}
+      {showFilters && (
+        <div className="mb-8 bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-200/30 p-6 transition-all">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
+              <Filter size={14} />
+              Filter Records
+            </h3>
+            <button
+              onClick={() => setShowFilters(false)}
+              className="p-1 hover:bg-slate-100 rounded-full transition-colors"
+            >
+              <X size={16} className="text-slate-400" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Assignee Filter */}
+            <div>
+              <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Users size={12} />
+                Lead Officer
+              </label>
+              <select
+                value={selectedAssignee}
+                onChange={(e) => setSelectedAssignee(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#1a3a32]/10 focus:border-[#1a3a32] transition-all"
+              >
+                <option value="all">All Officers</option>
+                {uniqueAssignees.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status Filter */}
+            <div>
+              <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <ShieldCheck size={12} />
+                Status
+              </label>
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#1a3a32]/10 focus:border-[#1a3a32] transition-all"
+              >
+                <option value="all">All Statuses</option>
+                {uniqueStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status.replace(/([A-Z])/g, " $1").trim()}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Reporting Cycle Filter */}
+            <div>
+              <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Calendar size={12} />
+                Reporting Cycle
+              </label>
+              <select
+                value={selectedReportingCycle}
+                onChange={(e) => setSelectedReportingCycle(e.target.value)}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#1a3a32]/10 focus:border-[#1a3a32] transition-all"
+              >
+                <option value="all">All Cycles</option>
+                {uniqueCycles.map((cycle) => (
+                  <option key={cycle} value={cycle}>
+                    {cycle}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range Filter */}
+            <div>
+              <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Clock size={12} />
+                Date Range
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  value={dateRange.from}
+                  onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                  className="flex-1 px-2 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#1a3a32]/10 focus:border-[#1a3a32] transition-all"
+                  placeholder="From"
+                />
+                <input
+                  type="date"
+                  value={dateRange.to}
+                  onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                  className="flex-1 px-2 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-[#1a3a32]/10 focus:border-[#1a3a32] transition-all"
+                  placeholder="To"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Actions */}
+          <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100">
+            <button
+              onClick={clearAllFilters}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-[9px] font-black text-slate-600 uppercase tracking-wider transition-colors"
+            >
+              Clear All
+            </button>
+            <button
+              onClick={() => setShowFilters(false)}
+              className="px-4 py-2 bg-[#1a3a32] hover:bg-[#2a4a42] rounded-xl text-[9px] font-black text-white uppercase tracking-wider transition-colors"
+            >
+              Apply & Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ─── Table ─── */}
       {filteredItems.length === 0 ? (
@@ -133,6 +381,14 @@ const AdminApprovals = () => {
           <h2 className="text-sm font-black text-slate-400 uppercase tracking-widest">
             No verified records found
           </h2>
+          {hasActiveFilters && (
+            <button
+              onClick={clearAllFilters}
+              className="mt-4 text-[10px] font-bold text-emerald-600 hover:text-emerald-700 underline underline-offset-2"
+            >
+              Clear all filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-[0.5rem] border border-slate-200 shadow-2xl shadow-slate-200/40 overflow-hidden">
@@ -205,6 +461,11 @@ const AdminApprovals = () => {
                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-tight">
                               {indicator.assigneeName || "Unassigned"}
                             </span>
+                            {indicator.perspective && (
+                              <span className="ml-2 text-[8px] font-bold text-slate-400 uppercase bg-slate-100 px-2 py-0.5 rounded-full">
+                                {indicator.perspective}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>
