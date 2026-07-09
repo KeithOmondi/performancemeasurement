@@ -3,12 +3,13 @@ import { useDispatch, useSelector } from "react-redux";
 import {
   X, Upload, CheckCircle2, Loader2, AlertCircle,
   Trash2, FileText, Users,
-  RefreshCw, PlusCircle, Clock, AlertTriangle, Send
+  RefreshCw, PlusCircle, Clock, AlertTriangle, Send, Eye
 } from "lucide-react";
 import {
   updateSubmission,
   getActiveQuarterDisplay,
   buildSubmissionFormData,
+  flattenSubmissions,
 } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
 import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
@@ -24,6 +25,8 @@ interface SubmissionModalProps {
   onSubmit?: (formData: FormData) => Promise<void>;
   /** Force the modal to treat the indicator as quarterly, even if reporting_cycle is "Annual". */
   forceQuarterly?: boolean;
+  /** View-only mode to see submitted evidence without editing */
+  viewOnly?: boolean;
 }
 
 interface ExtendedFile {
@@ -49,15 +52,17 @@ const SubmissionModal = ({
   existingSubmission,
   onSubmit,
   forceQuarterly = false,
+  viewOnly = false,
 }: SubmissionModalProps) => {
   const dispatch      = useDispatch<AppDispatch>();
   const { uploading } = useSelector((state: RootState) => state.userIndicators);
 
   // ── Determine if the indicator is annual ──────────────────────────────────
-  // If forceQuarterly is true, we always show quarter selection.
-  // Otherwise, we rely on the reporting_cycle field.
   const isAnnual = forceQuarterly ? false : task?.reporting_cycle === "Annual";
   const isTeam   = task?.assignee_model === "Team";
+
+  // ─── Check if indicator is 100% complete ──────────────────────────────────
+  const isCompleted = task?.status === "Completed";
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -71,13 +76,11 @@ const SubmissionModal = ({
   );
 
   const getInitialQuarter = useCallback((): string => {
-    // If we have an existing rejected submission, use its quarter.
     if (existingSubmission?.reviewStatus === "Rejected") {
       return isAnnual && existingSubmission.quarter === 1
         ? "Annual"
         : `Q${existingSubmission.quarter}`;
     }
-    // Otherwise, default to the active quarter or "Annual" if applicable.
     return isAnnual
       ? "Annual"
       : (task ? getActiveQuarterDisplay(task) : "Q1");
@@ -90,6 +93,7 @@ const SubmissionModal = ({
   const [success,          setSuccess]          = useState(false);
   const [submitMode,       setSubmitMode]       = useState<SubmitMode>("replace");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [showExistingEvidence, setShowExistingEvidence] = useState<boolean>(false);
 
   const syncedSubmissionIdRef = useRef<string | undefined>(undefined);
 
@@ -99,6 +103,12 @@ const SubmissionModal = ({
     () => getSubmissionForQuarter(selectedQuarter),
     [selectedQuarter, getSubmissionForQuarter],
   );
+
+  // Get all submissions for this indicator (for viewing)
+  const allSubmissions = useMemo(() => {
+    if (!task) return [];
+    return flattenSubmissions(task);
+  }, [task]);
 
   const submissionType = useMemo(() => {
     if (!currentPeriodSubmission)                            return "new";
@@ -150,6 +160,7 @@ const SubmissionModal = ({
     setFileEntries([]);
     setSubmitMode("replace");
     setValidationErrors({});
+    setShowExistingEvidence(false);
     syncedSubmissionIdRef.current = undefined;
   }, []);
 
@@ -234,12 +245,11 @@ const SubmissionModal = ({
   const validateForm = useCallback((): boolean => {
     const errors: Record<string, string> = {};
 
-    // Require at least one file unless we are only adding documents to an existing pending submission.
-    if (submissionType !== "addDocuments" && fileEntries.length === 0) {
+    // Only require files if not viewOnly and not just adding documents
+    if (!viewOnly && submissionType !== "addDocuments" && fileEntries.length === 0) {
       errors.files = "At least one evidence file is required";
     }
 
-    // Ensure each file has a description.
     if (fileEntries.length > 0) {
       fileEntries.forEach((f, i) => {
         if (!f.description.trim()) {
@@ -253,7 +263,7 @@ const SubmissionModal = ({
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [fileEntries, submissionType]);
+  }, [fileEntries, submissionType, viewOnly]);
 
   // ─── Submit ──────────────────────────────────────────────────────────────────
 
@@ -263,6 +273,11 @@ const SubmissionModal = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (viewOnly) {
+      onClose();
+      return;
+    }
+
     if (!validateForm()) {
       toast.error("Please fix the validation errors");
       return;
@@ -281,10 +296,8 @@ const SubmissionModal = ({
 
     try {
       if (onSubmit) {
-        // Parent-provided submit handler (only needs formData).
         await onSubmit(formData);
       } else {
-        // Default: use Redux thunk.
         await dispatch(updateSubmission({ id: task!.id, formData })).unwrap();
       }
 
@@ -311,36 +324,45 @@ const SubmissionModal = ({
     (quarter: string) => {
       const sub = getSubmissionForQuarter(quarter);
       if (!sub) return null;
-      return { status: sub.reviewStatus, isLocked: sub.reviewStatus === "Accepted" };
+      return { 
+        status: sub.reviewStatus, 
+        isLocked: sub.reviewStatus === "Accepted",
+        hasSubmission: true,
+        documents: sub.documents?.length || 0,
+      };
     },
     [getSubmissionForQuarter],
   );
 
   // ─── Labels ──────────────────────────────────────────────────────────────────
 
-  const modalTitle = isPending
-    ? "Add More Documents"
-    : isRejected
-      ? "Correct Returned Filing"
-      : isNew && submitMode === "append" && currentPeriodSubmission
-        ? "Add More Documents"
-        : currentPeriodSubmission && !isNew
-          ? "Update Registry"
-          : "Submit Evidence";
+  const modalTitle = viewOnly
+    ? "View Submitted Evidence"
+    : isPending
+      ? "Add More Documents"
+      : isRejected
+        ? "Correct Returned Filing"
+        : isNew && submitMode === "append" && currentPeriodSubmission
+          ? "Add More Documents"
+          : currentPeriodSubmission && !isNew
+            ? "Update Registry"
+            : "Submit Evidence";
 
-  const buttonText = uploading
-    ? "Processing..."
-    : isAccepted
-      ? "Period Certified"
-      : isPending
-        ? "Add Documents to Pending Submission"
-        : isRejected
-          ? "Submit Correction"
-          : isNew && submitMode === "append" && currentPeriodSubmission
-            ? "Append Evidence"
-            : currentPeriodSubmission && !isNew
-              ? "Update & Resubmit"
-              : "Finalize Submission";
+  const buttonText = viewOnly
+    ? "Close"
+    : uploading
+      ? "Processing..."
+      : isAccepted
+        ? "Period Certified"
+        : isPending
+          ? "Add Documents to Pending Submission"
+          : isRejected
+            ? "Submit Correction"
+            : isNew && submitMode === "append" && currentPeriodSubmission
+              ? "Append Evidence"
+              : currentPeriodSubmission && !isNew
+                ? "Update & Resubmit"
+                : "Finalize Submission";
 
   if (!task) return null;
 
@@ -357,13 +379,18 @@ const SubmissionModal = ({
             <h3 className="text-lg md:text-xl font-serif font-black uppercase tracking-tighter">
               {modalTitle}
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <p className="text-[#c2a336] text-[9px] font-bold uppercase tracking-[0.15em] line-clamp-1">
                 {task.activity?.description}
               </p>
               {isTeam && (
                 <span className="flex items-center gap-1 bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-indigo-100 shrink-0">
                   <Users size={8} /> Team Filing
+                </span>
+              )}
+              {isCompleted && (
+                <span className="flex items-center gap-1 bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-emerald-100 shrink-0">
+                  <CheckCircle2 size={8} /> 100% Complete
                 </span>
               )}
             </div>
@@ -395,8 +422,75 @@ const SubmissionModal = ({
             </div>
           ) : (
             <div className="space-y-6">
+              {/* ── View All Submissions ── */}
+              {allSubmissions.length > 0 && !viewOnly && (
+                <button
+                  onClick={() => setShowExistingEvidence(!showExistingEvidence)}
+                  className="w-full flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200 hover:border-[#c2a336] transition-all"
+                >
+                  <div className="flex items-center gap-2">
+                    <Eye size={14} className="text-[#c2a336]" />
+                    <span className="text-[9px] font-black text-slate-600 uppercase tracking-wider">
+                      View Existing Submissions
+                    </span>
+                    <span className="text-[7px] text-slate-400">
+                      ({allSubmissions.length} submission{allSubmissions.length > 1 ? 's' : ''})
+                    </span>
+                  </div>
+                  <span className="text-[8px] text-slate-400">
+                    {showExistingEvidence ? '▼' : '▶'}
+                  </span>
+                </button>
+              )}
+
+              {/* ── Existing Submissions View ── */}
+              {showExistingEvidence && !viewOnly && (
+                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 max-h-60 overflow-y-auto">
+                  {allSubmissions.map((sub, ) => (
+                    <div key={sub.id} className="border-b border-slate-100 last:border-0 pb-3 last:pb-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-[#1a3a32]">
+                          {sub.quarter === 0 ? 'Annual' : `Q${sub.quarter}`} {sub.year}
+                        </span>
+                        <span className={`text-[7px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
+                          sub.reviewStatus === 'Accepted' ? 'bg-emerald-100 text-emerald-700' :
+                          sub.reviewStatus === 'Pending' ? 'bg-amber-100 text-amber-700' :
+                          sub.reviewStatus === 'Rejected' ? 'bg-rose-100 text-rose-700' :
+                          'bg-slate-100 text-slate-500'
+                        }`}>
+                          {sub.reviewStatus || 'Draft'}
+                        </span>
+                      </div>
+                      {sub.notes && (
+                        <p className="text-[9px] text-slate-500 mt-1 italic line-clamp-2">
+                          {sub.notes}
+                        </p>
+                      )}
+                      {sub.documents && sub.documents.length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {sub.documents.map((doc, docIdx) => (
+                            <div key={doc.id || docIdx} className="flex items-center gap-1 text-[8px] text-slate-400">
+                              <FileText size={8} />
+                              <span className="truncate">{doc.fileName || 'Document'}</span>
+                              {doc.description && (
+                                <span className="text-slate-300">- {doc.description}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {sub.adminComment && (
+                        <p className="text-[8px] text-rose-500 mt-1 italic">
+                          Admin: {sub.adminComment}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* ── Mode switcher ── */}
-              {showModeSwitcher && (
+              {showModeSwitcher && !viewOnly && (
                 <div className="grid grid-cols-2 gap-2">
                   {(["replace", "append"] as const).map((mode) => (
                     <button
@@ -428,7 +522,7 @@ const SubmissionModal = ({
               )}
 
               {/* ── Pending banner ── */}
-              {isPending && (
+              {isPending && !viewOnly && (
                 <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-xl">
                   <p className="text-[9px] text-blue-700 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
                     <Clock size={12} /> Pending Review
@@ -441,7 +535,7 @@ const SubmissionModal = ({
               )}
 
               {/* ── Rejection banner ── */}
-              {isRejected && (
+              {isRejected && !viewOnly && (
                 <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl">
                   <p className="text-[9px] text-rose-700 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
                     <AlertTriangle size={12} /> Revision Required
@@ -470,14 +564,16 @@ const SubmissionModal = ({
                         <button
                           key={q}
                           type="button"
-                          disabled={locked}
+                          disabled={locked || viewOnly}
                           onClick={() => handleQuarterChange(q)}
                           className={`py-2.5 rounded-lg text-[10px] font-black border transition-all relative ${
                             locked
                               ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
-                              : selected
-                                ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-sm"
-                                : "bg-white border-slate-200 hover:border-[#1a3a32]"
+                              : viewOnly
+                                ? "bg-slate-50 text-slate-400 border-slate-200 cursor-default"
+                                : selected
+                                  ? "bg-[#1a3a32] text-white border-[#1a3a32] shadow-sm"
+                                  : "bg-white border-slate-200 hover:border-[#1a3a32]"
                           }`}
                         >
                           {q}
@@ -498,6 +594,11 @@ const SubmissionModal = ({
                               size={10}
                               className="absolute -top-1 -right-1 text-emerald-500"
                             />
+                          )}
+                          {qs?.hasSubmission && qs?.documents && qs.documents > 0 && (
+                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] text-slate-400">
+                              {qs.documents} doc{qs.documents > 1 ? 's' : ''}
+                            </span>
                           )}
                         </button>
                       );
@@ -522,49 +623,50 @@ const SubmissionModal = ({
               )}
 
               {/* ── Upload zone ── */}
-              <div className="space-y-2.5">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
-                  Evidence Documents *
-                </label>
-                <div className="relative group">
-                  <input
-                    type="file"
-                    multiple
-                    disabled={isAccepted}
-                    onChange={handleFileChange}
-                    accept={ALLOWED_FILE_TYPES.join(",")}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
-                  />
-                  <div
-                    className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
-                      isAccepted
-                        ? "bg-slate-50 border-slate-200"
-                        : validationErrors.files
-                          ? "border-rose-300 bg-rose-50/30"
-                          : "border-slate-200 bg-white group-hover:border-[#c2a336]"
-                    }`}
-                  >
-                    <Upload className="mx-auto mb-2 text-slate-300" size={24} />
-                    <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
-                      {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
-                    </p>
-                    <p className="text-[7px] text-slate-400 mt-1">
-                      Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF,
-                      MP4
-                    </p>
+              {!viewOnly && (
+                <div className="space-y-2.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
+                    Evidence Documents {!isPending && '*'}
+                  </label>
+                  <div className="relative group">
+                    <input
+                      type="file"
+                      multiple
+                      disabled={isAccepted}
+                      onChange={handleFileChange}
+                      accept={ALLOWED_FILE_TYPES.join(",")}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
+                    />
+                    <div
+                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                        isAccepted
+                          ? "bg-slate-50 border-slate-200"
+                          : validationErrors.files
+                            ? "border-rose-300 bg-rose-50/30"
+                            : "border-slate-200 bg-white group-hover:border-[#c2a336]"
+                      }`}
+                    >
+                      <Upload className="mx-auto mb-2 text-slate-300" size={24} />
+                      <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
+                        {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
+                      </p>
+                      <p className="text-[7px] text-slate-400 mt-1">
+                        Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF, MP4
+                      </p>
+                    </div>
                   </div>
+                  {validationErrors.files && (
+                    <p className="text-[8px] text-rose-500 px-1 flex items-center gap-1">
+                      <AlertCircle size={10} /> {validationErrors.files}
+                    </p>
+                  )}
+                  {validationErrors.descriptions && (
+                    <p className="text-[8px] text-rose-500 px-1 flex items-center gap-1">
+                      <AlertCircle size={10} /> {validationErrors.descriptions}
+                    </p>
+                  )}
                 </div>
-                {validationErrors.files && (
-                  <p className="text-[8px] text-rose-500 px-1 flex items-center gap-1">
-                    <AlertCircle size={10} /> {validationErrors.files}
-                  </p>
-                )}
-                {validationErrors.descriptions && (
-                  <p className="text-[8px] text-rose-500 px-1 flex items-center gap-1">
-                    <AlertCircle size={10} /> {validationErrors.descriptions}
-                  </p>
-                )}
-              </div>
+              )}
 
               {/* ── File cards ── */}
               <div className="space-y-4">
@@ -643,8 +745,14 @@ const SubmissionModal = ({
         <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 shrink-0">
           <button
             onClick={handleSubmit}
-            disabled={uploading || success || isAccepted}
-            className="w-full bg-[#1a3a32] text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 shadow-lg"
+            disabled={uploading || success || isAccepted || viewOnly}
+            className={`w-full py-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg ${
+              viewOnly
+                ? "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                : isAccepted
+                  ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                  : "bg-[#1a3a32] text-white hover:bg-black disabled:bg-slate-200 disabled:text-slate-400"
+            }`}
           >
             {uploading ? (
               <>
@@ -653,6 +761,8 @@ const SubmissionModal = ({
               </>
             ) : isAccepted ? (
               "Period Certified"
+            ) : viewOnly ? (
+              "Close"
             ) : (
               <>
                 {isPending ? <PlusCircle size={14} /> : <Send size={14} />}

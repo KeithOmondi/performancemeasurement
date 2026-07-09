@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   fetchTrackerReport,
   fetchReportSummary,
@@ -7,6 +7,7 @@ import {
   type IPerspective,
   type IIndicator,
   type ISubmission,
+  type ReportFilters,
 } from "../../store/slices/reportSlice";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import ORHC from "../../assets/ORHC.jpg";
@@ -92,8 +93,8 @@ const SummaryCards = () => {
 
   if (summaryLoading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
             className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse shadow-sm"
@@ -108,35 +109,65 @@ const SummaryCards = () => {
 
   const totals = summary.reduce(
     (acc, s) => ({
-      total:          acc.total          + s.totalIndicators,
-      completed:      acc.completed      + s.completed,
+      total: acc.total + s.totalIndicators,
+      completed: acc.completed + s.completed,
       awaitingReview: acc.awaitingReview + s.awaitingReview,
-      overdue:        acc.overdue        + s.overdue,
+      overdue: acc.overdue + s.overdue,
+      hasSubmissions: acc.hasSubmissions + (s.hasSubmissions || 0),
+      submittedComplete: acc.submittedComplete + (s.submittedComplete || 0),
     }),
-    { total: 0, completed: 0, awaitingReview: 0, overdue: 0 }
+    { total: 0, completed: 0, awaitingReview: 0, overdue: 0, hasSubmissions: 0, submittedComplete: 0 }
   );
 
+  const submissionRate = totals.total > 0 
+    ? Math.round((totals.hasSubmissions / totals.total) * 100) 
+    : 0;
+
   const cards: { label: string; value: number; colour: string; bg: string }[] = [
-    { label: "Total Indicators", value: totals.total,          colour: "text-[#1d3331]", bg: "bg-slate-50" },
-    { label: "Complete",         value: totals.completed,      colour: "text-emerald-700", bg: "bg-emerald-50" },
-    { label: "Incomplete",       value: totals.total - totals.completed, colour: "text-amber-700", bg: "bg-amber-50" },
-    { label: "Overdue",          value: totals.overdue,        colour: "text-red-600", bg: "bg-red-50" },
+    { label: "Total Indicators", value: totals.total, colour: "text-[#1d3331]", bg: "bg-slate-50" },
+    { label: "Submitted", value: totals.hasSubmissions, colour: "text-blue-700", bg: "bg-blue-50" },
+    { label: "Complete", value: totals.completed, colour: "text-emerald-700", bg: "bg-emerald-50" },
+    { label: "Incomplete", value: totals.total - totals.hasSubmissions, colour: "text-amber-700", bg: "bg-amber-50" },
+    { label: "Overdue", value: totals.overdue, colour: "text-red-600", bg: "bg-red-50" },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-      {cards.map((c) => (
-        <div
-          key={c.label}
-          className={`${c.bg} rounded-xl border border-slate-200 p-5 shadow-sm`}
-        >
-          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-            {c.label}
-          </p>
-          <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        {cards.map((c) => (
+          <div
+            key={c.label}
+            className={`${c.bg} rounded-xl border border-slate-200 p-5 shadow-sm`}
+          >
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+              {c.label}
+            </p>
+            <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      
+      {/* Submission Rate Progress Bar */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm mb-6">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+            Submission Rate
+          </span>
+          <span className="text-sm font-black text-blue-700">
+            {submissionRate}%
+          </span>
         </div>
-      ))}
-    </div>
+        <div className="w-full bg-slate-200 rounded-full h-2.5">
+          <div 
+            className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+            style={{ width: `${submissionRate}%` }}
+          />
+        </div>
+        <p className="text-[9px] text-slate-400 mt-1.5">
+          {totals.hasSubmissions} of {totals.total} indicators have been submitted
+        </p>
+      </div>
+    </>
   );
 };
 
@@ -157,8 +188,6 @@ const TablePerspectiveRows = ({
   perspective: IPerspective;
   getIndex: () => number;
 }) => {
-  // Flatten objective → activity → indicator into a single array first,
-  // computing "isFirstForObjective" as plain data — no mutation during render.
   type FlatRow = {
     objective: IPerspective["objectives"][number];
     activity: IPerspective["objectives"][number]["activities"][number];
@@ -258,54 +287,69 @@ const AdminReports = () => {
   const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
 
   const [activePerspective, setActivePerspective] = useState<string>("all");
-  const [statusFilter, setStatusFilter]           = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"all" | "submitted">("submitted");
 
+  // Helper to build filters with proper typing - memoized with useCallback
+  const buildFilters = useCallback((): ReportFilters => {
+    const apiFilters: ReportFilters = {};
+    
+    if (activePerspective !== "all") {
+      apiFilters.perspective = activePerspective;
+    }
+    
+    if (statusFilter) {
+      apiFilters.status = statusFilter;
+    }
+
+    if (viewMode === "submitted") {
+      apiFilters.hasSubmission = "true";
+      // ✅ FIXED: Use correct enum values from your database
+      apiFilters.submissionStatus = "Verified,Accepted,Partially Approved";
+    }
+
+    return apiFilters;
+  }, [activePerspective, statusFilter, viewMode]);
+
+  // Initial load - fetch summary and tracker with submitted filter by default
   useEffect(() => {
     dispatch(fetchReportSummary());
-    dispatch(fetchTrackerReport({}));
+    // ✅ FIXED: Use correct enum values from your database
+    dispatch(fetchTrackerReport({ 
+      hasSubmission: "true",
+      submissionStatus: "Verified,Accepted,Partially Approved"
+    }));
   }, [dispatch]);
 
+  // Refetch when filters change
   useEffect(() => {
-    dispatch(fetchTrackerReport(filters));
-  }, [dispatch, filters]);
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
-  const visibleData: IPerspective[] =
-    activePerspective === "all"
-      ? data
-      : data.filter((p) =>
-          p.perspective.toUpperCase().startsWith(activePerspective.toUpperCase())
-        );
-
-  const filteredData: IPerspective[] = statusFilter
-    ? visibleData
-        .map((p) => ({
-          ...p,
-          objectives: p.objectives
-            .map((o) => ({
-              ...o,
-              activities: o.activities
-                .map((a) => ({
-                  ...a,
-                  indicators: a.indicators.filter(
-                    (ind) => ind.status === statusFilter
-                  ),
-                }))
-                .filter((a) => a.indicators.length > 0),
-            }))
-            .filter((o) => o.activities.length > 0),
-        }))
-        .filter((p) => p.objectives.length > 0)
-    : visibleData;
+  const visibleData: IPerspective[] = data;
 
   const handleDownloadPdf = () => {
-    dispatch(downloadTrackerPdf(filters));
+    const pdfFilters: ReportFilters = { ...filters };
+    
+    if (viewMode === "submitted") {
+      pdfFilters.hasSubmission = "true";
+      // ✅ FIXED: Use correct enum values from your database
+      pdfFilters.submissionStatus = "Verified,Accepted,Partially Approved";
+    }
+    
+    dispatch(downloadTrackerPdf(pdfFilters));
   };
 
   const handleClearFilters = () => {
     setStatusFilter("");
     setActivePerspective("all");
+    setViewMode("submitted");
     dispatch(clearReportFilters());
   };
+
+  const handleRefresh = useCallback(() => {
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
   let indicatorIndex = 0;
 
@@ -353,6 +397,30 @@ const AdminReports = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* View Mode Toggle */}
+          <div className="flex rounded-xl border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setViewMode("submitted")}
+              className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
+                viewMode === "submitted"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-white text-slate-500 hover:bg-slate-50"
+              }`}
+            >
+              Submitted Only
+            </button>
+            <button
+              onClick={() => setViewMode("all")}
+              className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
+                viewMode === "all"
+                  ? "bg-[#1d3331] text-white"
+                  : "bg-white text-slate-500 hover:bg-slate-50"
+              }`}
+            >
+              All Indicators
+            </button>
+          </div>
+
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -364,7 +432,7 @@ const AdminReports = () => {
             <option value="Incomplete">Incomplete</option>
           </select>
 
-          {(statusFilter || activePerspective !== "all") && (
+          {(statusFilter || activePerspective !== "all" || viewMode !== "submitted") && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
@@ -375,7 +443,7 @@ const AdminReports = () => {
           )}
 
           <button
-            onClick={() => dispatch(fetchTrackerReport(filters))}
+            onClick={handleRefresh}
             disabled={loading}
             className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white
                        text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-all"
@@ -432,7 +500,7 @@ const AdminReports = () => {
             </thead>
 
             <tbody>
-              {filteredData.length === 0 ? (
+              {visibleData.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -442,7 +510,7 @@ const AdminReports = () => {
                   </td>
                 </tr>
               ) : (
-                filteredData.map((perspective) => (
+                visibleData.map((perspective) => (
                   <TablePerspectiveRows
                     key={perspective.perspective}
                     perspective={perspective}

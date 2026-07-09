@@ -195,7 +195,7 @@ export const buildSubmissionFormData = (data: SubmissionFormData): FormData => {
   formData.append("quarter", String(data.quarter));
   formData.append("year", String(data.year));
   
-  if (data.achievedValue !== undefined) {
+  if (data.achievedValue !== undefined && data.achievedValue !== null) {
     formData.append("achievedValue", String(data.achievedValue));
   }
   
@@ -223,15 +223,6 @@ export const buildSubmissionFormData = (data: SubmissionFormData): FormData => {
 };
 
 /* ─── Thunks ──────────────────────────────────────────────────────────────── */
-/* 
- * NOTE: These thunks do NOT show any toasts. They only:
- * 1. Make API calls
- * 2. Return data or reject with error message
- * 3. Update Redux state
- * 
- * Toast notifications are handled by the component (SubmissionModal)
- * to prevent duplicate messages.
- */
 
 /** GET /user-indicators/my-assignments */
 export const fetchMyIndicators = createAsyncThunk(
@@ -423,7 +414,12 @@ export const updateDocumentDescriptions = createAsyncThunk(
         { headers: config },
       );
       
-      return { data, message: data.message, documents };
+      return { 
+        data, 
+        message: data.message, 
+        documents,
+        submissionId,
+      };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document descriptions";
       return rejectWithValue(errorMessage);
@@ -452,7 +448,13 @@ export const updateDocumentDescription = createAsyncThunk(
         { headers: config },
       );
       
-      return { data, docId, description, message: data.message };
+      return { 
+        data, 
+        docId, 
+        description, 
+        message: data.message,
+        updatedDocument: data.data?.document,
+      };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document description";
       return rejectWithValue(errorMessage);
@@ -492,7 +494,7 @@ export const deletePendingDocument = createAsyncThunk(
       // Refresh indicator details to get updated document list
       await dispatch(fetchIndicatorDetails(indicatorId));
       
-      return { docId, submissionId, indicatorId, data, message: data.message };
+      return { docId, submissionId, data, message: data.message };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to delete document from pending submission";
       return rejectWithValue(errorMessage);
@@ -541,7 +543,7 @@ const userIndicatorSlice = createSlice({
     },
     optimisticRemoveDocument(
       state,
-      action: PayloadAction<{ docId: string; submissionId: string; indicatorId: string }>,
+      action: PayloadAction<{ docId: string; submissionId: string }>,
     ) {
       const { docId, submissionId } = action.payload;
       const patch = (indicator: IIndicatorUI | null) => {
@@ -553,6 +555,28 @@ const userIndicatorSlice = createSlice({
               if (idx !== undefined && idx !== -1 && sub.documents) {
                 sub.documents.splice(idx, 1);
               }
+            }
+          }
+        }
+      };
+      patch(state.currentIndicator);
+      patch(state.selectedIndicator);
+    },
+    optimisticAddDocuments(
+      state,
+      action: PayloadAction<{ 
+        submissionId: string; 
+        documents: IDocumentUI[] 
+      }>,
+    ) {
+      const { submissionId, documents } = action.payload;
+      const patch = (indicator: IIndicatorUI | null) => {
+        if (!indicator?.submissions) return;
+        for (const bucket of Object.values(indicator.submissions)) {
+          for (const sub of bucket) {
+            if (sub.id === submissionId) {
+              if (!sub.documents) sub.documents = [];
+              sub.documents.push(...documents);
             }
           }
         }
@@ -703,6 +727,24 @@ const userIndicatorSlice = createSlice({
       .addCase(updateDocumentDescriptions.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.lastActionSuccess = action.payload?.message ?? "Document descriptions updated successfully";
+        
+        // Optimistically update document descriptions
+        const { submissionId, documents } = action.payload;
+        const patch = (indicator: IIndicatorUI | null) => {
+          if (!indicator?.submissions) return;
+          for (const bucket of Object.values(indicator.submissions)) {
+            for (const sub of bucket) {
+              if (sub.id === submissionId) {
+                for (const docUpdate of documents) {
+                  const doc = sub.documents?.find((d) => d.id === docUpdate.documentId);
+                  if (doc) doc.description = docUpdate.description;
+                }
+              }
+            }
+          }
+        };
+        patch(state.currentIndicator);
+        patch(state.selectedIndicator);
       })
       .addCase(updateDocumentDescriptions.rejected, (state, action) => {
         state.actionLoading = false;
@@ -781,6 +823,7 @@ export const {
   setLocalSelectedIndicator,
   optimisticUpdateDocumentDescription,
   optimisticRemoveDocument,
+  optimisticAddDocuments,
 } = userIndicatorSlice.actions;
 
 /* ─── Aliases for backward compatibility ─────────────────────────────────── */
@@ -789,6 +832,6 @@ export const fetchMyAssignments = fetchMyIndicators;
 export const submitIndicatorProgress = submitProgress;
 export const resubmitIndicatorProgress = resubmitProgress;
 export const addIndicatorDocuments = addDocuments;
-export const updateRejectedSubmission = updateSubmission; // Alias for the smart router
+export const updateRejectedSubmission = updateSubmission;
 
 export default userIndicatorSlice.reducer;

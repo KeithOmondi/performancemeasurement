@@ -18,14 +18,14 @@ export interface ISubmission {
   year: number;
   achievedValue: number;
   notes: string;
-  reviewStatus: string;   // kept in the data but not rendered in the UI
+  reviewStatus: string;
   submittedAt: string;
   documents: IDocument[];
 }
 
 export interface IIndicator {
   indicatorId: string;
-  indicatorName: string;
+  indicatorName?: string;
   status: string;
   weight: number;
   unit: string;
@@ -39,7 +39,6 @@ export interface IIndicator {
   assignmentType: "User" | "Team";
   assigneeId: string;
   assigneeDisplayName: string;
-  // assignedByName: string;   // <-- removed – no longer returned by the API
   submissions: ISubmission[];
 }
 
@@ -68,6 +67,8 @@ export interface IReportSummary {
   awaitingReview: number;
   overdue: number;
   avgProgress: number;
+  hasSubmissions?: number;
+  submittedComplete?: number;
 }
 
 export interface ReportFilters {
@@ -76,6 +77,8 @@ export interface ReportFilters {
   assigneeId?: string;
   quarter?: number;
   year?: number;
+  hasSubmission?: string;
+  submissionStatus?: string;
 }
 
 /* ─── API RESPONSE SHAPES ─────────────────────────────────────────────────── */
@@ -129,11 +132,15 @@ function extractError(err: unknown, fallback: string): string {
 
 function buildParams(filters: ReportFilters): string {
   const params = new URLSearchParams();
+  
   if (filters.perspective) params.append("perspective", filters.perspective);
-  if (filters.status)      params.append("status",      filters.status);
-  if (filters.assigneeId)  params.append("assigneeId",  filters.assigneeId);
-  if (filters.quarter)     params.append("quarter",     String(filters.quarter));
-  if (filters.year)        params.append("year",        String(filters.year));
+  if (filters.status) params.append("status", filters.status);
+  if (filters.assigneeId) params.append("assigneeId", filters.assigneeId);
+  if (filters.quarter) params.append("quarter", String(filters.quarter));
+  if (filters.year) params.append("year", String(filters.year));
+  if (filters.hasSubmission) params.append("hasSubmission", filters.hasSubmission);
+  if (filters.submissionStatus) params.append("submissionStatus", filters.submissionStatus);
+  
   return params.toString();
 }
 
@@ -147,9 +154,9 @@ export const fetchTrackerReport = createAsyncThunk<
   "reports/fetchTracker",
   async (filters = {}, { rejectWithValue }) => {
     try {
-      const res = await apiPrivate.get<TrackerReportResponse>(
-        `/reports?${buildParams(filters)}`
-      );
+      const queryString = buildParams(filters);
+      const url = `/reports${queryString ? `?${queryString}` : ''}`;
+      const res = await apiPrivate.get<TrackerReportResponse>(url);
       return res.data;
     } catch (err) {
       return rejectWithValue(extractError(err, "Failed to fetch tracker report."));
@@ -197,17 +204,20 @@ export const downloadTrackerPdf = createAsyncThunk<
   "reports/downloadPdf",
   async (filters = {}, { rejectWithValue }) => {
     try {
+      const queryString = buildParams(filters);
+      const url = `/reports/pdf${queryString ? `?${queryString}` : ''}`;
+      
       const res = await apiPrivate.get<Blob>(
-        `/reports/pdf?${buildParams(filters)}`,
+        url,
         { responseType: "blob" }
       );
 
-      const url  = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const urlBlob = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const link = document.createElement("a");
-      link.href  = url;
+      link.href = urlBlob;
       link.download = `tracker-report-${new Date().toISOString().slice(0, 10)}.pdf`;
       link.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(urlBlob);
 
       return true;
     } catch (err) {
@@ -215,6 +225,8 @@ export const downloadTrackerPdf = createAsyncThunk<
     }
   }
 );
+
+/* ─── SLICE ───────────────────────────────────────────────────────────────── */
 
 /* ─── SLICE ───────────────────────────────────────────────────────────────── */
 
@@ -234,67 +246,92 @@ const reportSlice = createSlice({
     clearReportError(state) {
       state.error = null;
     },
+    setSubmittedFilter(state) {
+      state.filters = {
+        ...state.filters,
+        hasSubmission: "true",
+        submissionStatus: "Completed,PartiallyApproved"
+      };
+    },
+    clearSubmissionFilters(state) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { hasSubmission, submissionStatus, ...rest } = state.filters;
+      state.filters = rest;
+    },
+    toggleSubmissionFilter(state, action: PayloadAction<boolean>) {
+      if (action.payload) {
+        state.filters = {
+          ...state.filters,
+          hasSubmission: "true",
+          submissionStatus: "Completed,PartiallyApproved"
+        };
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { hasSubmission, submissionStatus, ...rest } = state.filters;
+        state.filters = rest;
+      }
+    }
   },
   extraReducers: (builder) => {
     /* fetchTrackerReport */
     builder
       .addCase(fetchTrackerReport.pending, (state) => {
         state.loading = true;
-        state.error   = null;
+        state.error = null;
       })
       .addCase(fetchTrackerReport.fulfilled, (state, action) => {
         state.loading = false;
-        state.data    = action.payload.data;
-        state.raw     = action.payload.raw;
+        state.data = action.payload.data;
+        state.raw = action.payload.raw;
       })
       .addCase(fetchTrackerReport.rejected, (state, action) => {
         state.loading = false;
-        state.error   = action.payload ?? "Something went wrong.";
+        state.error = action.payload ?? "Something went wrong.";
       });
 
     /* fetchReportByPlan */
     builder
       .addCase(fetchReportByPlan.pending, (state) => {
         state.loading = true;
-        state.error   = null;
+        state.error = null;
       })
       .addCase(fetchReportByPlan.fulfilled, (state, action) => {
         state.loading = false;
-        state.data    = action.payload.data;
-        state.raw     = action.payload.raw;
+        state.data = action.payload.data;
+        state.raw = action.payload.raw;
       })
       .addCase(fetchReportByPlan.rejected, (state, action) => {
         state.loading = false;
-        state.error   = action.payload ?? "Something went wrong.";
+        state.error = action.payload ?? "Something went wrong.";
       });
 
     /* fetchReportSummary */
     builder
       .addCase(fetchReportSummary.pending, (state) => {
         state.summaryLoading = true;
-        state.error          = null;
+        state.error = null;
       })
       .addCase(fetchReportSummary.fulfilled, (state, action) => {
         state.summaryLoading = false;
-        state.summary        = action.payload.data;
+        state.summary = action.payload.data;
       })
       .addCase(fetchReportSummary.rejected, (state, action) => {
         state.summaryLoading = false;
-        state.error          = action.payload ?? "Something went wrong.";
+        state.error = action.payload ?? "Something went wrong.";
       });
 
     /* downloadTrackerPdf */
     builder
       .addCase(downloadTrackerPdf.pending, (state) => {
         state.pdfLoading = true;
-        state.error      = null;
+        state.error = null;
       })
       .addCase(downloadTrackerPdf.fulfilled, (state) => {
         state.pdfLoading = false;
       })
       .addCase(downloadTrackerPdf.rejected, (state, action) => {
         state.pdfLoading = false;
-        state.error       = action.payload ?? "Something went wrong.";
+        state.error = action.payload ?? "Something went wrong.";
       });
   },
 });
@@ -304,6 +341,9 @@ export const {
   clearReportFilters,
   setSelectedPlan,
   clearReportError,
+  setSubmittedFilter,
+  clearSubmissionFilters,
+  toggleSubmissionFilter,
 } = reportSlice.actions;
 
 export default reportSlice.reducer;
