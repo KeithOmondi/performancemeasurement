@@ -38,7 +38,7 @@ const getErr = (err: unknown): string => {
 
 // ─── PLAN THUNKS ──────────────────────────────────────────────────────────────
 
-export const getAllStrategicPlans = createAsyncThunk <
+export const getAllStrategicPlans = createAsyncThunk<
   IStrategicPlan[], void, { rejectValue: string }
 >("strategicPlan/getAll", async (_, { rejectWithValue }) => {
   try {
@@ -49,7 +49,7 @@ export const getAllStrategicPlans = createAsyncThunk <
   }
 });
 
-export const createPlan = createAsyncThunk <
+export const createPlan = createAsyncThunk<
   IStrategicPlan, Partial<IStrategicPlan>, { rejectValue: string }
 >("strategicPlan/create", async (planData, { rejectWithValue }) => {
   try {
@@ -60,7 +60,7 @@ export const createPlan = createAsyncThunk <
   }
 });
 
-export const updatePlan = createAsyncThunk <
+export const updatePlan = createAsyncThunk<
   IStrategicPlan,
   { id: string; planData: Partial<IStrategicPlan> },
   { rejectValue: string }
@@ -73,7 +73,7 @@ export const updatePlan = createAsyncThunk <
   }
 });
 
-export const deletePlan = createAsyncThunk <
+export const deletePlan = createAsyncThunk<
   string, string, { rejectValue: string }
 >("strategicPlan/delete", async (id, { rejectWithValue }) => {
   try {
@@ -86,7 +86,7 @@ export const deletePlan = createAsyncThunk <
 
 // ─── OBJECTIVE THUNKS ─────────────────────────────────────────────────────────
 
-export const addObjective = createAsyncThunk <
+export const addObjective = createAsyncThunk<
   { planId: string; objective: IObjective },
   { planId: string; title: string },
   { rejectValue: string }
@@ -99,7 +99,7 @@ export const addObjective = createAsyncThunk <
   }
 });
 
-export const updateObjective = createAsyncThunk <
+export const updateObjective = createAsyncThunk<
   { planId: string; objective: IObjective },
   { planId: string; objectiveId: string; title: string },
   { rejectValue: string }
@@ -114,7 +114,7 @@ export const updateObjective = createAsyncThunk <
 
 // ─── ACTIVITY THUNKS ──────────────────────────────────────────────────────────
 
-export const addActivity = createAsyncThunk <
+export const addActivity = createAsyncThunk<
   { planId: string; objectiveId: string; activity: IActivity },
   { planId: string; objectiveId: string; description: string },
   { rejectValue: string }
@@ -127,7 +127,7 @@ export const addActivity = createAsyncThunk <
   }
 });
 
-export const updateActivity = createAsyncThunk <
+export const updateActivity = createAsyncThunk<
   { planId: string; objectiveId: string; activity: IActivity },
   { planId: string; objectiveId: string; activityId: string; description: string },
   { rejectValue: string }
@@ -140,9 +140,35 @@ export const updateActivity = createAsyncThunk <
   }
 });
 
+export const deleteActivity = createAsyncThunk<
+  { planId: string; objectiveId: string; activityId: string },
+  { planId: string; objectiveId: string; activityId: string },
+  { rejectValue: string }
+>("strategicPlan/deleteActivity", async ({ planId, objectiveId, activityId }, { rejectWithValue }) => {
+  try {
+    await strategicPlanService.deleteActivity(activityId);
+    return { planId, objectiveId, activityId };
+  } catch (err) {
+    return rejectWithValue(getErr(err));
+  }
+});
+
+export const reorderActivities = createAsyncThunk<
+  { planId: string; objectiveId: string; activityIds: string[] },
+  { planId: string; objectiveId: string; activityIds: string[] },
+  { rejectValue: string }
+>("strategicPlan/reorderActivities", async ({ planId, objectiveId, activityIds }, { rejectWithValue }) => {
+  try {
+    await strategicPlanService.reorderActivities(objectiveId, activityIds);
+    return { planId, objectiveId, activityIds };
+  } catch (err) {
+    return rejectWithValue(getErr(err));
+  }
+});
+
 // ─── INDICATOR LOOKUP THUNK ───────────────────────────────────────────────────
 
-export const fetchIndicatorByActivity = createAsyncThunk <
+export const fetchIndicatorByActivity = createAsyncThunk<
   { activityId: string; indicator: IActivityIndicator | null },
   string,
   { rejectValue: string }
@@ -186,7 +212,7 @@ const strategicPlanSlice = createSlice({
         const plan = state.plans.find((p) => p.id === action.payload.planId);
         if (plan) {
           plan.objectives = [
-            ...( plan.objectives ?? []),
+            ...(plan.objectives ?? []),
             { ...action.payload.objective, activities: [] },
           ];
         }
@@ -198,7 +224,6 @@ const strategicPlanSlice = createSlice({
             (o) => o.id === action.payload.objective.id
           );
           if (idx !== -1) {
-            // Preserve activities — backend only returns the objective row
             plan.objectives[idx] = {
               ...plan.objectives[idx],
               title: action.payload.objective.title,
@@ -238,6 +263,34 @@ const strategicPlanSlice = createSlice({
           }
         }
       })
+      .addCase(deleteActivity.fulfilled, (state, action) => {
+        const plan = state.plans.find((p) => p.id === action.payload.planId);
+        if (plan) {
+          const obj = plan.objectives.find(
+            (o) => o.id === action.payload.objectiveId
+          );
+          if (obj) {
+            obj.activities = obj.activities.filter(
+              (a) => a.id !== action.payload.activityId
+            );
+          }
+        }
+      })
+      .addCase(reorderActivities.fulfilled, (state, action) => {
+        const plan = state.plans.find((p) => p.id === action.payload.planId);
+        if (plan) {
+          const obj = plan.objectives.find(
+            (o) => o.id === action.payload.objectiveId
+          );
+          if (obj) {
+            // Reorder activities based on the new order
+            const orderedActivities = action.payload.activityIds
+              .map(id => obj.activities.find(a => a.id === id))
+              .filter((a): a is IActivity => a !== undefined);
+            obj.activities = orderedActivities;
+          }
+        }
+      })
 
       // ── Indicator lookup ──
       .addCase(fetchIndicatorByActivity.fulfilled, (state, action) => {
@@ -250,7 +303,6 @@ const strategicPlanSlice = createSlice({
           action.type.startsWith("strategicPlan/") &&
           action.type.endsWith("/pending"),
         (state, action) => {
-          // Use actionLoading for mutations, loading for fetches
           if (action.type === "strategicPlan/getAll/pending") {
             state.loading = true;
           } else {

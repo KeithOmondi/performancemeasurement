@@ -4,6 +4,7 @@ export interface IActivity {
   id: string;
   objectiveId?: string;
   description: string;
+  order?: number;  // Added for reordering
   status?: "Pending" | "In Progress" | "Completed";
   reviewStatus?: "Pending" | "Accepted" | "Rejected";
   createdAt?: string;
@@ -128,6 +129,24 @@ export const updateActivity = async (
   const response = await apiPrivate.patch(
     `/strategic-plans/activities/${activityId}`,
     { description }
+  );
+  return response.data;
+};
+
+export const deleteActivity = async (
+  activityId: string
+): Promise<IApiResponse<void>> => {
+  const response = await apiPrivate.delete(`/strategic-plans/activities/${activityId}`);
+  return response.data;
+};
+
+export const reorderActivities = async (
+  objectiveId: string,
+  activityIds: string[]
+): Promise<IApiResponse<void>> => {
+  const response = await apiPrivate.post(
+    `/strategic-plans/objectives/${objectiveId}/reorder-activities`,
+    { activityIds }
   );
   return response.data;
 };

@@ -1,19 +1,13 @@
-// SuperAdminIndicators.tsx – with proper activity addition
+// SuperAdminIndicators.tsx – with delete and reorder functionality
 import React from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { 
   Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, 
-  Search, Filter, ChevronDown, ChevronUp, FolderPlus, FilePlus 
+  Search, Filter, ChevronDown, ChevronUp, FolderPlus, FilePlus, Trash2,
+  GripVertical
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { 
-  getAllStrategicPlans,
-  //addObjective,
-  //updateObjective,
-  //addActivity,
-  //updateActivity,
-} from "../../store/slices/strategicPlan/strategicPlanSlice";
 import {
   fetchIndicators,
   fetchAssignedIndicators,
@@ -23,6 +17,7 @@ import {
   unassignIndicator,
   fetchIndicatorCounts,
   optimisticUnassign,
+  deleteIndicator,
   type IIndicator,
 } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
@@ -41,7 +36,11 @@ import type { ModalMode } from "../superadmin/ActivityIndicatorModal";
 import SuperAdminAssign from "../superadmin/SuperAdminAssign";
 import SuperAdminEditIndicator from "../superadmin/SuperAdminEditIndicator";
 import StrategicPlanEditModal from "../superadmin/ActivityIndicatorModal";
-//import StrategicPlanEditModal, { type ModalMode } from "./StrategicPlanEditModal";
+import { 
+  getAllStrategicPlans,
+  deleteActivity,
+} from "../../store/slices/strategicPlan/strategicPlanSlice";
+import ActivityReorderModal from "./ActivityReorderModal";
 
 /* ─── TYPES ──────────────────────────────────────────────────────────────── */
 
@@ -70,6 +69,9 @@ interface IndicatorSectionProps {
   onEditObjective: (planId: string, objectiveId: string, currentTitle: string) => void;
   onAddActivity: (planId: string, objectiveId: string, objectiveTitle: string) => void;
   onEditActivity: (planId: string, objectiveId: string, activityId: string, currentDescription: string) => void;
+  onDeleteActivity: (planId: string, objectiveId: string, activityId: string, activityDescription: string) => void;
+  onDeleteIndicator: (indicatorId: string) => void;
+  onReorderActivities: (planId: string, objectiveId: string, objectiveTitle: string) => void;
   activeFilter: string;
   optimisticUnassignId?: string | null;
   optimisticAssignId?: string | null;
@@ -145,10 +147,12 @@ const IndicatorSection = ({
   onViewIndicator,
   onUnassign,
   onEdit,
-  //onAddObjective,
   onEditObjective,
   onAddActivity,
   onEditActivity,
+  onDeleteActivity,
+  onDeleteIndicator,
+  onReorderActivities,
   optimisticUnassignId,
   optimisticAssignId,
 }: IndicatorSectionProps) => {
@@ -178,6 +182,13 @@ const IndicatorSection = ({
             </div>
             <div className="flex gap-1">
               <button
+                onClick={() => onReorderActivities(plan.id, objective.id, objective.title)}
+                className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"
+                title="Reorder activities"
+              >
+                <GripVertical size={14} />
+              </button>
+              <button
                 onClick={() => onEditObjective(plan.id, objective.id, objective.title)}
                 className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
                 title="Edit objective"
@@ -203,7 +214,7 @@ const IndicatorSection = ({
       </tr>
 
       {/* Activity rows */}
-      {visibleActivities.map((activity: IActivity) => {
+      {visibleActivities.map((activity: IActivity, index: number) => {
         const activityId = activity.id;
         let assignment = (indicators || []).find((ind) =>
           matchId(ind.activityId, activityId),
@@ -261,14 +272,27 @@ const IndicatorSection = ({
                       {assignment.reportingCycle === "Annual" ? "Annual" : "Quarterly"}
                     </span>
                   )}
+                  {/* Order indicator */}
+                  <span className="ml-2 text-[9px] text-gray-400 font-mono">
+                    #{index + 1}
+                  </span>
                 </div>
-                <button
-                  onClick={() => onEditActivity(plan.id, objective.id, activity.id, activity.description)}
-                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
-                  title="Edit activity"
-                >
-                  <Pencil size={12} />
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => onEditActivity(plan.id, objective.id, activity.id, activity.description)}
+                    className="p-1 rounded-lg hover:bg-gray-100 text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
+                    title="Edit activity"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    onClick={() => onDeleteActivity(plan.id, objective.id, activity.id, activity.description)}
+                    className="p-1 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
+                    title="Delete activity"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
             </td>
 
@@ -378,6 +402,13 @@ const IndicatorSection = ({
                     <Pencil size={12} />
                   </button>
                   <button
+                    onClick={() => onDeleteIndicator(assignment.id)}
+                    title="Delete indicator"
+                    className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                  <button
                     onClick={() => onUnassign(assignment.id)}
                     title="Unassign"
                     className="border border-rose-200 text-rose-400 p-1.5 rounded-lg hover:bg-rose-600 hover:text-white hover:border-rose-600 transition-all"
@@ -430,6 +461,13 @@ const SuperAdminIndicators = () => {
 
   // Modal state
   const [editModalMode, setEditModalMode] = useState<ModalMode | null>(null);
+  const [reorderModal, setReorderModal] = useState<{
+    isOpen: boolean;
+    planId: string;
+    objectiveId: string;
+    objectiveTitle: string;
+    activities: Array<{ id: string; description: string }>;
+  } | null>(null);
 
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
@@ -596,6 +634,77 @@ const SuperAdminIndicators = () => {
       setOptimisticUnassignId(null);
     }
   }, [dispatch, refreshAllLists]);
+
+  const handleDeleteActivity = useCallback(async (
+    planId: string,
+    objectiveId: string,
+    activityId: string,
+    activityDescription: string
+  ) => {
+    if (!window.confirm(`Delete activity "${activityDescription}"? This action cannot be undone.`)) return;
+    
+    try {
+      // First check if there's an indicator assigned to this activity
+      const hasIndicator = allIndicators.some(ind => matchId(ind.activityId, activityId));
+      
+      if (hasIndicator) {
+        // Find and delete the indicator first
+        const indicator = allIndicators.find(ind => matchId(ind.activityId, activityId));
+        if (indicator) {
+          await dispatch(deleteIndicator(indicator.id)).unwrap();
+          toast.success("Indicator removed from activity.");
+        }
+      }
+      
+      // Then delete the activity
+      await dispatch(deleteActivity({ planId, objectiveId, activityId })).unwrap();
+      toast.success("Activity deleted successfully.");
+      await refreshAllLists();
+    } catch (error) {
+      console.error("Delete activity failed:", error);
+      toast.error("Failed to delete activity. Please try again.");
+      await refreshAllLists();
+    }
+  }, [dispatch, allIndicators, refreshAllLists]);
+
+  const handleDeleteIndicator = useCallback(async (indicatorId: string) => {
+    if (!window.confirm("Delete this indicator? This action cannot be undone.")) return;
+    
+    try {
+      await dispatch(deleteIndicator(indicatorId)).unwrap();
+      toast.success("Indicator deleted successfully.");
+      await refreshAllLists();
+    } catch (error) {
+      console.error("Delete indicator failed:", error);
+      toast.error("Failed to delete indicator. Please try again.");
+      await refreshAllLists();
+    }
+  }, [dispatch, refreshAllLists]);
+
+  const handleReorderActivities = useCallback((
+    planId: string,
+    objectiveId: string,
+    objectiveTitle: string
+  ) => {
+    const plan = plans.find(p => p.id === planId);
+    if (!plan) return;
+    
+    const objective = plan.objectives.find(o => o.id === objectiveId);
+    if (!objective) return;
+    
+    setReorderModal({
+      isOpen: true,
+      planId,
+      objectiveId,
+      objectiveTitle,
+      activities: objective.activities.map(a => ({ id: a.id, description: a.description })),
+    });
+  }, [plans]);
+
+  const handleCloseReorderModal = useCallback(async () => {
+    setReorderModal(null);
+    await refreshAllLists();
+  }, [refreshAllLists]);
 
   // Strategic Plan Modal handlers
   const handleOpenEditModal = useCallback((mode: ModalMode) => {
@@ -1027,6 +1136,9 @@ const SuperAdminIndicators = () => {
                       onEditActivity={(planId, objectiveId, activityId, currentDescription) =>
                         handleOpenEditModal({ type: "edit-activity", planId, objectiveId, activityId, currentDescription })
                       }
+                      onDeleteActivity={handleDeleteActivity}
+                      onDeleteIndicator={handleDeleteIndicator}
+                      onReorderActivities={handleReorderActivities}
                       activeFilter={activeFilter}
                       optimisticUnassignId={optimisticUnassignId}
                       optimisticAssignId={optimisticAssignId}
@@ -1074,6 +1186,18 @@ const SuperAdminIndicators = () => {
         <StrategicPlanEditModal
           mode={editModalMode}
           onClose={handleCloseEditModal}
+        />
+      )}
+
+      {/* Activity Reorder Modal */}
+      {reorderModal?.isOpen && (
+        <ActivityReorderModal
+          isOpen={reorderModal.isOpen}
+          onClose={handleCloseReorderModal}
+          planId={reorderModal.planId}
+          objectiveId={reorderModal.objectiveId}
+          objectiveTitle={reorderModal.objectiveTitle}
+          activities={reorderModal.activities}
         />
       )}
     </div>
