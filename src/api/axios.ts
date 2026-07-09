@@ -9,12 +9,17 @@ const axiosConfig = {
 };
 
 // Public instance — for login, OTP, refresh
-// Timeout of 6s so a dead server doesn't hang the app indefinitely
-// Public instance — for login, OTP, refresh
-export const api = axios.create({ ...axiosConfig, timeout: 15000 });
+// Increased timeout for Neon cold starts
+export const api = axios.create({ 
+  ...axiosConfig, 
+  timeout: 60000, // Increased to 60 seconds
+});
 
 // Private instance — for all authenticated requests
-export const apiPrivate = axios.create({ ...axiosConfig, timeout: 10000 });
+export const apiPrivate = axios.create({ 
+  ...axiosConfig, 
+  timeout: 60000, // Increased to 60 seconds
+});
 
 // Injected logout handler — avoids circular store imports
 let logoutHandler: (() => void) | null = null;
@@ -23,16 +28,34 @@ export const injectLogoutHandler = (handler: () => void) => {
   logoutHandler = handler;
 };
 
-// Request interceptor — cookies sent automatically, nothing to inject
+// Request interceptor with logging
 apiPrivate.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => config,
+  (config: InternalAxiosRequestConfig) => {
+    console.log(`[API] Request: ${config.method?.toUpperCase()} ${config.url}`, {
+      timeout: config.timeout,
+      data: config.data
+    });
+    return config;
+  },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — on 401, attempt a silent token refresh
+// Response interceptor with timeout handling
 apiPrivate.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(`[API] Response: ${response.config.url}`, {
+      status: response.status,
+      dataSize: JSON.stringify(response.data).length
+    });
+    return response;
+  },
   async (error) => {
+    // Handle timeout specifically
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      console.error(`[API] Timeout: ${error.config?.url}`);
+      return Promise.reject(new Error('Request timed out. The server may be waking up. Please try again.'));
+    }
+
     const prevRequest = error?.config;
 
     if (error?.response?.status === 401 && !prevRequest?._retry) {
