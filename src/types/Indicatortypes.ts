@@ -25,7 +25,10 @@ export type ReviewAction =
   | "Rejected"
   | "Reopened"
   | "Submission Deleted"
-  | "Document Description Updated";
+  | "Document Description Updated"
+  | "Reassigned"
+  | "Users Added"
+  | "Users Removed";
 
 export type ReviewerRole = "user" | "admin" | "superadmin";
 
@@ -44,6 +47,16 @@ export type SubmissionReviewStatus =
   | "Partially Approved";
 
 export type Quarter = 0 | 1 | 2 | 3 | 4;
+
+/* ─── ASSIGNEE (NEW) ──────────────────────────────────────────────────────── */
+
+export interface IAssignee {
+  userId: string;
+  isPrimary: boolean;
+  name: string;
+  email: string;
+  pjNumber?: string;
+}
 
 /* ─── DOCUMENT ───────────────────────────────────────────────────────────── */
 
@@ -155,6 +168,9 @@ export interface IIndicator {
   isOverdue?: boolean;
   completionPercentage?: number;
   adminOverallComments?: string;
+  /* Multi-assignee fields (NEW) */
+  isMultiAssignee?: boolean;
+  allAssignees?: IAssignee[];
 }
 
 /* ─── QUEUE ITEM ─────────────────────────────────────────────────────────── */
@@ -206,6 +222,30 @@ export interface IAssignPayload {
   assigneeModel?: AssignmentType;
 }
 
+/* ─── NEW: Multi-Assignee Payloads ──────────────────────────────────────── */
+
+export interface IReassignPayload {
+  id: string;
+  newAssigneeId: string;
+  newAssigneeModel?: AssignmentType;
+  reason?: string;
+}
+
+export interface IAddUsersPayload {
+  id: string;
+  userIds: string[];
+  role?: string;
+  refetchAfter?: boolean;
+}
+
+export interface IRemoveUsersPayload {
+  id: string;
+  userIds: string[];
+  refetchAfter?: boolean;
+}
+
+/* ─── CREATE / UPDATE PAYLOADS ──────────────────────────────────────────── */
+
 export interface ICreateIndicatorPayload {
   strategicPlanId: string;
   objectiveId: string;
@@ -219,6 +259,8 @@ export interface ICreateIndicatorPayload {
   deadline?: string;
   instructions?: string;
   activeQuarter?: number;
+  /** Array of additional user IDs for multi-assignee (NEW) */
+  additionalAssignees?: string[];
 }
 
 export interface IUpdateIndicatorPayload {

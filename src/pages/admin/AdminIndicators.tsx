@@ -1,11 +1,11 @@
-// SuperAdminIndicators.tsx – with delete and reorder functionality
+// SuperAdminIndicators.tsx – with reassign and add users functionality
 import React from "react";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { 
   Plus, ArrowRight, Loader2, AlertCircle, Calendar, X, Pencil, 
   Search, Filter, ChevronDown, ChevronUp, FolderPlus, FilePlus, Trash2,
-  GripVertical
+  GripVertical, Users, UserPlus, 
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -41,6 +41,8 @@ import {
   deleteActivity,
 } from "../../store/slices/strategicPlan/strategicPlanSlice";
 import ActivityReorderModal from "./ActivityReorderModal";
+import ReassignIndicatorModal from "../modals/ReassignIndicatorModal";
+import AddUsersToIndicatorModal from "../modals/AddUsersToIndicatorModal";
 
 /* ─── TYPES ──────────────────────────────────────────────────────────────── */
 
@@ -65,6 +67,9 @@ interface IndicatorSectionProps {
   onViewIndicator: (indicatorId: string) => void;
   onUnassign: (indicatorId: string) => void;
   onEdit: (indicator: IIndicator) => void;
+  onReassign: (indicator: IIndicator) => void;
+  onAddUsers: (indicator: IIndicator) => void;
+  onRemoveUsers: (indicator: IIndicator, userIds: string[]) => void;
   onAddObjective: (planId: string, planPerspective: string) => void;
   onEditObjective: (planId: string, objectiveId: string, currentTitle: string) => void;
   onAddActivity: (planId: string, objectiveId: string, objectiveTitle: string) => void;
@@ -147,6 +152,8 @@ const IndicatorSection = ({
   onViewIndicator,
   onUnassign,
   onEdit,
+  onReassign,
+  onAddUsers,
   onEditObjective,
   onAddActivity,
   onEditActivity,
@@ -253,6 +260,10 @@ const IndicatorSection = ({
           return "Unassigned";
         };
 
+        // Check if multi-assignee
+        const isMultiAssignee = assignment?.isMultiAssignee && (assignment.allAssignees?.length || 0) > 1;
+        const assigneeCount = assignment?.allAssignees?.length || 0;
+
         return (
           <tr
             key={activityId}
@@ -272,7 +283,12 @@ const IndicatorSection = ({
                       {assignment.reportingCycle === "Annual" ? "Annual" : "Quarterly"}
                     </span>
                   )}
-                  {/* Order indicator */}
+                  {isMultiAssignee && (
+                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-purple-100 text-purple-600 border border-purple-200">
+                      <Users size={10} className="mr-1" />
+                      {assigneeCount} assignees
+                    </span>
+                  )}
                   <span className="ml-2 text-[9px] text-gray-400 font-mono">
                     #{index + 1}
                   </span>
@@ -321,6 +337,11 @@ const IndicatorSection = ({
                   <span className="text-[10px] font-bold text-gray-700 uppercase truncate max-w-[100px]">
                     {getAssigneeDisplayName()}
                   </span>
+                  {isMultiAssignee && (
+                    <span className="text-[8px] text-purple-500 font-bold">
+                      +{assigneeCount - 1}
+                    </span>
+                  )}
                 </div>
               ) : (
                 <span className="bg-gray-100 text-gray-400 px-3 py-1 rounded text-[9px] font-bold uppercase">
@@ -383,7 +404,7 @@ const IndicatorSection = ({
 
             <td className="p-4 text-center">
               {isAssigned && assignment && !isOptimisticallyAssigning ? (
-                <div className="flex items-center justify-center gap-1.5">
+                <div className="flex items-center justify-center gap-1.5 flex-wrap">
                   <button
                     onClick={() => onViewIndicator(assignment.id)}
                     className={`border px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 transition-all ${
@@ -400,6 +421,20 @@ const IndicatorSection = ({
                     className="border border-sky-200 text-sky-500 p-1.5 rounded-lg hover:bg-sky-600 hover:text-white hover:border-sky-600 transition-all"
                   >
                     <Pencil size={12} />
+                  </button>
+                  <button
+                    onClick={() => onReassign(assignment)}
+                    title="Reassign"
+                    className="border border-indigo-200 text-indigo-500 p-1.5 rounded-lg hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all"
+                  >
+                    <UserPlus size={12} />
+                  </button>
+                  <button
+                    onClick={() => onAddUsers(assignment)}
+                    title="Add users"
+                    className="border border-purple-200 text-purple-500 p-1.5 rounded-lg hover:bg-purple-600 hover:text-white hover:border-purple-600 transition-all"
+                  >
+                    <Users size={12} />
                   </button>
                   <button
                     onClick={() => onDeleteIndicator(assignment.id)}
@@ -468,6 +503,17 @@ const SuperAdminIndicators = () => {
     objectiveTitle: string;
     activities: Array<{ id: string; description: string }>;
   } | null>(null);
+
+  // NEW: Reassign and Add Users modal state
+  const [reassignModal, setReassignModal] = useState<{
+    isOpen: boolean;
+    indicator: IIndicator | null;
+  }>({ isOpen: false, indicator: null });
+
+  const [addUsersModal, setAddUsersModal] = useState<{
+    isOpen: boolean;
+    indicator: IIndicator | null;
+  }>({ isOpen: false, indicator: null });
 
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
@@ -618,6 +664,26 @@ const SuperAdminIndicators = () => {
     await refreshAllLists();
   }, [refreshAllLists]);
 
+  // NEW: Reassign handlers
+  const handleOpenReassign = useCallback((indicator: IIndicator) => {
+    setReassignModal({ isOpen: true, indicator });
+  }, []);
+
+  const handleCloseReassign = useCallback(async () => {
+    setReassignModal({ isOpen: false, indicator: null });
+    await refreshAllLists();
+  }, [refreshAllLists]);
+
+  // NEW: Add Users handlers
+  const handleOpenAddUsers = useCallback((indicator: IIndicator) => {
+    setAddUsersModal({ isOpen: true, indicator });
+  }, []);
+
+  const handleCloseAddUsers = useCallback(async () => {
+    setAddUsersModal({ isOpen: false, indicator: null });
+    await refreshAllLists();
+  }, [refreshAllLists]);
+
   const handleUnassign = useCallback(async (indicatorId: string) => {
     if (!window.confirm("Remove this assignment? This cannot be undone.")) return;
     setOptimisticUnassignId(indicatorId);
@@ -644,11 +710,9 @@ const SuperAdminIndicators = () => {
     if (!window.confirm(`Delete activity "${activityDescription}"? This action cannot be undone.`)) return;
     
     try {
-      // First check if there's an indicator assigned to this activity
       const hasIndicator = allIndicators.some(ind => matchId(ind.activityId, activityId));
       
       if (hasIndicator) {
-        // Find and delete the indicator first
         const indicator = allIndicators.find(ind => matchId(ind.activityId, activityId));
         if (indicator) {
           await dispatch(deleteIndicator(indicator.id)).unwrap();
@@ -656,7 +720,6 @@ const SuperAdminIndicators = () => {
         }
       }
       
-      // Then delete the activity
       await dispatch(deleteActivity({ planId, objectiveId, activityId })).unwrap();
       toast.success("Activity deleted successfully.");
       await refreshAllLists();
@@ -713,7 +776,6 @@ const SuperAdminIndicators = () => {
 
   const handleCloseEditModal = useCallback(async () => {
     setEditModalMode(null);
-    // Wait a moment for the modal to close, then refresh
     setTimeout(async () => {
       await refreshAllLists();
     }, 300);
@@ -811,7 +873,6 @@ const SuperAdminIndicators = () => {
       .map((plan: IStrategicPlan) => {
         const objectives = getObjectives(plan)
           .map((obj: IObjective): IObjectiveWithIndicators => {
-            // First filter activities by the tab filter (assigned/unassigned/review)
             let filteredActivities = getActivities(obj).filter((act: IActivity) => {
               const actId = act.id;
               const indicator = (currentIndicators ?? []).find((ind) =>
@@ -831,7 +892,6 @@ const SuperAdminIndicators = () => {
               return true;
             });
 
-            // Apply extra filters (search, status, assignee, cycle, progress)
             filteredActivities = filteredActivities.filter((act) => {
               const actId = act.id;
               const indicator = (currentIndicators ?? []).find((ind) =>
@@ -1124,6 +1184,9 @@ const SuperAdminIndicators = () => {
                       onViewIndicator={handleViewIndicator}
                       onUnassign={handleUnassign}
                       onEdit={setEditingIndicator}
+                      onReassign={handleOpenReassign}
+                      onAddUsers={handleOpenAddUsers}
+                      onRemoveUsers={() => {}} // Will be implemented inside the modal
                       onAddObjective={(planId, planPerspective) => 
                         handleOpenEditModal({ type: "add-objective", planId, planPerspective })
                       }
@@ -1198,6 +1261,24 @@ const SuperAdminIndicators = () => {
           objectiveId={reorderModal.objectiveId}
           objectiveTitle={reorderModal.objectiveTitle}
           activities={reorderModal.activities}
+        />
+      )}
+
+      {/* NEW: Reassign Indicator Modal */}
+      {reassignModal.isOpen && reassignModal.indicator && (
+        <ReassignIndicatorModal
+          isOpen={reassignModal.isOpen}
+          onClose={handleCloseReassign}
+          indicator={reassignModal.indicator}
+        />
+      )}
+
+      {/* NEW: Add Users to Indicator Modal */}
+      {addUsersModal.isOpen && addUsersModal.indicator && (
+        <AddUsersToIndicatorModal
+          isOpen={addUsersModal.isOpen}
+          onClose={handleCloseAddUsers}
+          indicator={addUsersModal.indicator}
         />
       )}
     </div>

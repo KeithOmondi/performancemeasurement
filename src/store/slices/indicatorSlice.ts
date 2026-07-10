@@ -20,6 +20,9 @@
      PATCH  /:id/reopen                reopenIndicator
      PATCH  /:id/assign                assignIndicator
      DELETE /:id/unassign              unassignIndicator
+     PATCH  /:id/reassign              reassignIndicator      // NEW
+     POST   /:id/add-users             addUsersToIndicator   // NEW
+     DELETE /:id/remove-users          removeUsersFromIndicator // NEW
      GET    /:id/partial-approvals     getPartialApprovalsHistory
 ───────────────────────────────────────────────────────────────────────────── */
 
@@ -40,6 +43,9 @@ import type {
   IAssignPayload,
   ICreateIndicatorPayload,
   IUpdateIndicatorPayload,
+  IReassignPayload,
+  IAddUsersPayload,
+  IRemoveUsersPayload,
 } from "../../types/Indicatortypes";
 
 /* ─── RE-EXPORT TYPES (so existing imports don't break) ─────────────────── */
@@ -55,6 +61,10 @@ export type {
   IAssignPayload,
   ICreateIndicatorPayload,
   IUpdateIndicatorPayload,
+  IReassignPayload,
+  IAddUsersPayload,
+  IRemoveUsersPayload,
+  IAssignee,
   IndicatorStatus,
   ReviewAction,
   ReviewerRole,
@@ -357,7 +367,7 @@ export const deleteIndicator = createAsyncThunk(
   }
 );
 
-// ── Assignment ─────────────────────────────────────────────────────────────
+// ── Assignment (Single) ──────────────────────────────────────────────────
 
 export const assignIndicator = createAsyncThunk(
   "indicators/assign",
@@ -383,6 +393,65 @@ export const unassignIndicator = createAsyncThunk(
       const res = await apiPrivate.delete(`/indicators/${id}/unassign`);
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+// ── NEW: Multi-Assignee Operations ──────────────────────────────────────
+
+export const reassignIndicator = createAsyncThunk(
+  "indicators/reassign",
+  async (arg: IReassignPayload, { rejectWithValue, dispatch }) => {
+    try {
+      const res = await apiPrivate.patch(`/indicators/${arg.id}/reassign`, {
+        newAssigneeId: arg.newAssigneeId,
+        newAssigneeModel: arg.newAssigneeModel ?? "User",
+        reason: arg.reason,
+      });
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+export const addUsersToIndicator = createAsyncThunk(
+  "indicators/addUsers",
+  async (arg: IAddUsersPayload, { rejectWithValue, dispatch }) => {
+    try {
+      const res = await apiPrivate.post(`/indicators/${arg.id}/add-users`, {
+        userIds: arg.userIds,
+        role: arg.role,
+      });
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      if (arg.refetchAfter !== false) {
+        dispatch(fetchIndicatorById(arg.id));
+      }
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+export const removeUsersFromIndicator = createAsyncThunk(
+  "indicators/removeUsers",
+  async (arg: IRemoveUsersPayload, { rejectWithValue, dispatch }) => {
+    try {
+      const res = await apiPrivate.delete(`/indicators/${arg.id}/remove-users`, {
+        data: { userIds: arg.userIds },
+      });
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      if (arg.refetchAfter !== false) {
+        dispatch(fetchIndicatorById(arg.id));
+      }
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -454,7 +523,6 @@ export const deleteSubmission = createAsyncThunk(
   ) => {
     try {
       await apiPrivate.delete(`/indicators/submissions/${arg.submissionId}`);
-      // Refresh the parent indicator so the detail view is up-to-date
       dispatch(fetchIndicatorById(arg.indicatorId));
       return arg;
     } catch (err) {
@@ -517,6 +585,8 @@ const indicatorSlice = createSlice({
         indicator.assignee = assigneeId;
         indicator.assigneeDisplayName = assigneeDisplayName;
         indicator.status = "Pending";
+        indicator.isMultiAssignee = false;
+        indicator.allAssignees = [];
       }
       applyCategories(state);
     },
@@ -534,8 +604,86 @@ const indicatorSlice = createSlice({
         indicator.assignee = "";
         indicator.assigneeDisplayName = undefined;
         indicator.status = "Unassigned";
+        indicator.isMultiAssignee = false;
+        indicator.allAssignees = [];
       }
       applyCategories(state);
+    },
+
+    /**
+     * NEW: Optimistically add users to an indicator in the UI.
+     */
+    optimisticAddUsers(
+      state,
+      action: PayloadAction<{
+        id: string;
+        users: Array<{ userId: string; name: string; email: string }>;
+      }>
+    ) {
+      const { id, users } = action.payload;
+      const indicator = state.indicators.find((i) => i.id === id);
+      if (indicator) {
+        indicator.isMultiAssignee = true;
+        if (!indicator.allAssignees) {
+          indicator.allAssignees = [];
+        }
+        for (const user of users) {
+          if (!indicator.allAssignees.some((a) => a.userId === user.userId)) {
+            indicator.allAssignees.push({
+              userId: user.userId,
+              isPrimary: false,
+              name: user.name,
+              email: user.email,
+            });
+          }
+        }
+      }
+      if (state.selectedIndicator?.id === id) {
+        state.selectedIndicator.isMultiAssignee = true;
+        if (!state.selectedIndicator.allAssignees) {
+          state.selectedIndicator.allAssignees = [];
+        }
+        for (const user of users) {
+          if (!state.selectedIndicator.allAssignees.some((a) => a.userId === user.userId)) {
+            state.selectedIndicator.allAssignees.push({
+              userId: user.userId,
+              isPrimary: false,
+              name: user.name,
+              email: user.email,
+            });
+          }
+        }
+      }
+    },
+
+    /**
+     * NEW: Optimistically remove users from an indicator in the UI.
+     */
+    optimisticRemoveUsers(
+      state,
+      action: PayloadAction<{
+        id: string;
+        userIds: string[];
+      }>
+    ) {
+      const { id, userIds } = action.payload;
+      const indicator = state.indicators.find((i) => i.id === id);
+      if (indicator && indicator.allAssignees) {
+        indicator.allAssignees = indicator.allAssignees.filter(
+          (a) => !userIds.includes(a.userId)
+        );
+        if (indicator.allAssignees.length <= 1) {
+          indicator.isMultiAssignee = false;
+        }
+      }
+      if (state.selectedIndicator?.id === id && state.selectedIndicator.allAssignees) {
+        state.selectedIndicator.allAssignees = state.selectedIndicator.allAssignees.filter(
+          (a) => !userIds.includes(a.userId)
+        );
+        if (state.selectedIndicator.allAssignees.length <= 1) {
+          state.selectedIndicator.isMultiAssignee = false;
+        }
+      }
     },
   },
 
@@ -606,8 +754,8 @@ const indicatorSlice = createSlice({
         state.counts = payload;
       })
       .addCase(fetchIndicatorCounts.rejected, (_, { payload }) => {
-  console.error("[indicators] Failed to fetch counts:", payload);
-});
+        console.error("[indicators] Failed to fetch counts:", payload);
+      });
 
     /* ── fetchIndicatorById ── */
     builder
@@ -649,10 +797,10 @@ const indicatorSlice = createSlice({
       })
       .addCase(updateIndicator.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
-        // Preserve heavy relations from the already-loaded detail view
         if (state.selectedIndicator?.id === payload.id) {
           payload.submissions = state.selectedIndicator.submissions;
           payload.reviewHistory = state.selectedIndicator.reviewHistory;
+          payload.allAssignees = state.selectedIndicator.allAssignees;
         }
         upsertOne(state, payload);
       })
@@ -706,6 +854,51 @@ const indicatorSlice = createSlice({
         state.error = payload as string;
       });
 
+    /* ── NEW: reassignIndicator ── */
+    builder
+      .addCase(reassignIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(reassignIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+      })
+      .addCase(reassignIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── NEW: addUsersToIndicator ── */
+    builder
+      .addCase(addUsersToIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(addUsersToIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+      })
+      .addCase(addUsersToIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── NEW: removeUsersFromIndicator ── */
+    builder
+      .addCase(removeUsersFromIndicator.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(removeUsersFromIndicator.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+      })
+      .addCase(removeUsersFromIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
     /* ── superAdminReview ── */
     builder
       .addCase(superAdminReview.pending, (state) => {
@@ -716,7 +909,6 @@ const indicatorSlice = createSlice({
         state.actionLoading = false;
         upsertOne(state, payload);
 
-        // Remove from queue once a terminal decision has been made
         if (
           payload.status === "Completed" ||
           payload.status === "Rejected by Super Admin"
@@ -726,7 +918,6 @@ const indicatorSlice = createSlice({
           );
         }
 
-        // Keep rejectedByAdmin in sync
         if (isRejected(payload)) {
           if (!state.rejectedByAdmin.some((r) => r.id === payload.id)) {
             state.rejectedByAdmin.push(payload);
@@ -751,7 +942,6 @@ const indicatorSlice = createSlice({
       .addCase(reopenIndicator.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
         upsertOne(state, payload);
-        // Remove from rejection list since it's been reopened
         state.rejectedByAdmin = state.rejectedByAdmin.filter(
           (r) => r.id !== payload.id
         );
@@ -776,10 +966,8 @@ const indicatorSlice = createSlice({
         state.actionLoading = false;
         const { submissionId, indicatorId } = payload;
 
-        // Remove from queue
         state.queue = state.queue.filter((q) => q.id !== submissionId);
 
-        // Remove from selectedIndicator's submissions array
         if (state.selectedIndicator?.id === indicatorId) {
           state.selectedIndicator = {
             ...state.selectedIndicator,
@@ -789,7 +977,6 @@ const indicatorSlice = createSlice({
           };
         }
 
-        // Remove from the master indicators list too
         const idx = state.indicators.findIndex((i) => i.id === indicatorId);
         if (idx !== -1 && state.indicators[idx].submissions) {
           state.indicators[idx] = {
@@ -835,6 +1022,8 @@ export const {
   refreshCategorizedLists,
   optimisticAssign,
   optimisticUnassign,
+  optimisticAddUsers,
+  optimisticRemoveUsers,
 } = indicatorSlice.actions;
 
 export default indicatorSlice.reducer;
