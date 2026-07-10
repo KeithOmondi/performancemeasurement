@@ -11,6 +11,7 @@ export interface IDocumentUI {
   id: string;
   fileName?: string;
   evidenceUrl: string;
+  evidencePublicId?: string;
   fileType?: string;
   status?: string;
   rejectionReason?: string;
@@ -24,12 +25,14 @@ export interface ISubmissionUI {
   year: number;
   achievedValue?: number;
   notes?: string;
-  reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected"
+  reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected" | "Partially Approved"
   adminComment?: string;
   submittedAt?: string;
   submittedBy?: string;
+  submittedByName?: string;
   resubmissionCount: number;
   isReviewed?: boolean;
+  approvedAmount?: number;
   documents: IDocumentUI[];
 }
 
@@ -70,6 +73,7 @@ interface UserIndicatorState {
   error: string | null;
   lastSubmissionId: string | null;
   lastActionSuccess: string | null;
+  lastResubmissionCount?: number;
 }
 
 const initialState: UserIndicatorState = {
@@ -84,6 +88,7 @@ const initialState: UserIndicatorState = {
   error: null,
   lastSubmissionId: null,
   lastActionSuccess: null,
+  lastResubmissionCount: undefined,
 };
 
 /* ─── Bucket helpers (exported) ──────────────────────────────────────────── */
@@ -109,10 +114,16 @@ export const getAcceptedSubmission = (
 ): ISubmissionUI | undefined =>
   bucket.find((s) => s.reviewStatus === "Accepted");
 
+export const getPartiallyApprovedSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  bucket.find((s) => s.reviewStatus === "Partially Approved");
+
 export const getActiveSubmission = (
   bucket: ISubmissionUI[],
 ): ISubmissionUI | undefined =>
   getPendingSubmission(bucket) ??
+  getPartiallyApprovedSubmission(bucket) ??
   getAcceptedSubmission(bucket) ??
   getRejectedSubmission(bucket);
 
@@ -129,9 +140,12 @@ export const canSubmitForCurrentQuarter = (indicator: IIndicatorUI): boolean => 
   const key = _activeKey(indicator);
   if (!key) return true;
   const bucket = indicator.submissions?.[key] ?? [];
-  // Can submit if no pending or accepted submission exists
+  // Can submit if no pending, partially approved, or accepted submission exists
   return !bucket.some(
-    (s) => s.reviewStatus === "Pending" || s.reviewStatus === "Accepted",
+    (s) => 
+      s.reviewStatus === "Pending" || 
+      s.reviewStatus === "Partially Approved" ||
+      s.reviewStatus === "Accepted",
   );
 };
 
@@ -162,6 +176,21 @@ export const getActiveQuarterDisplay = (indicator: IIndicatorUI): string => {
   return `Q${q}`;
 };
 
+export const getDocumentsForSubmission = (
+  indicator: IIndicatorUI | null,
+  submissionId: string,
+): IDocumentUI[] => {
+  if (!indicator?.submissions) return [];
+  for (const bucket of Object.values(indicator.submissions)) {
+    for (const sub of bucket) {
+      if (sub.id === submissionId) {
+        return sub.documents || [];
+      }
+    }
+  }
+  return [];
+};
+
 /* ─── Private helpers ────────────────────────────────────────────────────── */
 
 const _currentQuarter = (): number => Math.ceil((new Date().getMonth() + 1) / 3);
@@ -175,6 +204,53 @@ const _activeKey = (indicator: IIndicatorUI): string | null => {
     return `Annual_${year}`;
   const q = indicator.currentQuarter ?? _currentQuarter();
   return `Q${q}_${year}`;
+};
+
+/* ─── Helper to update submission in state ───────────────────────────────── */
+
+const updateSubmissionInIndicator = (
+  indicator: IIndicatorUI | null,
+  submissionId: string,
+  updater: (submission: ISubmissionUI) => void,
+): void => {
+  if (!indicator?.submissions) return;
+  for (const bucket of Object.values(indicator.submissions)) {
+    for (const sub of bucket) {
+      if (sub.id === submissionId) {
+        updater(sub);
+        return;
+      }
+    }
+  }
+};
+
+const addOrUpdateSubmission = (
+  indicator: IIndicatorUI | null,
+  submission: ISubmissionUI,
+): void => {
+  if (!indicator) return;
+  
+  const key = submission.quarter === 0 
+    ? `Annual_${submission.year}` 
+    : `Q${submission.quarter}_${submission.year}`;
+  
+  if (!indicator.submissions) {
+    indicator.submissions = {};
+  }
+  
+  if (!indicator.submissions[key]) {
+    indicator.submissions[key] = [];
+  }
+  
+  const existingIndex = indicator.submissions[key].findIndex(
+    (s) => s.id === submission.id,
+  );
+  
+  if (existingIndex !== -1) {
+    indicator.submissions[key][existingIndex] = submission;
+  } else {
+    indicator.submissions[key].push(submission);
+  }
 };
 
 /* ─── Helper to build FormData ───────────────────────────────────────────── */
@@ -271,7 +347,7 @@ export const submitProgress = createAsyncThunk(
   "userIndicators/submitProgress",
   async (
     { id, formData }: { id: string; formData: FormData },
-    { rejectWithValue, dispatch },
+    { rejectWithValue },
   ) => {
     try {
       const { data } = await api.post(
@@ -280,13 +356,14 @@ export const submitProgress = createAsyncThunk(
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       
-      // Refresh indicator details to get updated submissions
-      await dispatch(fetchIndicatorDetails(id));
+      const result = data.data;
+      const submission = result?.submission;
       
       return { 
-        data: data.data, 
+        data: result, 
         message: data.message,
-        submissionId: data.data?.submissionId,
+        submissionId: result?.submissionId,
+        submission,
       };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to submit progress";
@@ -300,7 +377,7 @@ export const resubmitProgress = createAsyncThunk(
   "userIndicators/resubmitProgress",
   async (
     { id, formData }: { id: string; formData: FormData },
-    { rejectWithValue, dispatch },
+    { rejectWithValue },
   ) => {
     try {
       const { data } = await api.post(
@@ -309,14 +386,15 @@ export const resubmitProgress = createAsyncThunk(
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       
-      // Refresh indicator details to get updated submissions
-      await dispatch(fetchIndicatorDetails(id));
+      const result = data.data;
+      const submission = result?.submission;
       
       return { 
-        data: data.data, 
+        data: result, 
         message: data.message,
-        submissionId: data.data?.submissionId,
-        resubmissionCount: data.data?.resubmissionCount,
+        submissionId: result?.submissionId,
+        resubmissionCount: result?.resubmissionCount,
+        submission,
       };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to resubmit progress";
@@ -329,11 +407,8 @@ export const resubmitProgress = createAsyncThunk(
 export const addDocuments = createAsyncThunk(
   "userIndicators/addDocuments",
   async (
-    {
-      id,
-      formData,
-    }: { id: string; formData: FormData },
-    { rejectWithValue, dispatch },
+    { id, formData }: { id: string; formData: FormData },
+    { rejectWithValue },
   ) => {
     try {
       const { data } = await api.post(
@@ -342,10 +417,16 @@ export const addDocuments = createAsyncThunk(
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       
-      // Refresh indicator details to get updated documents
-      await dispatch(fetchIndicatorDetails(id));
+      const result = data.data;
+      const submission = result?.submission;
       
-      return { data, message: data.message };
+      return { 
+        data: result, 
+        message: data.message,
+        submissionId: result?.submissionId,
+        submission,
+        documentsAdded: result?.documentsAdded,
+      };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to add documents";
       return rejectWithValue(errorMessage);
@@ -364,7 +445,7 @@ export const updateSubmission = createAsyncThunk(
   "userIndicators/updateSubmission",
   async (
     { id, formData }: { id: string; formData: FormData },
-    { rejectWithValue, dispatch },
+    { rejectWithValue },
   ) => {
     try {
       const { data } = await api.patch(
@@ -373,14 +454,15 @@ export const updateSubmission = createAsyncThunk(
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       
-      // Refresh indicator details to get updated submissions
-      await dispatch(fetchIndicatorDetails(id));
+      const result = data.data;
+      const submission = result?.submission;
       
       return { 
-        data: data.data, 
+        data: result, 
         message: data.message,
-        submissionId: data.data?.submissionId,
-        resubmissionCount: data.data?.resubmissionCount,
+        submissionId: result?.submissionId,
+        resubmissionCount: result?.resubmissionCount,
+        submission,
       };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update submission";
@@ -414,11 +496,14 @@ export const updateDocumentDescriptions = createAsyncThunk(
         { headers: config },
       );
       
+      const submission = data.data?.submission;
+      
       return { 
         data, 
         message: data.message, 
         documents,
         submissionId,
+        submission,
       };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document descriptions";
@@ -454,6 +539,7 @@ export const updateDocumentDescription = createAsyncThunk(
         description, 
         message: data.message,
         updatedDocument: data.data?.document,
+        submission: data.data?.submission,
       };
     } catch (err: unknown) {
       const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document description";
@@ -484,15 +570,12 @@ export const deletePendingDocument = createAsyncThunk(
   "userIndicators/deletePendingDocument",
   async (
     { indicatorId, submissionId, docId }: { indicatorId: string; submissionId: string; docId: string },
-    { rejectWithValue, dispatch },
+    { rejectWithValue },
   ) => {
     try {
       const { data } = await api.delete(
         `/user-indicators/${indicatorId}/submissions/${submissionId}/documents/${docId}`,
       );
-      
-      // Refresh indicator details to get updated document list
-      await dispatch(fetchIndicatorDetails(indicatorId));
       
       return { docId, submissionId, data, message: data.message };
     } catch (err: unknown) {
@@ -584,6 +667,70 @@ const userIndicatorSlice = createSlice({
       patch(state.currentIndicator);
       patch(state.selectedIndicator);
     },
+    // NEW: Update a submission in state directly
+    updateSubmissionInState(
+      state,
+      action: PayloadAction<{ 
+        indicatorId: string; 
+        submissionId: string; 
+        submission: ISubmissionUI 
+      }>,
+    ) {
+      const { indicatorId, submissionId, submission } = action.payload;
+      
+      // Update in myIndicators
+      const myIndicator = state.myIndicators.find((i) => i.id === indicatorId);
+      if (myIndicator) {
+        updateSubmissionInIndicator(myIndicator, submissionId, (sub) => {
+          Object.assign(sub, submission);
+        });
+      }
+      
+      // Update in indicators
+      const indicator = state.indicators.find((i) => i.id === indicatorId);
+      if (indicator) {
+        updateSubmissionInIndicator(indicator, submissionId, (sub) => {
+          Object.assign(sub, submission);
+        });
+      }
+      
+      // Update selected/current
+      if (state.selectedIndicator?.id === indicatorId) {
+        updateSubmissionInIndicator(state.selectedIndicator, submissionId, (sub) => {
+          Object.assign(sub, submission);
+        });
+      }
+      if (state.currentIndicator?.id === indicatorId) {
+        updateSubmissionInIndicator(state.currentIndicator, submissionId, (sub) => {
+          Object.assign(sub, submission);
+        });
+      }
+    },
+    // NEW: Add or replace a submission in state
+    addOrUpdateSubmissionInState(
+      state,
+      action: PayloadAction<{ 
+        indicatorId: string; 
+        submission: ISubmissionUI 
+      }>,
+    ) {
+      const { indicatorId, submission } = action.payload;
+      
+      const update = (indicator: IIndicatorUI | null) => {
+        if (indicator && indicator.id === indicatorId) {
+          addOrUpdateSubmission(indicator, submission);
+        }
+      };
+      
+      update(state.selectedIndicator);
+      update(state.currentIndicator);
+      
+      const myIndicator = state.myIndicators.find((i) => i.id === indicatorId);
+      if (myIndicator) addOrUpdateSubmission(myIndicator, submission);
+      
+      const indicator = state.indicators.find((i) => i.id === indicatorId);
+      if (indicator) addOrUpdateSubmission(indicator, submission);
+    },
   },
 
   extraReducers: (builder) => {
@@ -628,6 +775,12 @@ const userIndicatorSlice = createSlice({
         state.loading = false;
         state.selectedIndicator = action.payload;
         state.currentIndicator = action.payload;
+        
+        // Also update in the lists
+        const idx = state.myIndicators.findIndex((i) => i.id === action.payload.id);
+        if (idx !== -1) state.myIndicators[idx] = action.payload;
+        const idx2 = state.indicators.findIndex((i) => i.id === action.payload.id);
+        if (idx2 !== -1) state.indicators[idx2] = action.payload;
       })
       .addCase(fetchIndicatorDetails.rejected, (state, action) => {
         state.loading = false;
@@ -661,6 +814,7 @@ const userIndicatorSlice = createSlice({
       .addCase(resubmitProgress.fulfilled, (state, action) => {
         state.uploading = false;
         state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastResubmissionCount = action.payload?.resubmissionCount;
         state.lastActionSuccess = action.payload?.message ?? "Resubmission successful";
       })
       .addCase(resubmitProgress.rejected, (state, action) => {
@@ -678,6 +832,7 @@ const userIndicatorSlice = createSlice({
       .addCase(updateSubmission.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastResubmissionCount = action.payload?.resubmissionCount;
         state.lastActionSuccess = action.payload?.message ?? "Submission updated successfully";
       })
       .addCase(updateSubmission.rejected, (state, action) => {
@@ -710,6 +865,7 @@ const userIndicatorSlice = createSlice({
       })
       .addCase(addDocuments.fulfilled, (state, action) => {
         state.uploading = false;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
         state.lastActionSuccess = action.payload?.message ?? "Documents added successfully";
       })
       .addCase(addDocuments.rejected, (state, action) => {
@@ -824,6 +980,8 @@ export const {
   optimisticUpdateDocumentDescription,
   optimisticRemoveDocument,
   optimisticAddDocuments,
+  updateSubmissionInState,
+  addOrUpdateSubmissionInState,
 } = userIndicatorSlice.actions;
 
 /* ─── Aliases for backward compatibility ─────────────────────────────────── */

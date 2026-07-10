@@ -10,6 +10,8 @@ import {
   getActiveQuarterDisplay,
   buildSubmissionFormData,
   flattenSubmissions,
+  fetchIndicatorDetails,
+  addOrUpdateSubmissionInState,
 } from "../../store/slices/userIndicatorSlice";
 import type { AppDispatch, RootState } from "../../store/store";
 import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
@@ -94,6 +96,7 @@ const SubmissionModal = ({
   const [submitMode,       setSubmitMode]       = useState<SubmitMode>("replace");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showExistingEvidence, setShowExistingEvidence] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const syncedSubmissionIdRef = useRef<string | undefined>(undefined);
 
@@ -294,11 +297,40 @@ const SubmissionModal = ({
       idempotencyKey: crypto.randomUUID(),
     });
 
+    // Log FormData contents for debugging
+    console.log("📤 [SubmissionModal] Submitting FormData:");
+    for (const [key, value] of formData.entries()) {
+      if (value instanceof File) {
+        console.log(`  ${key}: ${value.name} (${value.type}, ${value.size} bytes)`);
+      } else {
+        console.log(`  ${key}: ${value}`);
+      }
+    }
+
+    setIsSubmitting(true);
+
     try {
+      let result;
+      
       if (onSubmit) {
         await onSubmit(formData);
+        result = { message: "Submitted successfully" };
       } else {
-        await dispatch(updateSubmission({ id: task!.id, formData })).unwrap();
+        // Use the updateSubmission thunk which handles the smart routing
+        result = await dispatch(updateSubmission({ id: task!.id, formData })).unwrap();
+        console.log("✅ [SubmissionModal] Submission result:", result);
+        
+        // ✅ IMPORTANT: Refresh the indicator details to get the updated submission
+        // This ensures the UI shows the new documents immediately
+        await dispatch(fetchIndicatorDetails(task!.id)).unwrap();
+        
+        // Also update the submission in the Redux state directly
+        if (result.submission) {
+          dispatch(addOrUpdateSubmissionInState({
+            indicatorId: task!.id,
+            submission: result.submission,
+          }));
+        }
       }
 
       const messages: Record<string, string> = {
@@ -309,12 +341,18 @@ const SubmissionModal = ({
       toast.success(messages[submissionType] ?? "Submitted successfully.");
 
       setSuccess(true);
+      
+      // Close modal after showing success
       setTimeout(() => {
-        onClose();
         setSuccess(false);
+        onClose();
       }, 1500);
+      
     } catch (err) {
+      console.error("❌ [SubmissionModal] Submission error:", err);
       toast.error(err instanceof Error ? err.message : "An unexpected error occurred.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -350,7 +388,7 @@ const SubmissionModal = ({
 
   const buttonText = viewOnly
     ? "Close"
-    : uploading
+    : (uploading || isSubmitting)
       ? "Processing..."
       : isAccepted
         ? "Period Certified"
@@ -446,7 +484,7 @@ const SubmissionModal = ({
               {/* ── Existing Submissions View ── */}
               {showExistingEvidence && !viewOnly && (
                 <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3 max-h-60 overflow-y-auto">
-                  {allSubmissions.map((sub, ) => (
+                  {allSubmissions.map((sub) => (
                     <div key={sub.id} className="border-b border-slate-100 last:border-0 pb-3 last:pb-0">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-black text-[#1a3a32]">
@@ -745,7 +783,7 @@ const SubmissionModal = ({
         <div className="px-6 py-4 md:px-8 md:py-5 bg-white border-t border-slate-100 shrink-0">
           <button
             onClick={handleSubmit}
-            disabled={uploading || success || isAccepted || viewOnly}
+            disabled={uploading || isSubmitting || success || isAccepted || viewOnly}
             className={`w-full py-4 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg ${
               viewOnly
                 ? "bg-slate-100 text-slate-500 hover:bg-slate-200"
@@ -754,7 +792,7 @@ const SubmissionModal = ({
                   : "bg-[#1a3a32] text-white hover:bg-black disabled:bg-slate-200 disabled:text-slate-400"
             }`}
           >
-            {uploading ? (
+            {(uploading || isSubmitting) ? (
               <>
                 <Loader2 className="animate-spin" size={14} />
                 <span>Syncing...</span>

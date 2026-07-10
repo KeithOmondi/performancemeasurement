@@ -20,6 +20,7 @@ import {
   deletePendingDocument,
   clearLastActionSuccess,
   updateSubmission,
+  addOrUpdateSubmissionInState,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -387,9 +388,14 @@ const UserTaskIdPage = () => {
     }
   };
 
+  // ── Modal handlers ─────────────────────────────────────────────────────────
+
   const handleModalClose = useCallback(async () => {
     setIsModalOpen(false);
-    await refreshData();
+    // Small delay to let the modal close animation finish before refreshing
+    setTimeout(() => {
+      refreshData();
+    }, 100);
   }, [refreshData]);
 
   const handleOpenModal = useCallback(async () => {
@@ -397,16 +403,38 @@ const UserTaskIdPage = () => {
     setIsModalOpen(true);
   }, [id, refreshData]);
 
-  // FIX: Remove unused quarter and year parameters
+  // ─── UPDATED: Submission handler with proper data handling ──────────────
   const handleSubmissionSubmit = useCallback(async (formData: FormData) => {
     if (!id) return;
+    
+    console.log("📤 [UserTaskIdPage] Submitting form data...");
+    
     try {
       const result = await dispatch(updateSubmission({ id, formData })).unwrap();
+      console.log("✅ [UserTaskIdPage] Submission result:", result);
+      
+      // Show success message
       showToast(result?.message ?? "Submission processed successfully.", "success");
+      
+      // If we got submission data back, update the Redux state directly
+      if (result?.submission) {
+        console.log("📦 [UserTaskIdPage] Updating state with submission:", result.submission);
+        dispatch(addOrUpdateSubmissionInState({
+          indicatorId: id,
+          submission: result.submission,
+        }));
+      }
+      
+      // Refresh the data from the server
       await refreshData();
-      setIsModalOpen(false);
+      
+      // Close the modal after a short delay to show the success state
+      setTimeout(() => {
+        setIsModalOpen(false);
+      }, 500);
+      
     } catch (err) {
-      console.error("Submission failed:", err);
+      console.error("❌ [UserTaskIdPage] Submission failed:", err);
       showToast(
         err instanceof Error ? err.message : "Failed to process submission. Please try again.",
         "error",
@@ -793,4 +821,4 @@ const UserTaskIdPage = () => {
   );
 };
 
-export default UserTaskIdPage;
+export default UserTaskIdPage; 
