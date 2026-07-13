@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { X, Loader2, Users, UserPlus, UserMinus } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { X, Loader2, Users, UserPlus, UserMinus, Search } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { addUsersToIndicator, removeUsersFromIndicator, type IIndicator } from "../../store/slices/indicatorSlice";
 import { fetchAllUsers } from "../../store/slices/user/userSlice";
 import toast from "react-hot-toast";
-import { shallowEqual } from "react-redux";
+
+// Import the User type from your userSlice
+import type { User } from "../../store/slices/user/userSlice";
 
 interface AddUsersToIndicatorModalProps {
   isOpen: boolean;
@@ -22,25 +24,52 @@ const AddUsersToIndicatorModal: React.FC<AddUsersToIndicatorModalProps> = ({
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [removingUserIds, setRemovingUserIds] = useState<string[]>([]);
   const [actionType, setActionType] = useState<"add" | "remove">("add");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [hasFetched, setHasFetched] = useState(false);
 
-  const { users, isLoading: usersLoading } = useAppSelector(
-    (s) => s.users,
-    shallowEqual
+  // Get users from Redux store
+  const { users, isLoading: usersLoading } = useAppSelector((state) => ({
+    users: state.users.users,
+    isLoading: state.users.isLoading,
+  }));
+
+  // Memoize current assignee IDs to prevent unnecessary re-renders
+  const currentAssigneeIds = useMemo(
+    () => indicator.allAssignees?.map((a) => a.userId) || [],
+    [indicator.allAssignees]
   );
 
-  const currentAssigneeIds = indicator.allAssignees?.map((a) => a.userId) || [];
   const primaryAssigneeId = indicator.assigneeId;
 
+  // Fetch users when modal opens
   useEffect(() => {
-    if (isOpen && users.length === 0) {
-      dispatch(fetchAllUsers());
+    if (isOpen && !hasFetched) {
+      dispatch(fetchAllUsers())
+        .unwrap()
+        .then(() => setHasFetched(true))
+        .catch(() => {
+          toast.error("Failed to load users");
+        });
     }
-    if (isOpen) {
+  }, [isOpen, dispatch, hasFetched]);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
       setSelectedUserIds([]);
       setRemovingUserIds([]);
       setActionType("add");
+      setSearchTerm("");
+      setHasFetched(false);
     }
-  }, [isOpen, dispatch, users.length]);
+  }, [isOpen]);
+
+  // Reset selections when switching action type
+  useEffect(() => {
+    setSelectedUserIds([]);
+    setRemovingUserIds([]);
+    setSearchTerm("");
+  }, [actionType]);
 
   const handleAddUsers = async () => {
     if (selectedUserIds.length === 0) {
@@ -106,16 +135,6 @@ const AddUsersToIndicatorModal: React.FC<AddUsersToIndicatorModalProps> = ({
     }
   };
 
-  if (!isOpen) return null;
-
-  const availableUsers = users.filter(
-    (u) => !currentAssigneeIds.includes(u.id)
-  );
-
-  const removableUsers = users.filter(
-    (u) => currentAssigneeIds.includes(u.id) && u.id !== primaryAssigneeId
-  );
-
   const toggleUserSelection = (userId: string) => {
     if (actionType === "add") {
       setSelectedUserIds((prev) =>
@@ -144,6 +163,49 @@ const AddUsersToIndicatorModal: React.FC<AddUsersToIndicatorModalProps> = ({
     const assignee = indicator.allAssignees?.find((a) => a.userId === userId);
     return assignee?.name || "Unknown";
   };
+
+  // Get available and removable users with proper dependencies
+  const availableUsers = useMemo(() => {
+    return users.filter((u: User) => !currentAssigneeIds.includes(u.id));
+  }, [users, currentAssigneeIds]);
+
+  const removableUsers = useMemo(() => {
+    return users.filter(
+      (u: User) => currentAssigneeIds.includes(u.id) && u.id !== primaryAssigneeId
+    );
+  }, [users, currentAssigneeIds, primaryAssigneeId]);
+
+  // Filtered lists - filtering logic inlined so useMemo deps are complete
+  // and don't depend on a plain function that gets recreated every render.
+  const filteredAvailableUsers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return availableUsers;
+    return availableUsers.filter(
+      (user: User) =>
+        user.name?.toLowerCase().includes(term) ||
+        user.email?.toLowerCase().includes(term) ||
+        user.pjNumber?.toLowerCase().includes(term)
+    );
+  }, [availableUsers, searchTerm]);
+
+  const filteredRemovableUsers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return removableUsers;
+    return removableUsers.filter(
+      (user: User) =>
+        user.name?.toLowerCase().includes(term) ||
+        user.email?.toLowerCase().includes(term) ||
+        user.pjNumber?.toLowerCase().includes(term)
+    );
+  }, [removableUsers, searchTerm]);
+
+  if (!isOpen) return null;
+
+  const currentUserList = actionType === "add" ? filteredAvailableUsers : filteredRemovableUsers;
+  const hasNoUsers = actionType === "add" 
+    ? availableUsers.length === 0
+    : removableUsers.length === 0;
+  const hasNoFilteredUsers = currentUserList.length === 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -223,61 +285,82 @@ const AddUsersToIndicatorModal: React.FC<AddUsersToIndicatorModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit}>
+          {/* Search input */}
+          <div className="mb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input
+                type="text"
+                placeholder="Search users by name, email, or PJ number..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                disabled={usersLoading}
+              />
+            </div>
+          </div>
+
           {/* User selection */}
           <div className="mb-6">
             <label className="block text-sm font-bold text-gray-700 mb-2">
               {actionType === "add" ? "Select Users to Add" : "Select Users to Remove"}
+              {searchTerm && (
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  ({currentUserList.length} result{currentUserList.length !== 1 ? "s" : ""})
+                </span>
+              )}
             </label>
             {usersLoading ? (
-              <div className="flex items-center gap-2 text-gray-500">
+              <div className="flex items-center gap-2 text-gray-500 p-4 justify-center">
                 <Loader2 size={16} className="animate-spin" />
                 <span>Loading users...</span>
               </div>
             ) : (
               <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2">
-                {(actionType === "add" ? availableUsers : removableUsers).length ===
-                0 ? (
+                {hasNoUsers ? (
                   <p className="text-sm text-gray-500 p-2 text-center">
                     {actionType === "add"
                       ? "All available users are already assigned."
                       : "No users to remove."}
                   </p>
+                ) : hasNoFilteredUsers ? (
+                  <p className="text-sm text-gray-500 p-2 text-center">
+                    No users match your search.
+                  </p>
                 ) : (
-                  (actionType === "add" ? availableUsers : removableUsers).map(
-                    (user) => (
-                      <label
-                        key={user.id}
-                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isUserSelected(user.id)}
-                          onChange={() => toggleUserSelection(user.id)}
-                          className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
-                        />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-gray-700">
-                            {user.name}
-                          </p>
-                          {user.email && (
-                            <p className="text-xs text-gray-400">{user.email}</p>
-                          )}
-                        </div>
-                        {actionType === "add" &&
-                          currentAssigneeIds.includes(user.id) && (
-                            <span className="text-[10px] bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">
-                              Already assigned
-                            </span>
-                          )}
-                        {actionType === "remove" &&
-                          user.id === primaryAssigneeId && (
-                            <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full">
-                              Primary
-                            </span>
-                          )}
-                      </label>
-                    )
-                  )
+                  currentUserList.map((user: User) => (
+                    <label
+                      key={user.id}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isUserSelected(user.id)}
+                        onChange={() => toggleUserSelection(user.id)}
+                        className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-700 truncate">
+                          {user.name}
+                        </p>
+                        {user.email && (
+                          <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                        )}
+                      </div>
+                      {actionType === "add" &&
+                        currentAssigneeIds.includes(user.id) && (
+                          <span className="text-[10px] bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            Already assigned
+                          </span>
+                        )}
+                      {actionType === "remove" &&
+                        user.id === primaryAssigneeId && (
+                          <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            Primary
+                          </span>
+                        )}
+                    </label>
+                  ))
                 )}
               </div>
             )}
