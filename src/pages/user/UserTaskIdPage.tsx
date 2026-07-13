@@ -5,6 +5,7 @@ import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
   AlertTriangle, CheckCircle, XCircle, Edit2, Save, X, Trash2,
+  Plus,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -21,6 +22,8 @@ import {
   clearLastActionSuccess,
   updateSubmission,
   addOrUpdateSubmissionInState,
+  hasAcceptedSubmission,
+  getAcceptedSubmissionForCurrentQuarter,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -96,7 +99,7 @@ function useStatusBadge(
       case "Accepted":
         return {
           icon: CheckCircle,
-          text: "Approved",
+          text: "✅ Approved (100%)",
           color: "text-emerald-600 bg-emerald-50 border-emerald-100",
           iconColor: "text-emerald-500",
         };
@@ -223,6 +226,10 @@ const UserTaskIdPage = () => {
   const statusBadge          = useStatusBadge(currentQuarterStatus, hasSubmission);
   const StatusIcon           = statusBadge.icon;
 
+  // Check if we have an accepted submission
+  const hasAccepted = currentIndicator ? hasAcceptedSubmission(currentIndicator) : false;
+  const acceptedSubmission = currentIndicator ? getAcceptedSubmissionForCurrentQuarter(currentIndicator) : undefined;
+
   // ── Memos — depend on currentIndicator only, no refreshTrigger needed ────
   const allSubmissions = useMemo<ISubmissionUI[]>(
     () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
@@ -275,23 +282,45 @@ const UserTaskIdPage = () => {
     [allSubmissions],
   );
 
-  const submitButtonLabel = isAnnual
-    ? hasSubmission && currentQuarterStatus === "Rejected"
-      ? "Resubmit Annual Filing"
-      : hasSubmission
-      ? "Update Annual Filing"
-      : "Submit Annual Filing"
-    : hasSubmission && currentQuarterStatus === "Rejected"
-    ? `Resubmit ${activeQuarterDisplay} Filing`
-    : hasSubmission
-    ? `Update ${activeQuarterDisplay} Filing`
-    : `Submit ${activeQuarterDisplay} Filing`;
+  // Button label logic - includes "Add Documents" for accepted submissions
+  const getSubmitButtonLabel = useCallback(() => {
+    if (isAnnual) {
+      if (hasAccepted) return "Add Supporting Documents";
+      if (hasSubmission && currentQuarterStatus === "Rejected") return "Resubmit Annual Filing";
+      if (hasSubmission) return "Update Annual Filing";
+      return "Submit Annual Filing";
+    }
+    
+    if (hasAccepted) return `Add Supporting Documents (${activeQuarterDisplay})`;
+    if (hasSubmission && currentQuarterStatus === "Rejected") return `Resubmit ${activeQuarterDisplay} Filing`;
+    if (hasSubmission) return `Update ${activeQuarterDisplay} Filing`;
+    return `Submit ${activeQuarterDisplay} Filing`;
+  }, [isAnnual, hasAccepted, hasSubmission, currentQuarterStatus, activeQuarterDisplay]);
+
+  const submitButtonLabel = getSubmitButtonLabel();
+
+  // Determine if the button should be disabled
+  const isButtonDisabled = useMemo(() => {
+    if (uploading) return true;
+    if (!hasSubmission) return false;
+    if (currentQuarterStatus === "Pending") return false;
+    if (currentQuarterStatus === "Accepted") return false;
+    if (currentQuarterStatus === "Rejected") return false;
+    return true;
+  }, [hasSubmission, currentQuarterStatus, uploading]);
+
+  // Determine modal mode when opened
+  const handleOpenModal = useCallback(async () => {
+    if (id) await refreshData();
+    setIsModalOpen(true);
+  }, [id, refreshData]);
 
   // ── Description edit handlers ─────────────────────────────────────────────
-  const canEditDescription = (
-    docStatus: string | undefined,
-    submissionReviewStatus?: string,
-  ): boolean => docStatus !== "Accepted" && submissionReviewStatus !== "Accepted";
+  // ✅ FIXED: Removed unused parameter
+  const canEditDescription = (docStatus: string | undefined): boolean => {
+    // Can edit if document is not accepted
+    return docStatus !== "Accepted";
+  };
 
   const handleStartEdit = (doc: IDocumentUI) => {
     setEditingDocId(doc.id);
@@ -336,14 +365,20 @@ const UserTaskIdPage = () => {
   const canDeleteDocument = (
     docStatus: string | undefined,
     submissionReviewStatus?: string,
-  ): boolean =>
-    docStatus === "Rejected" || submissionReviewStatus === "Pending";
+  ): boolean => {
+    if (docStatus === "Rejected") return true;
+    if (submissionReviewStatus === "Pending") return true;
+    if (docStatus === "Additional" && submissionReviewStatus === "Accepted") return true;
+    return false;
+  };
 
   const getDeleteConfirmMessage = (doc: IDocumentUI, submission: ISubmissionUI): string => {
     if (submission.reviewStatus === "Pending")
       return "Are you sure you want to delete this document from your pending submission? This action cannot be undone.\n\nYou will need to resubmit or add new documents afterward.";
     if (doc.status === "Rejected")
       return "Are you sure you want to delete this rejected document? This action cannot be undone.\n\nYou can upload a new corrected document with your resubmission.";
+    if (doc.status === "Additional" && submission.reviewStatus === "Accepted")
+      return "Are you sure you want to delete this additional document from your approved submission? This action cannot be undone.";
     return "Are you sure you want to delete this document? This action cannot be undone.";
   };
 
@@ -352,10 +387,11 @@ const UserTaskIdPage = () => {
 
     const isPendingSubmission = submission.reviewStatus === "Pending";
     const isRejectedDocument  = doc.status === "Rejected";
+    const isAdditionalOnAccepted = doc.status === "Additional" && submission.reviewStatus === "Accepted";
 
-    if (!isPendingSubmission && !isRejectedDocument) {
+    if (!isPendingSubmission && !isRejectedDocument && !isAdditionalOnAccepted) {
       showToast(
-        "This document cannot be deleted. Only rejected documents or documents from pending submissions can be deleted.",
+        "This document cannot be deleted. Only rejected documents, documents from pending submissions, or additional documents on approved submissions can be deleted.",
         "error",
       );
       return;
@@ -365,13 +401,13 @@ const UserTaskIdPage = () => {
 
     setDeletingDocId(doc.id);
     try {
-      if (isPendingSubmission) {
+      if (isPendingSubmission || isAdditionalOnAccepted) {
         await dispatch(deletePendingDocument({
           indicatorId:  id,
           submissionId: submission.id,
           docId:        doc.id,
         })).unwrap();
-        showToast("Document removed from pending submission successfully.", "success");
+        showToast("Document removed successfully.", "success");
       } else {
         await dispatch(deleteDocument(doc.id)).unwrap();
         showToast("Rejected document deleted successfully.", "success");
@@ -392,18 +428,12 @@ const UserTaskIdPage = () => {
 
   const handleModalClose = useCallback(async () => {
     setIsModalOpen(false);
-    // Small delay to let the modal close animation finish before refreshing
     setTimeout(() => {
       refreshData();
     }, 100);
   }, [refreshData]);
 
-  const handleOpenModal = useCallback(async () => {
-    if (id) await refreshData();
-    setIsModalOpen(true);
-  }, [id, refreshData]);
-
-  // ─── UPDATED: Submission handler with proper data handling ──────────────
+  // ── Submission handler ──────────────────────────────────────────────────
   const handleSubmissionSubmit = useCallback(async (formData: FormData) => {
     if (!id) return;
     
@@ -413,10 +443,8 @@ const UserTaskIdPage = () => {
       const result = await dispatch(updateSubmission({ id, formData })).unwrap();
       console.log("✅ [UserTaskIdPage] Submission result:", result);
       
-      // Show success message
       showToast(result?.message ?? "Submission processed successfully.", "success");
       
-      // If we got submission data back, update the Redux state directly
       if (result?.submission) {
         console.log("📦 [UserTaskIdPage] Updating state with submission:", result.submission);
         dispatch(addOrUpdateSubmissionInState({
@@ -425,10 +453,8 @@ const UserTaskIdPage = () => {
         }));
       }
       
-      // Refresh the data from the server
       await refreshData();
       
-      // Close the modal after a short delay to show the success state
       setTimeout(() => {
         setIsModalOpen(false);
       }, 500);
@@ -489,23 +515,54 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
+            {/* Button logic - enabled for Accepted submissions */}
             <button
               onClick={handleOpenModal}
-              disabled={
-                uploading ||
-                currentQuarterStatus === "Accepted" ||
-                currentIndicator.status === "Completed"
-              }
-              className="px-6 py-2.5 rounded-xl bg-[#1a3a32] text-white font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 hover:shadow-xl shadow-md disabled:bg-gray-200 disabled:cursor-not-allowed"
+              disabled={isButtonDisabled}
+              className={`px-6 py-2.5 rounded-xl text-white font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 shadow-md hover:shadow-xl ${
+                hasAccepted && currentQuarterStatus === "Accepted"
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-[#1a3a32] hover:bg-[#2a4a42]"
+              } disabled:bg-gray-200 disabled:cursor-not-allowed`}
             >
               {uploading ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
-                <><ShieldCheck size={14} />{submitButtonLabel}</>
+                <>
+                  {hasAccepted ? <Plus size={14} /> : <ShieldCheck size={14} />}
+                  {submitButtonLabel}
+                </>
               )}
             </button>
+
+            {/* Info badge for accepted submissions */}
+            {hasAccepted && currentQuarterStatus === "Accepted" && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-emerald-100 rounded-lg">
+                <CheckCircle size={10} className="text-emerald-600" />
+                <span className="text-[8px] font-black text-emerald-700 uppercase tracking-wider">
+                  Add Documents Allowed
+                </span>
+              </div>
+            )}
           </div>
         </nav>
+
+        {/* ── Accepted submission banner ── */}
+        {hasAccepted && acceptedSubmission && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 animate-in fade-in slide-in-from-top-2 duration-500">
+            <div className="flex items-center gap-3 text-emerald-700">
+              <CheckCircle size={16} className="shrink-0" />
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider">
+                  ✅ Filing Complete — 100% Approved
+                </span>
+                <p className="text-xs text-emerald-600 mt-1">
+                  Your submission has been fully approved. You can still add supporting documents or additional evidence below.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Resubmission history banner ── */}
         {submissionHistory.length > 1 && (
@@ -552,7 +609,8 @@ const UserTaskIdPage = () => {
                         Rejected
                       </span>
                     </div>
-                    {(submission.reviewStatus === "Pending" || doc.status === "Rejected") && (
+                    {(submission.reviewStatus === "Pending" || doc.status === "Rejected" || 
+                      (doc.status === "Additional" && submission.reviewStatus === "Accepted")) && (
                       <div className="mt-2">
                         <button
                           onClick={() => handleDeleteDocument(doc, submission)}
@@ -595,7 +653,9 @@ const UserTaskIdPage = () => {
             </p>
           </div>
 
-          <div className="bg-[#1a3a32] p-8 rounded-[2rem] text-white shadow-xl relative overflow-hidden group">
+          <div className={`p-8 rounded-[2rem] text-white shadow-xl relative overflow-hidden group ${
+            hasAccepted ? "bg-emerald-700" : "bg-[#1a3a32]"
+          }`}>
             <TrendingUp size={80} className="absolute -bottom-4 -right-4 opacity-10 group-hover:scale-110 transition-all" />
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c2a336] mb-2">
               {isAnnual ? "Annual Completion" : "Quarterly Progress"}
@@ -608,41 +668,59 @@ const UserTaskIdPage = () => {
                 Target: {currentIndicator.target} {currentIndicator.unit}
               </p>
             )}
+            {hasAccepted && (
+              <div className="mt-2 flex items-center gap-1 text-[8px] text-emerald-200">
+                <CheckCircle size={10} />
+                <span className="uppercase tracking-wider">Fully Approved</span>
+              </div>
+            )}
           </div>
         </div>
 
         {/* ── Current Submission Summary ── */}
         {activeSub && (
-          <section className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-sm">
+          <section className={`rounded-[2rem] p-6 border shadow-sm ${
+            activeSub.reviewStatus === "Accepted" 
+              ? "bg-emerald-50 border-emerald-200" 
+              : "bg-white border-gray-100"
+          }`}>
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32] mb-4">
               <FileText size={16} className="text-[#c2a336]" />
               Current Filing Summary
+              {activeSub.reviewStatus === "Accepted" && (
+                <span className="ml-2 text-[8px] font-black bg-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full uppercase">
+                  100% Complete
+                </span>
+              )}
             </h3>
             <div className="grid md:grid-cols-2 gap-6">
               <div>
                 <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Notes</p>
-                <p className="text-sm text-gray-700">{activeSub.notes}</p>
+                <p className="text-sm text-gray-700">{activeSub.notes || "No notes provided"}</p>
               </div>
               <div>
                 <p className="text-[9px] font-black uppercase text-gray-400 mb-1">Achieved Value</p>
                 <p className="text-2xl font-bold text-[#1a3a32]">
-                  {activeSub.achievedValue}{" "}
+                  {activeSub.achievedValue ?? "—"}{" "}
                   <span className="text-sm font-normal text-gray-400">{currentIndicator.unit}</span>
                 </p>
               </div>
             </div>
 
             {activeSub.adminComment && (
-              <div className="mt-4 pt-4 border-t border-gray-100">
+              <div className="mt-4 pt-4 border-t border-gray-200">
                 <p className="text-[9px] font-black uppercase text-amber-600 mb-1">Admin Comment</p>
                 <p className="text-sm text-amber-700">{activeSub.adminComment}</p>
               </div>
             )}
 
-            <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4 flex-wrap">
+            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-4 flex-wrap">
               <p className="text-[8px] text-gray-400">Submitted: {formatDate(activeSub.submittedAt)}</p>
               {activeSub.resubmissionCount > 0 && (
                 <p className="text-[8px] text-amber-600">Resubmission #{activeSub.resubmissionCount}</p>
+              )}
+              {activeSub.reviewStatus === "Accepted" && (
+                <p className="text-[8px] text-emerald-600 font-black">✅ Fully Approved</p>
               )}
             </div>
           </section>
@@ -671,21 +749,39 @@ const UserTaskIdPage = () => {
                 const resolvedName        = doc.fileName ?? "UNTITLED_EVIDENCE";
                 const isPending           = doc.status === "Pending" || !doc.status;
                 const isAcceptedDoc       = doc.status === "Accepted";
+                const isAdditional        = doc.status === "Additional";
                 const submissionReviewStatus = submission.reviewStatus;
-                const canEdit             = canEditDescription(doc.status, submissionReviewStatus);
+                const canEdit             = canEditDescription(doc.status);
                 const canDelete           = canDeleteDocument(doc.status, submissionReviewStatus);
                 const isEditing           = editingDocId === doc.id;
                 const isDeleting          = deletingDocId === doc.id;
 
+                // Determine badge styling
+                let badgeColor = "bg-gray-100 text-gray-700";
+                let badgeText = doc.status ?? "Under Review";
+                if (isPending) {
+                  badgeColor = "bg-amber-100 text-amber-700";
+                  badgeText = "Under Review";
+                } else if (isAcceptedDoc) {
+                  badgeColor = "bg-emerald-100 text-emerald-700";
+                  badgeText = "✅ Approved";
+                } else if (isAdditional) {
+                  badgeColor = "bg-blue-100 text-blue-700";
+                  badgeText = "📎 Additional";
+                }
+
                 return (
                   <div
                     key={doc.id}
-                    className="bg-white p-5 rounded-[2rem] border border-gray-100 transition-all hover:shadow-md flex flex-col"
+                    className={`p-5 rounded-[2rem] border transition-all hover:shadow-md flex flex-col ${
+                      isAdditional ? "bg-blue-50/50 border-blue-200" : "bg-white border-gray-100"
+                    }`}
                   >
                     <div className="flex items-start justify-between mb-4">
                       <div className={`p-3 rounded-2xl ${
                         isPending    ? "bg-amber-50 text-amber-500"
                         : isAcceptedDoc ? "bg-emerald-50 text-emerald-500"
+                        : isAdditional ? "bg-blue-50 text-blue-500"
                         :               "bg-gray-50 text-gray-500"
                       }`}>
                         {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
@@ -705,7 +801,13 @@ const UserTaskIdPage = () => {
                           <button
                             onClick={() => handleDeleteDocument(doc, submission)}
                             className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                            title={submissionReviewStatus === "Pending" ? "Delete from pending submission" : "Delete rejected document"}
+                            title={
+                              submissionReviewStatus === "Pending" 
+                                ? "Delete from pending submission" 
+                                : submissionReviewStatus === "Accepted" && isAdditional
+                                ? "Delete additional document"
+                                : "Delete rejected document"
+                            }
                             disabled={isDeleting || actionLoading}
                           >
                             {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
@@ -730,16 +832,17 @@ const UserTaskIdPage = () => {
                       <span className="text-[8px] font-black text-gray-300 uppercase">
                         {quarterLabel} {year}
                       </span>
-                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${
-                        isPending    ? "bg-amber-100 text-amber-700"
-                        : isAcceptedDoc ? "bg-emerald-100 text-emerald-700"
-                        :               "bg-gray-100 text-gray-700"
-                      }`}>
-                        {doc.status ?? "Under Review"}
+                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${badgeColor}`}>
+                        {badgeText}
                       </span>
                       {submissionReviewStatus === "Pending" && (
                         <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
                           Pending Submission
+                        </span>
+                      )}
+                      {submissionReviewStatus === "Accepted" && isAdditional && (
+                        <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                          Post-Approval
                         </span>
                       )}
                     </div>
@@ -821,4 +924,4 @@ const UserTaskIdPage = () => {
   );
 };
 
-export default UserTaskIdPage; 
+export default UserTaskIdPage;
