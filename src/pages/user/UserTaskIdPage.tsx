@@ -299,15 +299,12 @@ const UserTaskIdPage = () => {
 
   const submitButtonLabel = getSubmitButtonLabel();
 
-  // Determine if the button should be disabled
+  // Button now stays enabled regardless of submission state — only the
+  // active "uploading" state blocks it, to avoid duplicate in-flight submits.
   const isButtonDisabled = useMemo(() => {
     if (uploading) return true;
-    if (!hasSubmission) return false;
-    if (currentQuarterStatus === "Pending") return false;
-    if (currentQuarterStatus === "Accepted") return false;
-    if (currentQuarterStatus === "Rejected") return false;
-    return true;
-  }, [hasSubmission, currentQuarterStatus, uploading]);
+    return false;
+  }, [uploading]);
 
   // Determine modal mode when opened
   const handleOpenModal = useCallback(async () => {
@@ -316,7 +313,6 @@ const UserTaskIdPage = () => {
   }, [id, refreshData]);
 
   // ── Description edit handlers ─────────────────────────────────────────────
-  // ✅ FIXED: Removed unused parameter
   const canEditDescription = (docStatus: string | undefined): boolean => {
     // Can edit if document is not accepted
     return docStatus !== "Accepted";
@@ -515,7 +511,7 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {/* Button logic - enabled for Accepted submissions */}
+            {/* Button logic - always enabled unless actively uploading */}
             <button
               onClick={handleOpenModal}
               disabled={isButtonDisabled}
