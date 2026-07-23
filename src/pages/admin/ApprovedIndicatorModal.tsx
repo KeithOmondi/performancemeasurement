@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { 
   X, CheckCircle2, FileText, Clock, ShieldCheck, ShieldAlert, 
   UserCheck, Calendar, ArrowRight, File, ChevronDown, ChevronUp,
-  Eye
+  Eye, Trash2
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { 
@@ -11,20 +11,109 @@ import {
   setSelectedIndicator, 
   type ISubmission,
   getDocumentDescription,
-  type IDocument
+  type IDocument,
+  deleteDocumentAdmin      // ✅ imported
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
 interface ApprovedIndicatorModalProps {
   indicatorId: string;
   onClose: () => void;
+  isAdmin?: boolean;        // ✅ new prop to control delete visibility
 }
 
-const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModalProps) => {
+// ─── Delete document modal (internal) ────────────────────────────────────────
+const DeleteDocumentModal = ({
+  documentId,
+  fileName,
+  onClose,
+  onConfirm,
+}: {
+  documentId: string;
+  fileName: string;
+  indicatorId: string;
+  onClose: () => void;
+  onConfirm: (documentId: string, reason: string) => void;
+}) => {
+  const [reason, setReason] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reason.trim()) {
+      alert("Please provide a reason for deletion.");
+      return;
+    }
+    onConfirm(documentId, reason.trim());
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10000] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start mb-4">
+          <h3 className="text-lg font-bold text-slate-800">Delete Evidence</h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
+            <X size={20} className="text-slate-500" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          You are about to delete <strong>"{fileName}"</strong> from the submission.
+          This action will mark it as deleted and the user will see the reason.
+        </p>
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="block text-sm font-bold text-slate-700 mb-1">
+              Deletion Reason <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              rows={3}
+              placeholder="Explain why this document is being deleted (e.g., duplicate, irrelevant, etc.)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              required
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors"
+            >
+              Delete Permanently
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+const ApprovedIndicatorModal = ({ indicatorId, onClose, isAdmin = false }: ApprovedIndicatorModalProps) => {
   const dispatch = useAppDispatch();
   const { selectedIndicator, isLoading } = useAppSelector((state) => state.adminIndicators);
   const [expandedDocuments, setExpandedDocuments] = useState<Record<string, boolean>>({});
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileName: string } | null>(null);
+  
+  // State for delete modal
+  const [deleteModal, setDeleteModal] = useState<{
+    documentId: string;
+    fileName: string;
+  } | null>(null);
 
   useEffect(() => {
     if (indicatorId) {
@@ -51,12 +140,31 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
   };
 
   const handleDocumentClick = (doc: IDocument) => {
-    if (doc.evidenceUrl) {
+    // Allow preview only if the document is not marked as deleted
+    if (doc.evidenceUrl && doc.status !== "Deleted") {
       setPreviewDocument({
         url: doc.evidenceUrl,
         fileName: doc.fileName
       });
     }
+  };
+
+  const openDeleteModal = (doc: IDocument) => {
+    setDeleteModal({ documentId: doc.id, fileName: doc.fileName });
+  };
+
+  const closeDeleteModal = () => setDeleteModal(null);
+
+  const handleDeleteConfirm = (documentId: string, reason: string) => {
+    if (!selectedIndicator) return;
+    dispatch(deleteDocumentAdmin({
+      indicatorId: selectedIndicator.id,
+      documentId,
+      reason,
+    })).then(() => {
+      closeDeleteModal();
+      // The thunk refetches the indicator, so state updates automatically
+    });
   };
 
   const modalContent = (
@@ -231,7 +339,7 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                           .flat()
                           .map((sub) => {
                             const isExpanded = expandedDocuments[sub.id] || false;
-                            const hasDescriptions = sub.documents.some(doc => getDocumentDescription(doc));
+                            const hasDescriptions = sub.documents.some(doc => getDocumentDescription(doc) || doc.rejectionReason);
                             
                             return (
                               <tr key={sub.id} className="hover:bg-slate-50/50">
@@ -259,28 +367,59 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                                   <div className="space-y-2">
                                     {/* Document List - Now Clickable */}
                                     <div className="flex flex-wrap gap-1">
-                                      {sub.documents.map((doc) => (
-                                        <button
-                                          key={doc.id}
-                                          onClick={() => handleDocumentClick(doc)}
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition-all hover:scale-105 ${
-                                            doc.status === "Accepted"
-                                              ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                                              : doc.status === "Rejected"
-                                              ? "bg-red-100 text-red-700 hover:bg-red-200"
-                                              : "bg-slate-100 text-slate-400 hover:bg-slate-200"
-                                          } ${doc.evidenceUrl ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
-                                          disabled={!doc.evidenceUrl}
-                                          title={doc.evidenceUrl ? "Click to preview document" : "No document available"}
-                                        >
-                                          {doc.status === "Accepted" && <CheckCircle2 size={8} />}
-                                          <span>{doc.fileName.split(".")[0].slice(0, 15)}</span>
-                                          {doc.evidenceUrl && <Eye size={8} className="ml-0.5" />}
-                                        </button>
-                                      ))}
+                                      {sub.documents.map((doc) => {
+                                        const isDeleted = doc.status === "Deleted";
+                                        const isRejected = doc.status === "Rejected";
+                                        const isAccepted = doc.status === "Accepted";
+                                        
+                                        // Style based on status
+                                        let bgColor = "bg-slate-100 text-slate-400 hover:bg-slate-200";
+                                        let icon = null;
+                                        if (isAccepted) {
+                                          bgColor = "bg-emerald-100 text-emerald-700 hover:bg-emerald-200";
+                                          icon = <CheckCircle2 size={8} />;
+                                        } else if (isRejected) {
+                                          bgColor = "bg-red-100 text-red-700 hover:bg-red-200";
+                                        } else if (isDeleted) {
+                                          bgColor = "bg-gray-200 text-gray-500 line-through hover:bg-gray-300";
+                                          icon = <Trash2 size={8} />;
+                                        }
+                                        
+                                        const canPreview = !isDeleted && doc.evidenceUrl;
+                                        
+                                        return (
+                                          <div key={doc.id} className="inline-flex items-center gap-1">
+                                            <button
+                                              onClick={() => canPreview && handleDocumentClick(doc)}
+                                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition-all hover:scale-105 ${bgColor} ${canPreview ? 'cursor-pointer' : 'cursor-default'}`}
+                                              disabled={!canPreview}
+                                              title={isDeleted ? `Deleted: ${doc.rejectionReason || "No reason provided"}` : (doc.evidenceUrl ? "Click to preview document" : "No document available")}
+                                            >
+                                              {icon}
+                                              <span>{doc.fileName.split(".")[0].slice(0, 15)}</span>
+                                              {isDeleted && (
+                                                <span className="ml-0.5 text-[8px] bg-red-200 text-red-800 px-1 rounded-full">
+                                                  DEL
+                                                </span>
+                                              )}
+                                              {canPreview && <Eye size={8} className="ml-0.5" />}
+                                            </button>
+                                            {/* ✅ Delete button (only for admins and if not already deleted) */}
+                                            {isAdmin && !isDeleted && (
+                                              <button
+                                                onClick={() => openDeleteModal(doc)}
+                                                className="text-red-400 hover:text-red-600 transition-colors p-0.5"
+                                                title="Delete this evidence"
+                                              >
+                                                <Trash2 size={12} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                     
-                                    {/* Toggle button if there are descriptions */}
+                                    {/* Toggle button if there are descriptions or rejection reasons */}
                                     {hasDescriptions && (
                                       <button
                                         onClick={() => toggleDocumentExpand(sub.id)}
@@ -289,35 +428,49 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
                                         {isExpanded ? (
                                           <>
                                             <ChevronUp size={14} />
-                                            Hide descriptions
+                                            Hide details
                                           </>
                                         ) : (
                                           <>
                                             <ChevronDown size={14} />
-                                            Show document descriptions
+                                            Show document details
                                           </>
                                         )}
                                       </button>
                                     )}
                                     
-                                    {/* Document Descriptions */}
+                                    {/* Document Descriptions & Rejection Reasons */}
                                     {isExpanded && (
                                       <div className="mt-2 space-y-1.5 bg-slate-50 rounded-lg p-2">
                                         {sub.documents.map((doc) => {
                                           const description = getDocumentDescription(doc);
-                                          return description ? (
+                                          const rejectionReason = doc.rejectionReason;
+                                          const isDeleted = doc.status === "Deleted";
+                                          const isRejected = doc.status === "Rejected";
+                                          
+                                          // Only show if there's something to display
+                                          if (!description && !rejectionReason) return null;
+                                          
+                                          return (
                                             <div key={doc.id} className="flex items-start gap-2 text-[11px]">
                                               <File size={12} className="text-slate-400 mt-0.5 shrink-0" />
                                               <div>
                                                 <span className="font-medium text-slate-700">
                                                   {doc.fileName}:
                                                 </span>
-                                                <span className="text-slate-600 ml-1">
-                                                  {description}
-                                                </span>
+                                                {description && (
+                                                  <span className="text-slate-600 ml-1">
+                                                    {description}
+                                                  </span>
+                                                )}
+                                                {(isDeleted || isRejected) && rejectionReason && (
+                                                  <span className={`ml-2 text-[10px] font-bold uppercase ${isDeleted ? 'text-red-500' : 'text-amber-600'}`}>
+                                                    ({isDeleted ? 'Deleted' : 'Rejected'}: {rejectionReason})
+                                                  </span>
+                                                )}
                                               </div>
                                             </div>
-                                          ) : null;
+                                          );
                                         })}
                                       </div>
                                     )}
@@ -414,6 +567,17 @@ const ApprovedIndicatorModal = ({ indicatorId, onClose }: ApprovedIndicatorModal
           url={previewDocument.url}
           fileName={previewDocument.fileName}
           onClose={() => setPreviewDocument(null)}
+        />
+      )}
+
+      {/* Delete Document Modal */}
+      {deleteModal && (
+        <DeleteDocumentModal
+          documentId={deleteModal.documentId}
+          fileName={deleteModal.fileName}
+          indicatorId={selectedIndicator?.id || ""}
+          onClose={closeDeleteModal}
+          onConfirm={handleDeleteConfirm}
         />
       )}
     </>

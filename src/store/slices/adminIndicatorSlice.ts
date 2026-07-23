@@ -16,7 +16,7 @@ export interface IDocument {
   fileName: string;
   description?: string;
   fileDescription?: string;
-  status?: "Accepted" | "Rejected" | "Pending";
+  status?: "Accepted" | "Rejected" | "Pending" | "Deleted"; // ✅ Added "Deleted"
   rejectionReason?: string;
   uploadedAt: string;
 }
@@ -370,8 +370,6 @@ export const rejectDocument = createAsyncThunk<
   }
 });
 
-// ─── NEW: Delete Submission ──────────────────────────────────────────────────
-
 export const deleteSubmission = createAsyncThunk<
   IAdminIndicator,
   { indicatorId: string; submissionId: string },
@@ -383,6 +381,22 @@ export const deleteSubmission = createAsyncThunk<
     return res.data?.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Deletion failed"));
+  }
+});
+
+// ─── NEW: Admin soft‑delete document ──────────────────────────────────────
+
+export const deleteDocumentAdmin = createAsyncThunk<
+  IAdminIndicator,
+  { indicatorId: string; documentId: string; reason: string },
+  { rejectValue: string }
+>("adminIndicators/deleteDocumentAdmin", async ({ indicatorId, documentId, reason }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${indicatorId}/delete-document`, { documentId, reason });
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${indicatorId}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Document deletion failed"));
   }
 });
 
@@ -479,13 +493,21 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectDocument.rejected, setRejected("isReviewing"))
 
-      // ─── NEW: deleteSubmission ─────────────────────────────────────────────
+      // deleteSubmission
       .addCase(deleteSubmission.pending, setPending("isReviewing"))
       .addCase(deleteSubmission.fulfilled, (state, action) => {
         state.isReviewing = false;
         upsertAndRefresh(state, action.payload);
       })
       .addCase(deleteSubmission.rejected, setRejected("isReviewing"))
+
+      // ─── NEW: deleteDocumentAdmin ────────────────────────────────────────
+      .addCase(deleteDocumentAdmin.pending, setPending("isReviewing"))
+      .addCase(deleteDocumentAdmin.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(deleteDocumentAdmin.rejected, setRejected("isReviewing"))
 
       // reopenIndicator
       .addCase(reopenIndicator.pending, setPending("isReopening"))
