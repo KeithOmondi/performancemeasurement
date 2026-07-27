@@ -286,11 +286,12 @@ const AdminReports = () => {
   const dispatch = useAppDispatch();
   const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
 
+  // 👇 Default: show only "Completed" indicators, no submission filter
   const [activePerspective, setActivePerspective] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("");
-  const [viewMode, setViewMode] = useState<"all" | "submitted">("submitted");
+  const [statusFilter, setStatusFilter] = useState<string>("Completed");
+  const [viewMode, setViewMode] = useState<"all" | "submitted">("all");
 
-  // Helper to build filters with proper typing - memoized with useCallback
+  // Helper to build filters with proper typing
   const buildFilters = useCallback((): ReportFilters => {
     const apiFilters: ReportFilters = {};
     
@@ -304,22 +305,17 @@ const AdminReports = () => {
 
     if (viewMode === "submitted") {
       apiFilters.hasSubmission = "true";
-      // ✅ FIXED: Use correct enum values from your database
       apiFilters.submissionStatus = "Verified,Accepted,Partially Approved";
     }
 
     return apiFilters;
   }, [activePerspective, statusFilter, viewMode]);
 
-  // Initial load - fetch summary and tracker with submitted filter by default
+  // Initial load – fetch summary and tracker with default filters
   useEffect(() => {
     dispatch(fetchReportSummary());
-    // ✅ FIXED: Use correct enum values from your database
-    dispatch(fetchTrackerReport({ 
-      hasSubmission: "true",
-      submissionStatus: "Verified,Accepted,Partially Approved"
-    }));
-  }, [dispatch]);
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
   // Refetch when filters change
   useEffect(() => {
@@ -333,7 +329,6 @@ const AdminReports = () => {
     
     if (viewMode === "submitted") {
       pdfFilters.hasSubmission = "true";
-      // ✅ FIXED: Use correct enum values from your database
       pdfFilters.submissionStatus = "Verified,Accepted,Partially Approved";
     }
     
@@ -341,9 +336,9 @@ const AdminReports = () => {
   };
 
   const handleClearFilters = () => {
-    setStatusFilter("");
+    setStatusFilter("Completed");
     setActivePerspective("all");
-    setViewMode("submitted");
+    setViewMode("all");
     dispatch(clearReportFilters());
   };
 
@@ -427,12 +422,12 @@ const AdminReports = () => {
             className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white text-slate-600
                        focus:outline-none focus:ring-2 focus:ring-[#1d3331]/20 focus:border-[#1d3331] transition-all"
           >
-            <option value="">All Statuses</option>
             <option value="Completed">Complete</option>
             <option value="Incomplete">Incomplete</option>
+            <option value="">All Statuses</option>
           </select>
 
-          {(statusFilter || activePerspective !== "all" || viewMode !== "submitted") && (
+          {(statusFilter !== "Completed" || activePerspective !== "all" || viewMode !== "all") && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
