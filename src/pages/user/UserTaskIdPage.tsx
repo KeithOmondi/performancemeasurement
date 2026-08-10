@@ -723,181 +723,212 @@ const UserTaskIdPage = () => {
         )}
 
         {/* ── Document Registry ── */}
-        <section className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
-              <FileText size={16} className="text-[#c2a336]" /> Document Registry
-            </h3>
-            {editingDocId && (
-              <p className="text-[8px] text-gray-400 italic">Editing description…</p>
-            )}
-          </div>
+      // ── Document Registry ──
+<section className="space-y-6">
+  <div className="flex items-center justify-between">
+    <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
+      <FileText size={16} className="text-[#c2a336]" /> Document Registry
+    </h3>
+    {editingDocId && (
+      <p className="text-[8px] text-gray-400 italic">Editing description…</p>
+    )}
+  </div>
 
-          {activeDocs.length === 0 ? (
-            <div className="py-20 text-center bg-white rounded-[2rem] border-2 border-dashed border-gray-100">
-              <p className="text-[10px] text-gray-300 font-black uppercase tracking-widest">
-                No active documents filed in the registry
-              </p>
-            </div>
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
-                const resolvedName        = doc.fileName ?? "UNTITLED_EVIDENCE";
-                const isPending           = doc.status === "Pending" || !doc.status;
-                const isAcceptedDoc       = doc.status === "Accepted";
-                const isAdditional        = doc.status === "Additional";
-                const submissionReviewStatus = submission.reviewStatus;
-                const canEdit             = canEditDescription(doc.status);
-                const canDelete           = canDeleteDocument(doc.status, submissionReviewStatus);
-                const isEditing           = editingDocId === doc.id;
-                const isDeleting          = deletingDocId === doc.id;
+  {activeDocs.length === 0 ? (
+    <div className="py-20 text-center bg-white rounded-[2rem] border-2 border-dashed border-gray-100">
+      <p className="text-[10px] text-gray-300 font-black uppercase tracking-widest">
+        No active documents filed in the registry
+      </p>
+    </div>
+  ) : (
+    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
+        const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
+        const submissionReviewStatus = submission.reviewStatus;
+        
+        // Determine document status based on submission status
+        let docStatus = doc.status;
+        let isPending = false;
+        let isAcceptedDoc = false;
+        let isAdditional = false;
+        
+        // If submission is Accepted, documents should show as Accepted
+        if (submissionReviewStatus === "Accepted") {
+          isAcceptedDoc = true;
+          docStatus = "Accepted";
+        } 
+        // If submission is Pending, documents are under review
+        else if (submissionReviewStatus === "Pending") {
+          isPending = true;
+          docStatus = "Under Review";
+        }
+        // If document has explicit status
+        else if (doc.status === "Accepted") {
+          isAcceptedDoc = true;
+        } else if (doc.status === "Additional") {
+          isAdditional = true;
+        } else if (doc.status === "Pending" || !doc.status) {
+          isPending = true;
+          docStatus = "Under Review";
+        }
 
-                // Determine badge styling
-                let badgeColor = "bg-gray-100 text-gray-700";
-                let badgeText = doc.status ?? "Under Review";
-                if (isPending) {
-                  badgeColor = "bg-amber-100 text-amber-700";
-                  badgeText = "Under Review";
-                } else if (isAcceptedDoc) {
-                  badgeColor = "bg-emerald-100 text-emerald-700";
-                  badgeText = "✅ Approved";
-                } else if (isAdditional) {
-                  badgeColor = "bg-blue-100 text-blue-700";
-                  badgeText = "📎 Additional";
-                }
+        // Determine if document is "Additional" (post-approval)
+        if (doc.status === "Additional" && submissionReviewStatus === "Accepted") {
+          isAdditional = true;
+          isAcceptedDoc = true; // Also mark as accepted
+        }
 
-                return (
-                  <div
-                    key={doc.id}
-                    className={`p-5 rounded-[2rem] border transition-all hover:shadow-md flex flex-col ${
-                      isAdditional ? "bg-blue-50/50 border-blue-200" : "bg-white border-gray-100"
-                    }`}
+        const canEdit = canEditDescription(doc.status);
+        const canDelete = canDeleteDocument(doc.status, submissionReviewStatus);
+        const isEditing = editingDocId === doc.id;
+        const isDeleting = deletingDocId === doc.id;
+
+        let badgeColor = "bg-gray-100 text-gray-700";
+        let badgeText = docStatus ?? "Under Review";
+        
+        if (isPending) {
+          badgeColor = "bg-amber-100 text-amber-700";
+          badgeText = "Under Review";
+        } else if (isAcceptedDoc) {
+          badgeColor = "bg-emerald-100 text-emerald-700";
+          badgeText = "✅ Approved";
+        } else if (isAdditional) {
+          badgeColor = "bg-blue-100 text-blue-700";
+          badgeText = "📎 Additional";
+        }
+
+        return (
+          <div
+            key={doc.id}
+            className={`p-5 rounded-[2rem] border transition-all hover:shadow-md flex flex-col ${
+              isAdditional ? "bg-blue-50/50 border-blue-200" : "bg-white border-gray-100"
+            }`}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className={`p-3 rounded-2xl ${
+                isPending    ? "bg-amber-50 text-amber-500"
+                : isAcceptedDoc ? "bg-emerald-50 text-emerald-500"
+                : isAdditional ? "bg-blue-50 text-blue-500"
+                :               "bg-gray-50 text-gray-500"
+              }`}>
+                {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
+              </div>
+              <div className="flex items-center gap-1">
+                {canEdit && !isEditing && (
+                  <button
+                    onClick={() => handleStartEdit(doc)}
+                    className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                    title="Edit description"
+                    disabled={isDeleting || actionLoading}
                   >
-                    <div className="flex items-start justify-between mb-4">
-                      <div className={`p-3 rounded-2xl ${
-                        isPending    ? "bg-amber-50 text-amber-500"
-                        : isAcceptedDoc ? "bg-emerald-50 text-emerald-500"
-                        : isAdditional ? "bg-blue-50 text-blue-500"
-                        :               "bg-gray-50 text-gray-500"
-                      }`}>
-                        {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {canEdit && !isEditing && (
-                          <button
-                            onClick={() => handleStartEdit(doc)}
-                            className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
-                            title="Edit description"
-                            disabled={isDeleting || actionLoading}
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                        )}
-                        {canDelete && !isEditing && (
-                          <button
-                            onClick={() => handleDeleteDocument(doc, submission)}
-                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                            title={
-                              submissionReviewStatus === "Pending" 
-                                ? "Delete from pending submission" 
-                                : submissionReviewStatus === "Accepted" && isAdditional
-                                ? "Delete additional document"
-                                : "Delete rejected document"
-                            }
-                            disabled={isDeleting || actionLoading}
-                          >
-                            {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
-                          className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
-                          title="Preview file"
-                          disabled={isDeleting || actionLoading}
-                        >
-                          <ExternalLink size={16} />
-                        </button>
-                      </div>
-                    </div>
+                    <Edit2 size={14} />
+                  </button>
+                )}
+                {canDelete && !isEditing && (
+                  <button
+                    onClick={() => handleDeleteDocument(doc, submission)}
+                    className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                    title={
+                      submissionReviewStatus === "Pending" 
+                        ? "Delete from pending submission" 
+                        : submissionReviewStatus === "Accepted" && isAdditional
+                        ? "Delete additional document"
+                        : "Delete rejected document"
+                    }
+                    disabled={isDeleting || actionLoading}
+                  >
+                    {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
+                )}
+                <button
+                  onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
+                  className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                  title="Preview file"
+                  disabled={isDeleting || actionLoading}
+                >
+                  <ExternalLink size={16} />
+                </button>
+              </div>
+            </div>
 
-                    <p className="text-[11px] font-black text-[#1a3a32] uppercase truncate" title={resolvedName}>
-                      {resolvedName}
-                    </p>
+            <p className="text-[11px] font-black text-[#1a3a32] uppercase truncate" title={resolvedName}>
+              {resolvedName}
+            </p>
 
-                    <div className="flex items-center gap-2 mt-1 mb-4 flex-wrap">
-                      <span className="text-[8px] font-black text-gray-300 uppercase">
-                        {quarterLabel} {year}
-                      </span>
-                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${badgeColor}`}>
-                        {badgeText}
-                      </span>
-                      {submissionReviewStatus === "Pending" && (
-                        <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                          Pending Submission
-                        </span>
-                      )}
-                      {submissionReviewStatus === "Accepted" && isAdditional && (
-                        <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                          Post-Approval
-                        </span>
-                      )}
-                    </div>
+            <div className="flex items-center gap-2 mt-1 mb-4 flex-wrap">
+              <span className="text-[8px] font-black text-gray-300 uppercase">
+                {quarterLabel} {year}
+              </span>
+              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${badgeColor}`}>
+                {badgeText}
+              </span>
+              {submissionReviewStatus === "Pending" && (
+                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                  Pending Submission
+                </span>
+              )}
+              {submissionReviewStatus === "Accepted" && isAdditional && (
+                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                  Post-Approval
+                </span>
+              )}
+            </div>
 
-                    <div className="mt-auto pt-4 border-t border-slate-50">
-                      {isEditing ? (
-                        <div className="space-y-2">
-                          <textarea
-                            value={editingDescription}
-                            onChange={(e) => setEditingDescription(e.target.value)}
-                            className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
-                            rows={3}
-                            placeholder="Add a description for this document…"
-                            maxLength={500}
-                            autoFocus
-                          />
-                          <div className="flex items-center justify-between">
-                            <span className="text-[8px] text-gray-400">{editingDescription.length}/500</span>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={handleCancelEdit}
-                                disabled={updatingDescription}
-                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors disabled:opacity-50"
-                              >
-                                <X size={14} />
-                              </button>
-                              <button
-                                onClick={() => handleSaveDescription(doc.id)}
-                                disabled={updatingDescription}
-                                className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors disabled:opacity-50"
-                              >
-                                {updatingDescription ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : doc.description ? (
-                        <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
-                          "{doc.description}"
-                        </p>
-                      ) : canEdit ? (
-                        <button
-                          onClick={() => handleStartEdit(doc)}
-                          className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
-                        >
-                          + Add description
-                        </button>
-                      ) : (
-                        <p className="text-[8px] text-gray-300 italic text-center py-2">
-                          No description provided
-                        </p>
-                      )}
+            <div className="mt-auto pt-4 border-t border-slate-50">
+              {isEditing ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={editingDescription}
+                    onChange={(e) => setEditingDescription(e.target.value)}
+                    className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
+                    rows={3}
+                    placeholder="Add a description for this document…"
+                    maxLength={500}
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[8px] text-gray-400">{editingDescription.length}/500</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleCancelEdit}
+                        disabled={updatingDescription}
+                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <X size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleSaveDescription(doc.id)}
+                        disabled={updatingDescription}
+                        className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {updatingDescription ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      </button>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ) : doc.description ? (
+                <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
+                  "{doc.description}"
+                </p>
+              ) : canEdit ? (
+                <button
+                  onClick={() => handleStartEdit(doc)}
+                  className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
+                >
+                  + Add description
+                </button>
+              ) : (
+                <p className="text-[8px] text-gray-300 italic text-center py-2">
+                  No description provided
+                </p>
+              )}
             </div>
-          )}
-        </section>
+          </div>
+        );
+      })}
+    </div>
+  )}
+</section>
       </div>
 
       {isModalOpen && (

@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchMyAssignments,
   type IIndicatorUI,
+  type ISubmissionUI,
 } from "../../store/slices/userIndicatorSlice";
 import { useNavigate } from "react-router-dom";
 import {
@@ -25,6 +26,9 @@ interface IStatusItem {
   icon: LucideIcon;
 }
 
+// Helper type for submission checks
+type SubmissionMap = Record<string, ISubmissionUI[]>;
+
 /* ============================================================
     STATUS CONFIG
 ============================================================ */
@@ -38,6 +42,23 @@ const STATUS_CONFIG: Record<string, IStatusItem> = {
 };
 
 /* ============================================================
+    HELPER FUNCTIONS
+============================================================ */
+const hasAcceptedSubmission = (submissions?: SubmissionMap): boolean => {
+  if (!submissions) return false;
+  return Object.values(submissions).some((subs) =>
+    subs.some((sub: ISubmissionUI) => sub.reviewStatus === "Accepted")
+  );
+};
+
+const hasPendingSubmission = (submissions?: SubmissionMap): boolean => {
+  if (!submissions) return false;
+  return Object.values(submissions).some((subs) =>
+    subs.some((sub: ISubmissionUI) => sub.reviewStatus === "Pending")
+  );
+};
+
+/* ============================================================
     MAIN COMPONENT
 ============================================================ */
 const UserDashboard: React.FC = () => {
@@ -45,7 +66,7 @@ const UserDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { myIndicators, loading } = useAppSelector((s) => s.userIndicators);
 
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
@@ -56,12 +77,23 @@ const UserDashboard: React.FC = () => {
   const getUIKey = useCallback(
     (indicator: IIndicatorUI): string => {
       const status = indicator.status;
+      
+      // If there's an accepted submission, mark as completed
+      if (hasAcceptedSubmission(indicator.submissions)) {
+        return "completed";
+      }
+
       if (status === "Completed") return "completed";
       if (status?.includes("Rejected")) return "rejected";
       if (status === "Partially Approved" || status === "Awaiting Super Admin") return "partially";
       if (status === "Awaiting Admin Approval") return "awaiting";
-      // deadline is string | undefined — guard before constructing Date
+      
+      // Check if there's a pending submission
+      if (hasPendingSubmission(indicator.submissions)) return "awaiting";
+      
+      // Check for overdue
       if (indicator.deadline && new Date(indicator.deadline).getTime() < now) return "overdue";
+      
       return "pending";
     },
     [now],
@@ -73,7 +105,7 @@ const UserDashboard: React.FC = () => {
     };
     myIndicators.forEach((i) => {
       const key = getUIKey(i);
-      if (key in counts) counts[key]++;
+      if (key in counts) counts[key] = (counts[key] ?? 0) + 1;
     });
     return Object.entries(counts).map(([key, value]) => ({ key, value }));
   }, [myIndicators, getUIKey]);
@@ -117,6 +149,7 @@ const UserDashboard: React.FC = () => {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {stats.slice(0, 4).map(({ key, value }) => {
               const config = STATUS_CONFIG[key];
+              if (!config) return null;
               const Icon = config.icon;
               return (
                 <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
@@ -136,6 +169,7 @@ const UserDashboard: React.FC = () => {
           <div className="grid grid-cols-2 gap-4 lg:max-w-2xl lg:mx-auto">
             {stats.slice(4, 6).map(({ key, value }) => {
               const config = STATUS_CONFIG[key];
+              if (!config) return null;
               const Icon = config.icon;
               return (
                 <div key={key} className={`p-4 rounded-xl border-l-4 shadow-sm flex flex-col justify-between transition-all hover:shadow-md ${config.theme}`}>
@@ -175,13 +209,23 @@ const UserDashboard: React.FC = () => {
                   const uiKey  = getUIKey(indicator);
                   const config = STATUS_CONFIG[uiKey];
 
-                  // These fields come through the [key:string]:unknown index —
-                  // they are now typed on IIndicatorUI, but cast for safety.
                   const perspective   = indicator.perspective ?? "";
                   const assigneeModel = indicator.assignee_model ?? "";
                   const deadlineLabel = indicator.deadline
                     ? new Date(indicator.deadline).toLocaleDateString()
                     : "—";
+
+                  // Check submission statuses
+                  const accepted = hasAcceptedSubmission(indicator.submissions);
+                  const pending = hasPendingSubmission(indicator.submissions);
+
+                  // Determine status display text
+                  let statusDisplay = indicator.status ?? "Pending";
+                  if (accepted && indicator.status !== "Completed") {
+                    statusDisplay = "Completed (100%)";
+                  } else if (pending && indicator.status === "Pending") {
+                    statusDisplay = "Awaiting Review";
+                  }
 
                   return (
                     <div
@@ -190,13 +234,23 @@ const UserDashboard: React.FC = () => {
                       className="group border-b border-gray-50 p-4 flex items-center justify-between hover:bg-[#F9F4E8]/40 cursor-pointer transition-colors"
                     >
                       <div className="flex-1 pr-4 overflow-hidden">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="text-[8px] font-bold text-[#C69214] uppercase tracking-tighter shrink-0">
                             {perspective}
                           </span>
                           {assigneeModel === "Team" && (
                             <span className="bg-violet-100 text-violet-700 text-[7px] px-1.5 py-0.5 rounded font-black uppercase">
                               Team
+                            </span>
+                          )}
+                          {accepted && (
+                            <span className="bg-emerald-100 text-emerald-700 text-[7px] px-1.5 py-0.5 rounded font-black uppercase">
+                              ✅ Approved
+                            </span>
+                          )}
+                          {pending && !accepted && (
+                            <span className="bg-amber-100 text-amber-700 text-[7px] px-1.5 py-0.5 rounded font-black uppercase">
+                              ⏳ Pending
                             </span>
                           )}
                         </div>
@@ -210,17 +264,17 @@ const UserDashboard: React.FC = () => {
                       </div>
 
                       <div className="flex flex-col items-end gap-2 shrink-0">
-                        <div className={`px-3 py-1 rounded-lg text-[8px] font-black border uppercase tracking-wider ${config.theme}`}>
-                          {indicator.status}
+                        <div className={`px-3 py-1 rounded-lg text-[8px] font-black border uppercase tracking-wider ${config?.theme ?? "bg-gray-100 text-gray-700"}`}>
+                          {statusDisplay}
                         </div>
                         <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-[#1E3A2B] transition-all duration-700 ease-out"
-                            style={{ width: `${indicator.progress ?? 0}%` }}
+                            style={{ width: `${accepted ? 100 : (indicator.progress ?? 0)}%` }}
                           />
                         </div>
                         <span className="text-[8px] font-black text-[#1E3A2B] opacity-40">
-                          {Math.round(indicator.progress ?? 0)}% Complete
+                          {accepted ? "100%" : `${Math.round(indicator.progress ?? 0)}%`} Complete
                         </span>
                       </div>
                     </div>
@@ -281,11 +335,15 @@ const IndicatorStatusPieChart: React.FC<{ data: IStat[] }> = ({ data }) => {
           const sy = 50 + 40 * Math.sin((Math.PI * start) / 180);
           const ex = 50 + 40 * Math.cos((Math.PI * end) / 180);
           const ey = 50 + 40 * Math.sin((Math.PI * end) / 180);
+          
+          const config = STATUS_CONFIG[e.key];
+          const fillColor = config?.color ?? "#4B5563";
+          
           return (
             <path
               key={e.key}
               d={`M50,50 L${sx},${sy} A40,40 0 ${arc},1 ${ex},${ey} Z`}
-              fill={STATUS_CONFIG[e.key].color}
+              fill={fillColor}
               className="hover:opacity-80 transition-opacity cursor-pointer stroke-white stroke-[1px]"
             />
           );
