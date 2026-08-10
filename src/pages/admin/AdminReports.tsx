@@ -35,11 +35,20 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
     return <span>&nbsp;</span>;
   }
 
-  const latestSubmission = submissions.reduce((latest, current) => {
+  // Filter out rejected submissions
+  const validSubmissions = submissions.filter(
+    (s) => s.reviewStatus !== 'Rejected'
+  );
+
+  if (validSubmissions.length === 0) {
+    return <span>&nbsp;</span>;
+  }
+
+  const latestSubmission = validSubmissions.reduce((latest, current) => {
     const latestDate = new Date(latest.submittedAt);
     const currentDate = new Date(current.submittedAt);
     return currentDate > latestDate ? current : latest;
-  }, submissions[0]);
+  }, validSubmissions[0]);
 
   const documentsWithDescriptions = latestSubmission.documents?.filter(
     (doc) => doc.description?.trim()
@@ -178,11 +187,9 @@ const TablePerspectiveRows = ({
     objective: IPerspective["objectives"][number];
     activity: IPerspective["objectives"][number]["activities"][number];
     indicator: IIndicator;
-    isFirstForObjective: boolean;
   };
 
   const flatRows: FlatRow[] = [];
-  let prevObjectiveId: string | null = null;
 
   for (const objective of perspective.objectives) {
     for (const activity of objective.activities) {
@@ -191,15 +198,14 @@ const TablePerspectiveRows = ({
           objective,
           activity,
           indicator,
-          isFirstForObjective: objective.id !== prevObjectiveId,
         });
-        prevObjectiveId = objective.id;
       }
     }
   }
 
   return (
     <>
+      {/* Perspective section header */}
       <tr>
         <td
           colSpan={6}
@@ -210,8 +216,19 @@ const TablePerspectiveRows = ({
         </td>
       </tr>
 
-      {flatRows.map(({ objective, activity, indicator, isFirstForObjective }) => {
+      {flatRows.map(({ objective, activity, indicator }, index) => {
         getIndex();
+        
+        // Determine if this is the first activity for this objective
+        let isFirstForObjective = false;
+        if (index === 0) {
+          isFirstForObjective = true;
+        } else {
+          const prevRow = flatRows[index - 1];
+          isFirstForObjective = prevRow.objective.id !== objective.id;
+        }
+
+        // The indicator label is the objective title (only shown once per objective)
         const indicatorLabel = objective.title?.trim() || activity.description;
 
         return (
@@ -219,6 +236,7 @@ const TablePerspectiveRows = ({
             key={indicator.indicatorId}
             className="align-top hover:bg-slate-50/80 transition-colors"
           >
+            {/* ── Indicators column ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] font-bold text-[#1a2c2c]">
               {isFirstForObjective && (
                 <div className="font-bold">
@@ -227,10 +245,12 @@ const TablePerspectiveRows = ({
               )}
             </td>
 
+            {/* ── Unit of Measure ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-600 text-center">
               {indicator.unit || "%"}
             </td>
 
+            {/* ── Explanatory Notes ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
               {indicator.instructions && (
@@ -240,16 +260,19 @@ const TablePerspectiveRows = ({
               )}
             </td>
 
+            {/* ── Responsibility ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               <div className="font-semibold" title={indicator.assigneeDisplayName || undefined}>
                 {indicator.assigneeDisplayName || "Unassigned"}
               </div>
             </td>
 
+            {/* ── Evidence ── */}
             <td className="border border-slate-200 px-4 py-3">
               <EvidenceCell submissions={indicator.submissions} />
             </td>
 
+            {/* ── Status ── */}
             <td className="border border-slate-200 px-4 py-3">
               <StatusBadge status={indicator.status} />
             </td>
