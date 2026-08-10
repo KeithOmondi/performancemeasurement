@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { createPortal } from "react-dom"; // ✅ added
+import { createPortal } from "react-dom";
 import {
   FileText,
   Loader2,
@@ -16,14 +16,17 @@ import {
   User,
   MessageSquareWarning,
   Trash2,
+  CheckCircle,
+  X,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   approveSubmission,
   rejectSubmission,
   rejectDocument,
+  approveDocument,
   deleteSubmission,
-  deleteDocumentAdmin,          // ✅ added
+  deleteDocumentAdmin,
   getIndicatorByIdAdmin,
   getSubmitterName,
   getPreviousRejectionReason,
@@ -37,13 +40,6 @@ import FilePreviewModal from "../PreviewModal";
 interface Toast {
   type: "success" | "error";
   message: string;
-}
-
-interface DocRejectionDraft {
-  documentId: string;
-  submissionId: string;
-  fileName: string;
-  reason: string;
 }
 
 // ─── Local Helpers ────────────────────────────────────────────────────────────
@@ -79,7 +75,23 @@ function reviewStatusBadgeClass(status: ISubmission["reviewStatus"]): string {
   }
 }
 
-// ─── Delete Document Modal (internal) ──────────────────────────────────────
+function documentStatusBadge(doc: IDocument): { color: string; label: string } {
+  switch (doc.status) {
+    case "Approved":
+    case "Accepted":
+      return { color: "bg-emerald-100 text-emerald-700", label: "Approved" };
+    case "Rejected":
+      return { color: "bg-red-100 text-red-700", label: "Rejected" };
+    case "Resubmitted":
+      return { color: "bg-blue-100 text-blue-700", label: "Resubmitted" };
+    case "Deleted":
+      return { color: "bg-gray-200 text-gray-500 line-through", label: "Deleted" };
+    default:
+      return { color: "bg-amber-100 text-amber-700", label: "Pending" };
+  }
+}
+
+// ─── Delete Document Modal ──────────────────────────────────────────────────
 
 const DeleteDocumentModal = ({
   documentId,
@@ -89,7 +101,6 @@ const DeleteDocumentModal = ({
 }: {
   documentId: string;
   fileName: string;
-  indicatorId: string;
   onClose: () => void;
   onConfirm: (documentId: string, reason: string) => void;
 }) => {
@@ -116,7 +127,7 @@ const DeleteDocumentModal = ({
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-bold text-slate-800">Delete Evidence</h3>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
-            <XCircle size={20} className="text-slate-500" />
+            <X size={20} className="text-slate-500" />
           </button>
         </div>
         <p className="text-sm text-slate-600 mb-4">
@@ -131,7 +142,7 @@ const DeleteDocumentModal = ({
             <textarea
               className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
               rows={3}
-              placeholder="Explain why this document is being deleted (e.g., duplicate, irrelevant, etc.)"
+              placeholder="Explain why this document is being deleted..."
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               required
@@ -159,6 +170,107 @@ const DeleteDocumentModal = ({
   );
 };
 
+// ─── Approve/Reject Document Modal ──────────────────────────────────────────
+
+const DocumentActionModal = ({
+  document: doc,
+  submissionId,
+  action,
+  onClose,
+  onConfirm,
+}: {
+  document: IDocument;
+  submissionId: string;
+  action: "approve" | "reject";
+  onClose: () => void;
+  onConfirm: (documentId: string, submissionId: string, reason?: string) => void;
+}) => {
+  const [reason, setReason] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (action === "reject" && !reason.trim()) {
+      alert("Please provide a rejection reason.");
+      return;
+    }
+    onConfirm(doc.id, submissionId, action === "reject" ? reason.trim() : undefined);
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10000] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start mb-4">
+          <h3 className="text-lg font-bold text-slate-800">
+            {action === "approve" ? "Approve Document" : "Reject Document"}
+          </h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
+            <X size={20} className="text-slate-500" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          You are about to <strong>{action}</strong> document: <strong>"{doc.fileName}"</strong>
+        </p>
+        {action === "reject" && (
+          <form onSubmit={handleSubmit}>
+            <div className="mb-4">
+              <label className="block text-sm font-bold text-slate-700 mb-1">
+                Rejection Reason <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                rows={3}
+                placeholder="Explain what needs to be corrected..."
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-sm font-bold text-white bg-amber-600 rounded-xl hover:bg-amber-700 transition-colors"
+              >
+                Reject
+              </button>
+            </div>
+          </form>
+        )}
+        {action === "approve" && (
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onConfirm(doc.id, submissionId)}
+              className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+            >
+              Approve
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminIndicatorReview: React.FC = () => {
@@ -180,12 +292,6 @@ const AdminIndicatorReview: React.FC = () => {
   const [explicitRejectionToggle, setExplicitRejectionToggle] =
     useState<boolean>(false);
 
-  // ── Per-document rejection flow state ────────────────────────────────────
-  const [docRejectionDrafts, setDocRejectionDrafts] = useState<
-    Record<string, DocRejectionDraft>
-  >({});
-  const [submittingDocId, setSubmittingDocId] = useState<string | null>(null);
-
   // ── Delete submission state ──────────────────────────────────────────────
   const [deletingSubmissionId, setDeletingSubmissionId] = useState<string | null>(null);
 
@@ -193,6 +299,13 @@ const AdminIndicatorReview: React.FC = () => {
   const [deleteDocModal, setDeleteDocModal] = useState<{
     documentId: string;
     fileName: string;
+  } | null>(null);
+
+  // ── Approve/Reject document modal state ──────────────────────────────────
+  const [docActionModal, setDocActionModal] = useState<{
+    document: IDocument;
+    submissionId: string;
+    action: "approve" | "reject";
   } | null>(null);
 
   // ── Shared UI state ───────────────────────────────────────────────────────
@@ -237,7 +350,6 @@ const AdminIndicatorReview: React.FC = () => {
       grouped[key].push(sub);
     });
 
-    // Per period keep only the single latest submission
     const deduplicated: Record<string, ISubmission[]> = {};
     Object.entries(grouped).forEach(([key, subs]) => {
       const latest = [...subs].sort((a, b) => {
@@ -263,11 +375,10 @@ const AdminIndicatorReview: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  // ─── Reset review state (defined before it's used) ─────────────────────────
+  // ─── Reset review state ────────────────────────────────────────────────────
   const resetReviewState = useCallback(() => {
     setOverallComment("");
     setIndividualComments({});
-    setDocRejectionDrafts({});
     setExplicitRejectionToggle(false);
   }, []);
 
@@ -314,13 +425,11 @@ const AdminIndicatorReview: React.FC = () => {
       try {
         await dispatch(
           deleteDocumentAdmin({
-            indicatorId: indicator.id,
-            documentId,
-            reason,
+            id: indicator.id,
+            payload: { documentId, reason },
           })
         ).unwrap();
         showToast("success", "Document deleted successfully.");
-        // Refresh the indicator to reflect the change
         dispatch(getIndicatorByIdAdmin(indicator.id));
         closeDeleteDocModal();
       } catch (error) {
@@ -330,82 +439,62 @@ const AdminIndicatorReview: React.FC = () => {
     [dispatch, indicator, showToast, closeDeleteDocModal],
   );
 
-  // ── Doc rejection draft helpers ───────────────────────────────────────────
+  // ─── Approve/Reject document handlers ─────────────────────────────────────
 
-  const toggleFileRejection = useCallback(
-    (documentId: string, submissionId: string, fileName: string) => {
-      setDocRejectionDrafts((prev) => {
-        if (prev[documentId]) {
-          const next = { ...prev };
-          delete next[documentId];
-          return next;
-        }
-        return {
-          ...prev,
-          [documentId]: { documentId, submissionId, fileName, reason: "" },
-        };
-      });
-    },
-    [],
-  );
-
-  const updateDocReason = useCallback((documentId: string, reason: string) => {
-    setDocRejectionDrafts((prev) => ({
-      ...prev,
-      [documentId]: { ...prev[documentId], reason },
-    }));
-  }, []);
-
-  // ── Per-document reject ───────────────────────────────────────────────────
-
-  const handleDocumentReject = useCallback(
-    async (documentId: string) => {
+  const handleApproveDocument = useCallback(
+    async (documentId: string, submissionId: string) => {
       if (!indicator) return;
-
-      const draft = docRejectionDrafts[documentId];
-      if (!draft) return;
-
-      if (!draft.reason.trim()) {
-        showToast(
-          "error",
-          `Please provide a rejection reason for "${draft.fileName}".`,
-        );
-        return;
-      }
-
-      setSubmittingDocId(documentId);
-
-      const result = await dispatch(
-        rejectDocument({
-          id: indicator.id,
-          payload: {
-            documentId: draft.documentId,
-            submissionId: draft.submissionId,
-            reason: draft.reason.trim(),
-          },
-        }),
-      );
-
-      setSubmittingDocId(null);
-
-      if (rejectDocument.fulfilled.match(result)) {
-        showToast("success", `"${draft.fileName}" flagged for correction.`);
-        setDocRejectionDrafts((prev) => {
-          const next = { ...prev };
-          delete next[documentId];
-          return next;
-        });
+      try {
+        await dispatch(
+          approveDocument({
+            id: indicator.id,
+            payload: { documentId, submissionId, adminComment: "Approved by admin." }
+          })
+        ).unwrap();
+        showToast("success", "Document approved successfully.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
-      } else {
-        showToast(
-          "error",
-          (result.payload as string) ||
-            "Document rejection failed. Please try again.",
-        );
+        setDocActionModal(null);
+      } catch (error) {
+        showToast("error", (error as string) || "Document approval failed.");
       }
     },
-    [dispatch, indicator, docRejectionDrafts, showToast],
+    [dispatch, indicator, showToast],
   );
+
+  const handleRejectDocument = useCallback(
+    async (documentId: string, submissionId: string, reason: string) => {
+      if (!indicator) return;
+      try {
+        await dispatch(
+          rejectDocument({
+            id: indicator.id,
+            payload: { documentId, submissionId, reason }
+          })
+        ).unwrap();
+        showToast("success", "Document rejected successfully.");
+        dispatch(getIndicatorByIdAdmin(indicator.id));
+        setDocActionModal(null);
+      } catch (error) {
+        showToast("error", (error as string) || "Document rejection failed.");
+      }
+    },
+    [dispatch, indicator, showToast],
+  );
+
+  const openDocActionModal = (document: IDocument, submissionId: string, action: "approve" | "reject") => {
+    setDocActionModal({ document, submissionId, action });
+  };
+
+  const closeDocActionModal = () => setDocActionModal(null);
+
+  const handleDocActionConfirm = (documentId: string, submissionId: string, reason?: string) => {
+    if (!docActionModal) return;
+    if (docActionModal.action === "approve") {
+      handleApproveDocument(documentId, submissionId);
+    } else if (docActionModal.action === "reject" && reason) {
+      handleRejectDocument(documentId, submissionId, reason);
+    }
+  };
 
   // ── Overall approve ───────────────────────────────────────────────────────
 
@@ -466,7 +555,6 @@ const AdminIndicatorReview: React.FC = () => {
     const submissionUpdates = pendingSubmissions.map((s) => ({
       submissionId: s.id,
       adminComment: individualComments[s.id]?.trim() || overallComment.trim(),
-      reviewStatus: "Rejected" as const,
     }));
 
     const result = await dispatch(
@@ -813,7 +901,7 @@ const AdminIndicatorReview: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* Previous rejection reason — only on resubmissions */}
+                              {/* Previous rejection reason */}
                               {isResubmission && previousRejectionReason && (
                                 <div className="flex gap-3 p-5 bg-amber-50/60 border border-amber-200/70 rounded-2xl">
                                   <div className="shrink-0 mt-0.5">
@@ -824,15 +912,10 @@ const AdminIndicatorReview: React.FC = () => {
                                   </div>
                                   <div className="min-w-0">
                                     <p className="text-[9px] font-black text-amber-700 uppercase tracking-widest mb-1.5">
-                                      Previous Rejection Reason (to be
-                                      addressed)
+                                      Previous Rejection Reason
                                     </p>
                                     <p className="text-[12px] text-amber-800 font-semibold leading-relaxed">
                                       "{previousRejectionReason}"
-                                    </p>
-                                    <p className="text-[10px] text-amber-600 mt-2 italic">
-                                      Please ensure this resubmission addresses
-                                      the issues above.
                                     </p>
                                   </div>
                                 </div>
@@ -850,11 +933,11 @@ const AdminIndicatorReview: React.FC = () => {
                                 </p>
                               </div>
 
-                              {/* Row-level comment (overall rejection flow only) */}
+                              {/* Row-level comment */}
                               {isActionable && overallRejectionMode && (
                                 <div className="space-y-2">
                                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                    Reviewer Row Comments (Optional)
+                                    Reviewer Row Comments
                                   </label>
                                   <input
                                     type="text"
@@ -881,12 +964,7 @@ const AdminIndicatorReview: React.FC = () => {
                                     uniqueDocs.length < documents.length && (
                                       <span className="text-[9px] font-bold text-amber-500 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg">
                                         {documents.length - uniqueDocs.length}{" "}
-                                        duplicate
-                                        {documents.length - uniqueDocs.length >
-                                        1
-                                          ? "s"
-                                          : ""}{" "}
-                                        collapsed · showing latest versions
+                                        duplicate(s) collapsed
                                       </span>
                                     )}
                                 </div>
@@ -894,8 +972,6 @@ const AdminIndicatorReview: React.FC = () => {
                                 <div className="flex flex-col gap-3">
                                   {uniqueDocs.length > 0 ? (
                                     uniqueDocs.map((doc) => {
-                                      const draft = docRejectionDrafts[doc.id];
-                                      const isDrafted = Boolean(draft);
                                       const isExpanded =
                                         expandedDocId === doc.id;
                                       const docDescription =
@@ -904,15 +980,19 @@ const AdminIndicatorReview: React.FC = () => {
                                         null;
                                       const serverRejected =
                                         doc.status === "Rejected";
-                                      const isSubmittingThisDoc =
-                                        submittingDocId === doc.id;
+                                      const isApproved =
+                                        doc.status === "Approved" ||
+                                        doc.status === "Accepted";
+                                      const isResubmitted =
+                                        doc.status === "Resubmitted";
                                       const isDeleted = doc.status === "Deleted";
+                                      const statusBadge =
+                                        documentStatusBadge(doc);
 
-                                      // Document is actionable if submission is actionable and not already server-rejected or deleted
-                                      const canActOnDoc =
-                                        isActionable &&
-                                        !serverRejected &&
-                                        !isDeleted;
+                                      // Check if document is pending
+                                      const isPending =
+                                        doc.status === "Pending" ||
+                                        !doc.status;
 
                                       return (
                                         <div
@@ -921,8 +1001,14 @@ const AdminIndicatorReview: React.FC = () => {
                                         >
                                           <div
                                             className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
-                                              isDrafted || serverRejected
+                                              serverRejected
                                                 ? "border-rose-200 bg-rose-50/30"
+                                                : isApproved
+                                                ? "border-emerald-200 bg-emerald-50/30"
+                                                : isResubmitted
+                                                ? "border-blue-200 bg-blue-50/30"
+                                                : isDeleted
+                                                ? "border-gray-200 bg-gray-50/50 opacity-60"
                                                 : "border-slate-100 bg-white shadow-sm"
                                             }`}
                                           >
@@ -941,15 +1027,21 @@ const AdminIndicatorReview: React.FC = () => {
                                               <FileText
                                                 size={14}
                                                 className={
-                                                  isDrafted || serverRejected
+                                                  serverRejected
                                                     ? "text-rose-500 shrink-0"
-                                                    : "text-emerald-600 shrink-0"
+                                                    : isApproved
+                                                    ? "text-emerald-600 shrink-0"
+                                                    : "text-slate-400 shrink-0"
                                                 }
                                               />
                                               <span
                                                 className={`text-[11px] font-bold truncate ${
-                                                  isDrafted || serverRejected
+                                                  serverRejected
                                                     ? "text-rose-600"
+                                                    : isApproved
+                                                    ? "text-emerald-700"
+                                                    : isDeleted
+                                                    ? "text-gray-400"
                                                     : "text-slate-700"
                                                 }`}
                                               >
@@ -958,7 +1050,16 @@ const AdminIndicatorReview: React.FC = () => {
                                               </span>
                                             </button>
 
-                                            {/* Server-side rejection reason pill */}
+                                            {/* Status badge */}
+                                            {doc.status && (
+                                              <span
+                                                className={`shrink-0 text-[8px] font-black px-2 py-0.5 rounded-full ${statusBadge.color}`}
+                                              >
+                                                {statusBadge.label}
+                                              </span>
+                                            )}
+
+                                            {/* Rejection reason pill */}
                                             {serverRejected &&
                                               doc.rejectionReason && (
                                                 <span className="shrink-0 text-[9px] font-bold text-rose-500 italic max-w-[160px] truncate">
@@ -966,15 +1067,7 @@ const AdminIndicatorReview: React.FC = () => {
                                                 </span>
                                               )}
 
-                                            {/* Resubmitted badge — only on resubmission + server-rejected docs */}
-                                            {isResubmission &&
-                                              serverRejected && (
-                                                <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-600 text-[8px] font-black uppercase tracking-wider">
-                                                  <RotateCcw size={9} />
-                                                  Resubmitted
-                                                </span>
-                                              )}
-
+                                            {/* Description toggle */}
                                             {docDescription && (
                                               <button
                                                 type="button"
@@ -993,8 +1086,41 @@ const AdminIndicatorReview: React.FC = () => {
                                               </button>
                                             )}
 
-                                            {/* ── Delete document button ── */}
-                                            {canActOnDoc && (
+                                            {/* ── Document Action Buttons ── */}
+                                            {!isDeleted && !isApproved && isActionable && (
+                                              <>
+                                                {/* Approve button - for Pending, Resubmitted, or Rejected docs */}
+                                                {(isPending || isResubmitted || serverRejected) && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      openDocActionModal(doc, sub.id, "approve")
+                                                    }
+                                                    className="shrink-0 p-1 text-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                                    title="Approve this document"
+                                                  >
+                                                    <CheckCircle size={14} />
+                                                  </button>
+                                                )}
+                                                
+                                                {/* Reject button - for Pending or Resubmitted docs only */}
+                                                {(isPending || isResubmitted) && !serverRejected && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      openDocActionModal(doc, sub.id, "reject")
+                                                    }
+                                                    className="shrink-0 p-1 text-amber-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                                    title="Reject this document"
+                                                  >
+                                                    <X size={14} />
+                                                  </button>
+                                                )}
+                                              </>
+                                            )}
+
+                                            {/* Delete button - for any non-deleted document */}
+                                            {!isDeleted && (
                                               <button
                                                 type="button"
                                                 onClick={() =>
@@ -1010,34 +1136,6 @@ const AdminIndicatorReview: React.FC = () => {
                                                 <Trash2 size={13} />
                                               </button>
                                             )}
-
-                                            {/* Per-doc reject toggle */}
-                                            {isActionable &&
-                                              !serverRejected &&
-                                              !overallRejectionMode && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    toggleFileRejection(
-                                                      doc.id,
-                                                      sub.id,
-                                                      doc.fileName ||
-                                                        "document",
-                                                    )
-                                                  }
-                                                  className={`shrink-0 p-1 rounded-full shadow-sm transition-all ${
-                                                    isDrafted
-                                                      ? "bg-rose-500 text-white"
-                                                      : "bg-white text-slate-300 hover:text-rose-500 border border-slate-100 opacity-0 group-hover:opacity-100"
-                                                  }`}
-                                                >
-                                                  {isDrafted ? (
-                                                    <CheckCircle2 size={12} />
-                                                  ) : (
-                                                    <XCircle size={12} />
-                                                  )}
-                                                </button>
-                                              )}
                                           </div>
 
                                           {/* Expanded description */}
@@ -1049,76 +1147,6 @@ const AdminIndicatorReview: React.FC = () => {
                                               <p className="text-[12px] text-slate-600 font-medium leading-relaxed">
                                                 {docDescription}
                                               </p>
-                                            </div>
-                                          )}
-
-                                          {/* Per-doc rejection reason input */}
-                                          {isDrafted && (
-                                            <div className="mt-2 ml-4 space-y-2">
-                                              <input
-                                                type="text"
-                                                autoFocus
-                                                placeholder={`Why is "${doc.fileName || "this document"}" being rejected?`}
-                                                value={draft?.reason || ""}
-                                                onChange={(e) =>
-                                                  updateDocReason(
-                                                    doc.id,
-                                                    e.target.value,
-                                                  )
-                                                }
-                                                className={`w-full px-4 py-2.5 rounded-xl border text-[12px] font-medium outline-none transition-all ${
-                                                  draft?.reason.trim()
-                                                    ? "border-rose-200 bg-rose-50/40 focus:ring-2 focus:ring-rose-400/20"
-                                                    : "border-rose-300 bg-rose-50 focus:ring-2 focus:ring-rose-500/20"
-                                                }`}
-                                              />
-                                              {!draft?.reason.trim() && (
-                                                <p className="text-[9px] text-rose-500 font-bold ml-1 uppercase tracking-wide">
-                                                  A reason is required
-                                                </p>
-                                              )}
-                                              <div className="flex items-center gap-3">
-                                                <button
-                                                  type="button"
-                                                  disabled={
-                                                    !draft?.reason.trim() ||
-                                                    isSubmittingThisDoc
-                                                  }
-                                                  onClick={() =>
-                                                    handleDocumentReject(doc.id)
-                                                  }
-                                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                                                >
-                                                  {isSubmittingThisDoc ? (
-                                                    <Loader2
-                                                      size={12}
-                                                      className="animate-spin"
-                                                    />
-                                                  ) : (
-                                                    <XCircle size={12} />
-                                                  )}
-                                                  {isSubmittingThisDoc
-                                                    ? "Flagging..."
-                                                    : "Confirm Rejection"}
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    setDocRejectionDrafts(
-                                                      (prev) => {
-                                                        const next = {
-                                                          ...prev,
-                                                        };
-                                                        delete next[doc.id];
-                                                        return next;
-                                                      },
-                                                    )
-                                                  }
-                                                  className="text-[10px] font-black text-slate-400 hover:text-slate-700 uppercase tracking-widest transition-colors"
-                                                >
-                                                  Cancel
-                                                </button>
-                                              </div>
                                             </div>
                                           )}
                                         </div>
@@ -1161,9 +1189,19 @@ const AdminIndicatorReview: React.FC = () => {
         <DeleteDocumentModal
           documentId={deleteDocModal.documentId}
           fileName={deleteDocModal.fileName}
-          indicatorId={indicator.id}
           onClose={closeDeleteDocModal}
           onConfirm={handleDeleteDocument}
+        />
+      )}
+
+      {/* Document Action Modal (Approve/Reject) */}
+      {docActionModal && (
+        <DocumentActionModal
+          document={docActionModal.document}
+          submissionId={docActionModal.submissionId}
+          action={docActionModal.action}
+          onClose={closeDocActionModal}
+          onConfirm={handleDocActionConfirm}
         />
       )}
 
@@ -1194,7 +1232,7 @@ const AdminIndicatorReview: React.FC = () => {
             onClick={() => setToast(null)}
             className="ml-2 opacity-70 hover:opacity-100 transition-opacity"
           >
-            <XCircle size={14} />
+            <X size={14} />
           </button>
         </div>
       )}

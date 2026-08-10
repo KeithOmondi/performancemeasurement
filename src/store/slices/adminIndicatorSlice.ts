@@ -16,7 +16,7 @@ export interface IDocument {
   fileName: string;
   description?: string;
   fileDescription?: string;
-  status?: "Accepted" | "Rejected" | "Pending" | "Deleted"; // ✅ Added "Deleted"
+  status?: "Accepted" | "Approved" | "Rejected" | "Pending" | "Resubmitted" | "Additional" | "Deleted";
   rejectionReason?: string;
   uploadedAt: string;
 }
@@ -29,7 +29,7 @@ export interface ISubmission {
   documents: IDocument[];
   notes: string;
   achievedValue: number;
-  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected" | "Correction Needed";
+  reviewStatus: "Pending" | "Verified" | "Accepted" | "Rejected" | "Correction Needed" | "Partially Approved";
   adminComment?: string;
   submittedAt: string;
   resubmissionCount: number;
@@ -51,6 +51,23 @@ export interface IRejectPayload {
   submissionUpdates?: { submissionId: string; adminComment?: string }[];
 }
 
+export interface IApproveDocumentPayload {
+  documentId: string;
+  submissionId: string;
+  adminComment?: string;
+}
+
+export interface IRejectDocumentPayload {
+  documentId: string;
+  submissionId: string;
+  reason: string;
+}
+
+export interface IDeleteDocumentPayload {
+  documentId: string;
+  reason: string;
+}
+
 export interface IReviewHistoryEntry {
   id: string;
   action: string;
@@ -65,20 +82,16 @@ export interface IReopenPayload {
   reason?: string;
 }
 
-export interface IRejectDocumentPayload {
-  documentId: string;
-  submissionId: string;
-  reason: string;
-}
-
 export type IndicatorStatus =
   | "Assigned"
   | "Awaiting Admin Approval"
   | "Correction Needed"
+  | "Partially Approved"
   | "Rejected by Admin"
   | "Awaiting Super Admin"
   | "Rejected by Super Admin"
-  | "Verified";
+  | "Verified"
+  | "Completed";
 
 export interface IAdminIndicator {
   id: string;
@@ -142,8 +155,23 @@ export const getDocumentDescription = (doc: IDocument): string =>
 export const hasRejectedDocuments = (submission: ISubmission): boolean =>
   submission.documents.some((doc) => doc.status === "Rejected");
 
+export const hasResubmittedDocuments = (submission: ISubmission): boolean =>
+  submission.documents.some((doc) => doc.status === "Resubmitted");
+
+export const getRejectedDocuments = (submission: ISubmission): IDocument[] =>
+  submission.documents.filter((doc) => doc.status === "Rejected");
+
+export const getApprovedDocuments = (submission: ISubmission): IDocument[] =>
+  submission.documents.filter((doc) => doc.status === "Approved" || doc.status === "Accepted");
+
+export const getPendingDocuments = (submission: ISubmission): IDocument[] =>
+  submission.documents.filter((doc) => doc.status === "Pending" || !doc.status);
+
+export const getResubmittedDocuments = (submission: ISubmission): IDocument[] =>
+  submission.documents.filter((doc) => doc.status === "Resubmitted");
+
 export const getAcceptedDocuments = (submission: ISubmission): IDocument[] =>
-  submission.documents.filter((doc) => doc.status !== "Rejected");
+  submission.documents.filter((doc) => doc.status !== "Rejected" && doc.status !== "Deleted");
 
 export const getSubmitterName = (submission: ISubmission): string | null =>
   submission.submittedByName ?? null;
@@ -192,12 +220,20 @@ export const getCorrectionNeededSubmissions = (
     (s) => s.reviewStatus === "Correction Needed"
   );
 
+export const areAllDocumentsApproved = (submission: ISubmission): boolean => {
+  const docs = submission.documents;
+  if (docs.length === 0) return false;
+  return docs.every((d) => d.status === "Approved" || d.status === "Accepted");
+};
+
 // ─── Queue Refresh ───────────────────────────────────────────────────────────
 
 const refreshQueues = (state: IAdminIndicatorState) => {
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) =>
-      ind.status === "Awaiting Admin Approval" || ind.status === "Correction Needed"
+      ind.status === "Awaiting Admin Approval" ||
+      ind.status === "Correction Needed" ||
+      ind.status === "Partially Approved"
   );
 
   state.resubmittedWork = state.allAssignments.filter((ind) =>
@@ -295,13 +331,15 @@ export const getIndicatorByIdAdmin = createAsyncThunk<
   }
 });
 
+// ─── Submission-Level Actions ───────────────────────────────────────────────
+
 export const approveSubmission = createAsyncThunk<
   IAdminIndicator,
   { id: string; payload: IApprovePayload },
   { rejectValue: string }
 >("adminIndicators/approve", async ({ id, payload }, { rejectWithValue }) => {
   try {
-    await apiPrivate.patch(`/admin/${id}/approve`, payload);
+    await apiPrivate.patch(`/admin/${id}/submissions/approve`, payload);
     const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
     return res.data?.data;
   } catch (error) {
@@ -315,13 +353,59 @@ export const rejectSubmission = createAsyncThunk<
   { rejectValue: string }
 >("adminIndicators/reject", async ({ id, payload }, { rejectWithValue }) => {
   try {
-    await apiPrivate.patch(`/admin/${id}/reject`, payload);
+    await apiPrivate.patch(`/admin/${id}/submissions/reject`, payload);
     const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
     return res.data?.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Rejection failed"));
   }
 });
+
+// ─── Document-Level Actions ─────────────────────────────────────────────────
+
+export const approveDocument = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IApproveDocumentPayload },
+  { rejectValue: string }
+>("adminIndicators/approveDocument", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/documents/approve`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Document approval failed"));
+  }
+});
+
+export const rejectDocument = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IRejectDocumentPayload },
+  { rejectValue: string }
+>("adminIndicators/rejectDocument", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/documents/reject`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Document rejection failed"));
+  }
+});
+
+export const deleteDocumentAdmin = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IDeleteDocumentPayload },
+  { rejectValue: string }
+>("adminIndicators/deleteDocumentAdmin", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/documents/delete`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Document deletion failed"));
+  }
+});
+
+// ─── Other Actions ────────────────────────────────────────────────────────────
 
 export const reopenIndicator = createAsyncThunk<
   IAdminIndicator,
@@ -356,20 +440,6 @@ export const fetchAdminApprovedIndicators = createAsyncThunk<
   }
 });
 
-export const rejectDocument = createAsyncThunk<
-  IAdminIndicator,
-  { id: string; payload: IRejectDocumentPayload },
-  { rejectValue: string }
->("adminIndicators/rejectDocument", async ({ id, payload }, { rejectWithValue }) => {
-  try {
-    await apiPrivate.patch(`/admin/${id}/reject-document`, payload);
-    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
-    return res.data?.data;
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Document rejection failed"));
-  }
-});
-
 export const deleteSubmission = createAsyncThunk<
   IAdminIndicator,
   { indicatorId: string; submissionId: string },
@@ -381,22 +451,6 @@ export const deleteSubmission = createAsyncThunk<
     return res.data?.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Deletion failed"));
-  }
-});
-
-// ─── NEW: Admin soft‑delete document ──────────────────────────────────────
-
-export const deleteDocumentAdmin = createAsyncThunk<
-  IAdminIndicator,
-  { indicatorId: string; documentId: string; reason: string },
-  { rejectValue: string }
->("adminIndicators/deleteDocumentAdmin", async ({ indicatorId, documentId, reason }, { rejectWithValue }) => {
-  try {
-    await apiPrivate.patch(`/admin/${indicatorId}/delete-document`, { documentId, reason });
-    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${indicatorId}`);
-    return res.data?.data;
-  } catch (error) {
-    return rejectWithValue(extractError(error, "Document deletion failed"));
   }
 });
 
@@ -485,13 +539,29 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectSubmission.rejected, setRejected("isReviewing"))
 
-      // rejectDocument
+      // ─── NEW: approveDocument ─────────────────────────────────────────────
+      .addCase(approveDocument.pending, setPending("isReviewing"))
+      .addCase(approveDocument.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(approveDocument.rejected, setRejected("isReviewing"))
+
+      // ─── NEW: rejectDocument ──────────────────────────────────────────────
       .addCase(rejectDocument.pending, setPending("isReviewing"))
       .addCase(rejectDocument.fulfilled, (state, action) => {
         state.isReviewing = false;
         upsertAndRefresh(state, action.payload);
       })
       .addCase(rejectDocument.rejected, setRejected("isReviewing"))
+
+      // ─── NEW: deleteDocumentAdmin ─────────────────────────────────────────
+      .addCase(deleteDocumentAdmin.pending, setPending("isReviewing"))
+      .addCase(deleteDocumentAdmin.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(deleteDocumentAdmin.rejected, setRejected("isReviewing"))
 
       // deleteSubmission
       .addCase(deleteSubmission.pending, setPending("isReviewing"))
@@ -500,14 +570,6 @@ const adminIndicatorSlice = createSlice({
         upsertAndRefresh(state, action.payload);
       })
       .addCase(deleteSubmission.rejected, setRejected("isReviewing"))
-
-      // ─── NEW: deleteDocumentAdmin ────────────────────────────────────────
-      .addCase(deleteDocumentAdmin.pending, setPending("isReviewing"))
-      .addCase(deleteDocumentAdmin.fulfilled, (state, action) => {
-        state.isReviewing = false;
-        upsertAndRefresh(state, action.payload);
-      })
-      .addCase(deleteDocumentAdmin.rejected, setRejected("isReviewing"))
 
       // reopenIndicator
       .addCase(reopenIndicator.pending, setPending("isReopening"))
