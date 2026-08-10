@@ -29,50 +29,37 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-/* ─── EVIDENCE CELL – only shows the latest submission's notes and document descriptions ── */
+/* ─── EVIDENCE CELL – leaves blank when no submissions ── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
-    return (
-      <span className="text-slate-400 italic text-[10px] font-medium">
-        No submissions yet
-      </span>
-    );
+    return <span>&nbsp;</span>;
   }
 
-  // Find the latest submission based on submittedAt
   const latestSubmission = submissions.reduce((latest, current) => {
     const latestDate = new Date(latest.submittedAt);
     const currentDate = new Date(current.submittedAt);
     return currentDate > latestDate ? current : latest;
   }, submissions[0]);
 
-  // Filter documents to only show those with descriptions
   const documentsWithDescriptions = latestSubmission.documents?.filter(
     (doc) => doc.description?.trim()
   ) || [];
 
-  // Check if there's anything to show
   const hasNotes = latestSubmission.notes?.trim();
   const hasDocuments = documentsWithDescriptions.length > 0;
 
   if (!hasNotes && !hasDocuments) {
-    return (
-      <span className="text-slate-400 italic text-[10px] font-medium">
-        No evidence provided
-      </span>
-    );
+    return <span>&nbsp;</span>;
   }
 
   return (
     <div className="space-y-3">
-      {/* Notes from the latest submission */}
       {hasNotes && (
         <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
           {latestSubmission.notes}
         </p>
       )}
       
-      {/* Document descriptions from the latest submission */}
       {hasDocuments && (
         <ul className="space-y-1 pl-3 mt-1.5">
           {documentsWithDescriptions.map((doc, idx) => (
@@ -147,7 +134,6 @@ const SummaryCards = () => {
         ))}
       </div>
       
-      {/* Submission Rate Progress Bar */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm mb-6">
         <div className="flex justify-between items-center mb-2">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
@@ -214,7 +200,6 @@ const TablePerspectiveRows = ({
 
   return (
     <>
-      {/* Perspective section header */}
       <tr>
         <td
           colSpan={6}
@@ -234,7 +219,6 @@ const TablePerspectiveRows = ({
             key={indicator.indicatorId}
             className="align-top hover:bg-slate-50/80 transition-colors"
           >
-            {/* ── Indicators column ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] font-bold text-[#1a2c2c]">
               {isFirstForObjective && (
                 <div className="font-bold">
@@ -243,12 +227,10 @@ const TablePerspectiveRows = ({
               )}
             </td>
 
-            {/* ── Unit of Measure ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-600 text-center">
               {indicator.unit || "%"}
             </td>
 
-            {/* ── Explanatory Notes ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
               {indicator.instructions && (
@@ -258,19 +240,16 @@ const TablePerspectiveRows = ({
               )}
             </td>
 
-            {/* ── Responsibility ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               <div className="font-semibold" title={indicator.assigneeDisplayName || undefined}>
                 {indicator.assigneeDisplayName || "Unassigned"}
               </div>
             </td>
 
-            {/* ── Evidence ── */}
             <td className="border border-slate-200 px-4 py-3">
               <EvidenceCell submissions={indicator.submissions} />
             </td>
 
-            {/* ── Status ── */}
             <td className="border border-slate-200 px-4 py-3">
               <StatusBadge status={indicator.status} />
             </td>
@@ -286,18 +265,11 @@ const AdminReports = () => {
   const dispatch = useAppDispatch();
   const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
 
-  // 👇 Default: show only "Completed" indicators, no submission filter
-  const [activePerspective, setActivePerspective] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("Completed");
   const [viewMode, setViewMode] = useState<"all" | "submitted">("all");
 
-  // Helper to build filters with proper typing
   const buildFilters = useCallback((): ReportFilters => {
     const apiFilters: ReportFilters = {};
-    
-    if (activePerspective !== "all") {
-      apiFilters.perspective = activePerspective;
-    }
     
     if (statusFilter) {
       apiFilters.status = statusFilter;
@@ -309,15 +281,13 @@ const AdminReports = () => {
     }
 
     return apiFilters;
-  }, [activePerspective, statusFilter, viewMode]);
+  }, [statusFilter, viewMode]);
 
-  // Initial load – fetch summary and tracker with default filters
   useEffect(() => {
     dispatch(fetchReportSummary());
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
 
-  // Refetch when filters change
   useEffect(() => {
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
@@ -336,8 +306,7 @@ const AdminReports = () => {
   };
 
   const handleClearFilters = () => {
-    setStatusFilter("Completed");
-    setActivePerspective("all");
+    setStatusFilter("");
     setViewMode("all");
     dispatch(clearReportFilters());
   };
@@ -375,24 +344,7 @@ const AdminReports = () => {
 
       {/* ── FILTERS ── */}
       <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1">
-          {["all", "A", "B", "C", "D"].map((p) => (
-            <button
-              key={p}
-              onClick={() => setActivePerspective(p)}
-              className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${
-                activePerspective === p
-                  ? "bg-[#1d3331] text-white shadow-lg"
-                  : "bg-transparent text-slate-400 hover:text-[#1d3331]"
-              }`}
-            >
-              {p === "all" ? "All Sections" : `Section ${p}`}
-            </button>
-          ))}
-        </div>
-
         <div className="flex items-center gap-2 flex-wrap">
-          {/* View Mode Toggle */}
           <div className="flex rounded-xl border border-slate-200 overflow-hidden">
             <button
               onClick={() => setViewMode("submitted")}
@@ -427,7 +379,7 @@ const AdminReports = () => {
             <option value="">All Statuses</option>
           </select>
 
-          {(statusFilter !== "Completed" || activePerspective !== "all" || viewMode !== "all") && (
+          {(statusFilter !== "Completed" || viewMode !== "all") && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
