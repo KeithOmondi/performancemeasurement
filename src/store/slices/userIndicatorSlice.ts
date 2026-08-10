@@ -13,7 +13,7 @@ export interface IDocumentUI {
   evidenceUrl: string;
   evidencePublicId?: string;
   fileType?: string;
-  status?: string;          // "Pending" | "Rejected" | "Additional"
+  status?: string;          // "Pending" | "Approved" | "Rejected" | "Resubmitted" | "Additional"
   rejectionReason?: string;
   description?: string;
   uploadedAt?: string;
@@ -25,7 +25,7 @@ export interface ISubmissionUI {
   year: number;
   achievedValue?: number;
   notes?: string;
-  reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected" | "Partially Approved"
+  reviewStatus?: string;   // "Pending" | "Accepted" | "Rejected" | "Correction Needed" | "Partially Approved"
   adminComment?: string;
   submittedAt?: string;
   submittedBy?: string;
@@ -119,10 +119,16 @@ export const getPartiallyApprovedSubmission = (
 ): ISubmissionUI | undefined =>
   bucket.find((s) => s.reviewStatus === "Partially Approved");
 
+export const getCorrectionNeededSubmission = (
+  bucket: ISubmissionUI[],
+): ISubmissionUI | undefined =>
+  bucket.find((s) => s.reviewStatus === "Correction Needed");
+
 export const getActiveSubmission = (
   bucket: ISubmissionUI[],
 ): ISubmissionUI | undefined =>
   getPendingSubmission(bucket) ??
+  getCorrectionNeededSubmission(bucket) ??
   getPartiallyApprovedSubmission(bucket) ??
   getAcceptedSubmission(bucket) ??
   getRejectedSubmission(bucket);
@@ -137,24 +143,22 @@ export const getCurrentQuarterReviewStatus = (
 };
 
 /**
- * ✅ FIXED: Can submit if no pending or partially approved submission exists.
- * Accepted submissions should NOT block new submissions or document additions.
+ * ✅ FIXED: Can submit if no pending, correction needed, or partially approved submission exists.
  */
 export const canSubmitForCurrentQuarter = (indicator: IIndicatorUI): boolean => {
   const key = _activeKey(indicator);
   if (!key) return true;
   const bucket = indicator.submissions?.[key] ?? [];
-  // Only pending and partially approved block new submissions
-  // Accepted submissions should allow additional documents
   return !bucket.some(
     (s) => 
       s.reviewStatus === "Pending" || 
+      s.reviewStatus === "Correction Needed" ||
       s.reviewStatus === "Partially Approved",
   );
 };
 
 /**
- * ✅ NEW: Check if there's an accepted submission that can have documents added
+ * ✅ Check if there's an accepted submission that can have documents added
  */
 export const hasAcceptedSubmission = (indicator: IIndicatorUI): boolean => {
   const key = _activeKey(indicator);
@@ -164,7 +168,7 @@ export const hasAcceptedSubmission = (indicator: IIndicatorUI): boolean => {
 };
 
 /**
- * ✅ NEW: Get the accepted submission if it exists
+ * ✅ Get the accepted submission if it exists
  */
 export const getAcceptedSubmissionForCurrentQuarter = (
   indicator: IIndicatorUI,
@@ -176,7 +180,37 @@ export const getAcceptedSubmissionForCurrentQuarter = (
 };
 
 /**
- * ✅ FIXED: Has submission if there's any submission (including accepted)
+ * ✅ Check if there are any rejected documents in a submission
+ */
+export const hasRejectedDocuments = (submission: ISubmissionUI): boolean => {
+  return (submission.documents ?? []).some((d) => d.status === "Rejected");
+};
+
+/**
+ * ✅ Get rejected documents from a submission
+ */
+export const getRejectedDocuments = (submission: ISubmissionUI): IDocumentUI[] => {
+  return (submission.documents ?? []).filter((d) => d.status === "Rejected");
+};
+
+/**
+ * ✅ Check if there are any resubmitted documents (pending review after resubmission)
+ */
+export const hasResubmittedDocuments = (submission: ISubmissionUI): boolean => {
+  return (submission.documents ?? []).some((d) => d.status === "Resubmitted");
+};
+
+/**
+ * ✅ Check if all documents in a submission are approved
+ */
+export const areAllDocumentsApproved = (submission: ISubmissionUI): boolean => {
+  const docs = submission.documents ?? [];
+  if (docs.length === 0) return false;
+  return docs.every((d) => d.status === "Approved");
+};
+
+/**
+ * ✅ Has submission if there's any submission
  */
 export const hasSubmissionForCurrentQuarter = (
   indicator: IIndicatorUI,
@@ -187,7 +221,7 @@ export const hasSubmissionForCurrentQuarter = (
 };
 
 /**
- * ✅ NEW: Check if documents can be added (pending OR accepted)
+ * ✅ Check if documents can be added (pending OR accepted OR correction needed)
  */
 export const canAddDocumentsForCurrentQuarter = (
   indicator: IIndicatorUI,
@@ -195,9 +229,11 @@ export const canAddDocumentsForCurrentQuarter = (
   const key = _activeKey(indicator);
   if (!key) return false;
   const bucket = indicator.submissions?.[key] ?? [];
-  // Can add documents if there's a pending OR accepted submission
   return bucket.some(
-    (s) => s.reviewStatus === "Pending" || s.reviewStatus === "Accepted",
+    (s) => 
+      s.reviewStatus === "Pending" || 
+      s.reviewStatus === "Accepted" ||
+      s.reviewStatus === "Correction Needed",
   );
 };
 
@@ -307,6 +343,7 @@ interface SubmissionFormData {
   descriptions?: string[];
   idempotencyKey?: string;
   files?: File[];
+  documentIds?: string[]; // ✅ NEW: For resubmitting specific documents
 }
 
 export const buildSubmissionFormData = (data: SubmissionFormData): FormData => {
@@ -325,6 +362,13 @@ export const buildSubmissionFormData = (data: SubmissionFormData): FormData => {
   
   if (data.idempotencyKey) {
     formData.append("idempotencyKey", data.idempotencyKey);
+  }
+  
+  // ✅ NEW: Support resubmitting specific documents
+  if (data.documentIds && data.documentIds.length > 0) {
+    data.documentIds.forEach((docId) => {
+      formData.append("documentIds[]", docId);
+    });
   }
   
   if (data.descriptions && data.descriptions.length > 0) {
@@ -416,7 +460,7 @@ export const submitProgress = createAsyncThunk(
   },
 );
 
-/** POST /user-indicators/:id/resubmit - Resubmit rejected submission only */
+/** ✅ UPDATED: POST /user-indicators/:id/resubmit - Now supports specific document IDs */
 export const resubmitProgress = createAsyncThunk(
   "userIndicators/resubmitProgress",
   async (
@@ -447,10 +491,108 @@ export const resubmitProgress = createAsyncThunk(
   },
 );
 
-/**
- * ✅ FIXED: POST /user-indicators/:id/add-documents 
- * Now works for Pending AND Accepted submissions
- */
+/** ✅ NEW: POST /user-indicators/submissions/:submissionId/documents/resubmit - Resubmit specific rejected documents */
+export const resubmitDocuments = createAsyncThunk(
+  "userIndicators/resubmitDocuments",
+  async (
+    { 
+      submissionId, 
+      documentIds, 
+      formData 
+    }: { 
+      submissionId: string; 
+      documentIds: string[]; 
+      formData: FormData 
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.post(
+        `/user-indicators/submissions/${submissionId}/documents/resubmit`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      
+      const result = data.data;
+      const submission = result?.submission;
+      
+      return { 
+        data: result, 
+        message: data.message,
+        submissionId: result?.submissionId,
+        resubmittedDocuments: documentIds,
+        submission,
+      };
+    } catch (err: unknown) {
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to resubmit documents";
+      return rejectWithValue(errorMessage);
+    }
+  },
+);
+
+/** ✅ NEW: PATCH /user-indicators/documents/:docId/status - Admin approve/reject individual document */
+export const updateDocumentStatus = createAsyncThunk(
+  "userIndicators/updateDocumentStatus",
+  async (
+    { 
+      docId, 
+      status, 
+      rejectionReason 
+    }: { 
+      docId: string; 
+      status: "Approved" | "Rejected"; 
+      rejectionReason?: string 
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.patch(
+        `/user-indicators/documents/${docId}/status`,
+        { status, rejectionReason },
+      );
+      
+      const result = data.data;
+      const submission = result?.submission;
+      
+      return { 
+        data: result, 
+        message: data.message,
+        docId,
+        status,
+        submission,
+        allDocumentsApproved: result?.allDocumentsApproved,
+      };
+    } catch (err: unknown) {
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to update document status";
+      return rejectWithValue(errorMessage);
+    }
+  },
+);
+
+/** ✅ NEW: GET /user-indicators/submissions/:submissionId/rejected-documents */
+export const fetchRejectedDocuments = createAsyncThunk(
+  "userIndicators/fetchRejectedDocuments",
+  async (
+    { submissionId }: { submissionId: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      const { data } = await api.get(
+        `/user-indicators/submissions/${submissionId}/rejected-documents`,
+      );
+      
+      return { 
+        submissionId,
+        documents: data.data ?? [],
+      };
+    } catch (err: unknown) {
+      const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Failed to fetch rejected documents";
+      return rejectWithValue(errorMessage);
+    }
+  },
+);
+
+/** POST /user-indicators/:id/add-documents - Now works for Pending AND Accepted submissions */
 export const addDocuments = createAsyncThunk(
   "userIndicators/addDocuments",
   async (
@@ -481,10 +623,7 @@ export const addDocuments = createAsyncThunk(
   },
 );
 
-/** 
- * ✅ FIXED: PATCH /user-indicators/:id/update-submission 
- * SMART ROUTER - Now routes Accepted submissions to addDocuments
- */
+/** PATCH /user-indicators/:id/update-submission - SMART ROUTER */
 export const updateSubmission = createAsyncThunk(
   "userIndicators/updateSubmission",
   async (
@@ -592,7 +731,7 @@ export const updateDocumentDescription = createAsyncThunk(
   },
 );
 
-/** DELETE /user-indicators/documents/:docId (legacy - use deletePendingDocument instead) */
+/** DELETE /user-indicators/documents/:docId (legacy) */
 export const deleteDocument = createAsyncThunk(
   "userIndicators/deleteDocument",
   async (docId: string, { rejectWithValue }) => {
@@ -606,10 +745,7 @@ export const deleteDocument = createAsyncThunk(
   },
 );
 
-/** 
- * DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId
- * Now works for pending submissions and additional documents on accepted submissions
- */
+/** DELETE /user-indicators/:indicatorId/submissions/:submissionId/documents/:docId */
 export const deletePendingDocument = createAsyncThunk(
   "userIndicators/deletePendingDocument",
   async (
@@ -856,6 +992,81 @@ const userIndicatorSlice = createSlice({
         state.error = (action.payload as string) ?? "Failed to resubmit progress";
       });
 
+    // ✅ NEW: resubmitDocuments
+    builder
+      .addCase(resubmitDocuments.pending, (state) => {
+        state.uploading = true;
+        state.error = null;
+        state.lastActionSuccess = null;
+      })
+      .addCase(resubmitDocuments.fulfilled, (state, action) => {
+        state.uploading = false;
+        state.lastSubmissionId = action.payload?.submissionId ?? null;
+        state.lastActionSuccess = action.payload?.message ?? "Documents resubmitted successfully";
+      })
+      .addCase(resubmitDocuments.rejected, (state, action) => {
+        state.uploading = false;
+        state.error = (action.payload as string) ?? "Failed to resubmit documents";
+      });
+
+    // ✅ NEW: updateDocumentStatus
+    builder
+      .addCase(updateDocumentStatus.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+        state.lastActionSuccess = null;
+      })
+      .addCase(updateDocumentStatus.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.lastActionSuccess = action.payload?.message ?? "Document status updated";
+        
+        const { docId, status, submission } = action.payload;
+        if (submission) {
+          // Update the submission in state
+          const patch = (indicator: IIndicatorUI | null) => {
+            if (!indicator?.submissions) return;
+            for (const bucket of Object.values(indicator.submissions)) {
+              for (const sub of bucket) {
+                if (sub.id === submission.id) {
+                  // Update document status
+                  const doc = sub.documents?.find((d) => d.id === docId);
+                  if (doc) {
+                    doc.status = status;
+                    if (status === "Rejected" && action.payload.data?.rejectionReason) {
+                      doc.rejectionReason = action.payload.data.rejectionReason;
+                    }
+                  }
+                  // Update submission status if all documents approved
+                  if (action.payload.allDocumentsApproved) {
+                    sub.reviewStatus = "Accepted";
+                  }
+                }
+              }
+            }
+          };
+          patch(state.currentIndicator);
+          patch(state.selectedIndicator);
+        }
+      })
+      .addCase(updateDocumentStatus.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = (action.payload as string) ?? "Failed to update document status";
+      });
+
+    // ✅ NEW: fetchRejectedDocuments
+    builder
+      .addCase(fetchRejectedDocuments.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchRejectedDocuments.fulfilled, (state) => {
+        state.loading = false;
+      })
+      .addCase(fetchRejectedDocuments.rejected, (state, action) => {
+        state.loading = false;
+        state.error = (action.payload as string) ?? "Failed to fetch rejected documents";
+      });
+
     // updateSubmission (Smart Router - now handles Accepted too)
     builder
       .addCase(updateSubmission.pending, (state) => {
@@ -890,7 +1101,7 @@ const userIndicatorSlice = createSlice({
         state.error = (action.payload as string) ?? "Failed to delete document";
       });
 
-    // addDocuments - now works for Accepted submissions too
+    // addDocuments
     builder
       .addCase(addDocuments.pending, (state) => {
         state.uploading = true;

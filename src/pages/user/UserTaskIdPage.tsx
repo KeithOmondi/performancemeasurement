@@ -5,7 +5,7 @@ import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
   AlertTriangle, CheckCircle, XCircle, Edit2, Save, X, Trash2,
-  Plus,
+  Plus, RefreshCw,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -24,6 +24,7 @@ import {
   addOrUpdateSubmissionInState,
   hasAcceptedSubmission,
   getAcceptedSubmissionForCurrentQuarter,
+  resubmitDocuments,
 } from "../../store/slices/userIndicatorSlice";
 import SubmissionModal from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
@@ -103,6 +104,13 @@ function useStatusBadge(
           color: "text-emerald-600 bg-emerald-50 border-emerald-100",
           iconColor: "text-emerald-500",
         };
+      case "Correction Needed":
+        return {
+          icon: AlertTriangle,
+          text: "Correction Needed",
+          color: "text-amber-600 bg-amber-50 border-amber-100",
+          iconColor: "text-amber-500",
+        };
       default:
         return {
           icon: AlertCircle,
@@ -122,25 +130,26 @@ const UserTaskIdPage = () => {
   const dispatch = useAppDispatch();
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [isModalOpen,          setIsModalOpen]          = useState(false);
-  const [previewFile,          setPreviewFile]          = useState<{ url: string; name: string } | null>(null);
-  const [toast,                setToast]                = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [editingDocId,         setEditingDocId]         = useState<string | null>(null);
-  const [editingDescription,   setEditingDescription]   = useState("");
-  const [updatingDescription,  setUpdatingDescription]  = useState(false);
-  const [deletingDocId,        setDeletingDocId]        = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingDescription, setEditingDescription] = useState("");
+  const [updatingDescription, setUpdatingDescription] = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [resubmittingDocs, setResubmittingDocs] = useState<Record<string, boolean>>({});
 
   const lastSubmissionIdRef = useRef<string | null>(null);
-  const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isRefreshingRef     = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRefreshingRef = useRef(false);
 
   // ── Store ─────────────────────────────────────────────────────────────────
   const currentIndicator = useAppSelector((s) => s.userIndicators.currentIndicator);
-  const loading          = useAppSelector((s) => s.userIndicators.loading);
-  const uploading        = useAppSelector((s) => s.userIndicators.uploading);
+  const loading = useAppSelector((s) => s.userIndicators.loading);
+  const uploading = useAppSelector((s) => s.userIndicators.uploading);
   const lastSubmissionId = useAppSelector((s) => s.userIndicators.lastSubmissionId);
-  const error            = useAppSelector((s) => s.userIndicators.error);
-  const actionLoading    = useAppSelector((s) => s.userIndicators.actionLoading);
+  const error = useAppSelector((s) => s.userIndicators.error);
+  const actionLoading = useAppSelector((s) => s.userIndicators.actionLoading);
   const lastActionSuccess = useAppSelector((s) => s.userIndicators.lastActionSuccess);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -219,14 +228,13 @@ const UserTaskIdPage = () => {
   }, [error, dispatch, showToast]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const isAnnual             = currentIndicator?.reporting_cycle === "Annual";
+  const isAnnual = currentIndicator?.reporting_cycle === "Annual";
   const activeQuarterDisplay = currentIndicator ? getActiveQuarterDisplay(currentIndicator) : "";
   const currentQuarterStatus = currentIndicator ? getCurrentQuarterReviewStatus(currentIndicator) : null;
-  const hasSubmission        = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
-  const statusBadge          = useStatusBadge(currentQuarterStatus, hasSubmission);
-  const StatusIcon           = statusBadge.icon;
+  const hasSubmission = currentIndicator ? hasSubmissionForCurrentQuarter(currentIndicator) : false;
+  const statusBadge = useStatusBadge(currentQuarterStatus, hasSubmission);
+  const StatusIcon = statusBadge.icon;
 
-  // Check if we have an accepted submission
   const hasAccepted = currentIndicator ? hasAcceptedSubmission(currentIndicator) : false;
   const acceptedSubmission = currentIndicator ? getAcceptedSubmissionForCurrentQuarter(currentIndicator) : undefined;
 
@@ -239,7 +247,7 @@ const UserTaskIdPage = () => {
   const activeSub = useMemo<ISubmissionUI | undefined>(() => {
     if (!currentIndicator?.submissions) return undefined;
     const year = currentIndicator.currentYear ?? new Date().getFullYear();
-    const key  = `${activeQuarterDisplay}_${year}`;
+    const key = `${activeQuarterDisplay}_${year}`;
     return currentIndicator.submissions[key]?.[0];
   }, [currentIndicator, activeQuarterDisplay]);
 
@@ -249,40 +257,52 @@ const UserTaskIdPage = () => {
     return currentIndicator.submissions[`${activeQuarterDisplay}_${year}`] ?? [];
   }, [currentIndicator, activeQuarterDisplay]);
 
-  const rejectedDocs = useMemo(
-    () =>
-      allSubmissions.flatMap((sub) =>
-        (sub.documents ?? [])
-          .filter((d: IDocumentUI) => d.status === "Rejected")
-          .map((d) => ({
-            doc: d,
-            quarterLabel:    sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
-            year:            sub.year,
-            rejectionReason: d.rejectionReason,
-            submission:      sub,
-          })),
-      ),
-    [allSubmissions],
-  );
+  // Get rejected documents for the active submission
+  const rejectedDocs = useMemo(() => {
+    if (!activeSub) return [];
+    return (activeSub.documents ?? [])
+      .filter((d: IDocumentUI) => d.status === "Rejected")
+      .map((d) => ({
+        doc: d,
+        quarterLabel: activeSub.quarter === 0 ? "Annual" : `Q${activeSub.quarter}`,
+        year: activeSub.year,
+        rejectionReason: d.rejectionReason,
+        submission: activeSub,
+      }));
+  }, [activeSub]);
 
+  // Get documents that are resubmitted (pending review after resubmission)
+  const resubmittedDocs = useMemo(() => {
+    if (!activeSub) return [];
+    return (activeSub.documents ?? [])
+      .filter((d: IDocumentUI) => d.status === "Resubmitted")
+      .map((d) => ({
+        doc: d,
+        quarterLabel: activeSub.quarter === 0 ? "Annual" : `Q${activeSub.quarter}`,
+        year: activeSub.year,
+        submission: activeSub,
+      }));
+  }, [activeSub]);
+
+  // Active docs (all non-rejected docs)
   const activeDocs = useMemo(
     () =>
       allSubmissions
         .filter((sub) => sub.reviewStatus !== "Rejected")
         .flatMap((sub) =>
           (sub.documents ?? [])
-            .filter((d: IDocumentUI) => d.status !== "Rejected")
+            .filter((d: IDocumentUI) => d.status !== "Rejected" && d.status !== "Resubmitted")
             .map((d) => ({
-              doc:          d,
+              doc: d,
               quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
-              year:         sub.year,
-              submission:   sub,
+              year: sub.year,
+              submission: sub,
             })),
         ),
     [allSubmissions],
   );
 
-  // Button label logic - includes "Add Documents" for accepted submissions
+  // Button label logic
   const getSubmitButtonLabel = useCallback(() => {
     if (isAnnual) {
       if (hasAccepted) return "Add Supporting Documents";
@@ -299,14 +319,11 @@ const UserTaskIdPage = () => {
 
   const submitButtonLabel = getSubmitButtonLabel();
 
-  // Button now stays enabled regardless of submission state — only the
-  // active "uploading" state blocks it, to avoid duplicate in-flight submits.
   const isButtonDisabled = useMemo(() => {
     if (uploading) return true;
     return false;
   }, [uploading]);
 
-  // Determine modal mode when opened
   const handleOpenModal = useCallback(async () => {
     if (id) await refreshData();
     setIsModalOpen(true);
@@ -314,8 +331,7 @@ const UserTaskIdPage = () => {
 
   // ── Description edit handlers ─────────────────────────────────────────────
   const canEditDescription = (docStatus: string | undefined): boolean => {
-    // Can edit if document is not accepted
-    return docStatus !== "Accepted";
+    return docStatus !== "Accepted" && docStatus !== "Approved";
   };
 
   const handleStartEdit = (doc: IDocumentUI) => {
@@ -337,7 +353,7 @@ const UserTaskIdPage = () => {
       await dispatch(
         updateDocumentDescription({
           docId,
-          description:    editingDescription,
+          description: editingDescription,
           idempotencyKey: crypto.randomUUID(),
         }),
       ).unwrap();
@@ -363,6 +379,7 @@ const UserTaskIdPage = () => {
     submissionReviewStatus?: string,
   ): boolean => {
     if (docStatus === "Rejected") return true;
+    if (docStatus === "Resubmitted") return false; // Can't delete resubmitted docs
     if (submissionReviewStatus === "Pending") return true;
     if (docStatus === "Additional" && submissionReviewStatus === "Accepted") return true;
     return false;
@@ -370,9 +387,9 @@ const UserTaskIdPage = () => {
 
   const getDeleteConfirmMessage = (doc: IDocumentUI, submission: ISubmissionUI): string => {
     if (submission.reviewStatus === "Pending")
-      return "Are you sure you want to delete this document from your pending submission? This action cannot be undone.\n\nYou will need to resubmit or add new documents afterward.";
+      return "Are you sure you want to delete this document from your pending submission? This action cannot be undone.";
     if (doc.status === "Rejected")
-      return "Are you sure you want to delete this rejected document? This action cannot be undone.\n\nYou can upload a new corrected document with your resubmission.";
+      return "Are you sure you want to delete this rejected document? This action cannot be undone.";
     if (doc.status === "Additional" && submission.reviewStatus === "Accepted")
       return "Are you sure you want to delete this additional document from your approved submission? This action cannot be undone.";
     return "Are you sure you want to delete this document? This action cannot be undone.";
@@ -382,7 +399,7 @@ const UserTaskIdPage = () => {
     if (!id) return;
 
     const isPendingSubmission = submission.reviewStatus === "Pending";
-    const isRejectedDocument  = doc.status === "Rejected";
+    const isRejectedDocument = doc.status === "Rejected";
     const isAdditionalOnAccepted = doc.status === "Additional" && submission.reviewStatus === "Accepted";
 
     if (!isPendingSubmission && !isRejectedDocument && !isAdditionalOnAccepted) {
@@ -399,9 +416,9 @@ const UserTaskIdPage = () => {
     try {
       if (isPendingSubmission || isAdditionalOnAccepted) {
         await dispatch(deletePendingDocument({
-          indicatorId:  id,
+          indicatorId: id,
           submissionId: submission.id,
-          docId:        doc.id,
+          docId: doc.id,
         })).unwrap();
         showToast("Document removed successfully.", "success");
       } else {
@@ -420,8 +437,51 @@ const UserTaskIdPage = () => {
     }
   };
 
-  // ── Modal handlers ─────────────────────────────────────────────────────────
+  // ── Resubmit document handler ─────────────────────────────────────────────
+  const handleResubmitDocument = async (doc: IDocumentUI, submission: ISubmissionUI) => {
+    if (!id || !submission) return;
 
+    if (!window.confirm(
+      `Are you sure you want to resubmit "${doc.fileName || 'this document'}"? This will send it back to the admin for review.`
+    )) return;
+
+    setResubmittingDocs(prev => ({ ...prev, [doc.id]: true }));
+
+    try {
+      // Build form data with the document ID
+      const formData = new FormData();
+      formData.append("quarter", String(submission.quarter));
+      formData.append("year", String(submission.year));
+      formData.append("documentIds[]", doc.id);
+      
+      // Include any notes if needed
+      if (submission.notes) {
+        formData.append("notes", submission.notes);
+      }
+
+      const result = await dispatch(resubmitDocuments({
+        submissionId: submission.id,
+        documentIds: [doc.id],
+        formData,
+      })).unwrap();
+
+      showToast(
+        result?.message || `Document "${doc.fileName || 'Evidence'}" resubmitted successfully.`,
+        "success"
+      );
+      await refreshData();
+    } catch (err) {
+      console.error("Failed to resubmit document:", err);
+      showToast(
+        err instanceof Error ? err.message : "Failed to resubmit document. Please try again.",
+        "error",
+      );
+    } finally {
+      setResubmittingDocs(prev => ({ ...prev, [doc.id]: false }));
+    }
+  };
+
+  // ── Modal handlers ─────────────────────────────────────────────────────────
   const handleModalClose = useCallback(async () => {
     setIsModalOpen(false);
     setTimeout(() => {
@@ -511,7 +571,6 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
-            {/* Button logic - always enabled unless actively uploading */}
             <button
               onClick={handleOpenModal}
               disabled={isButtonDisabled}
@@ -531,7 +590,6 @@ const UserTaskIdPage = () => {
               )}
             </button>
 
-            {/* Info badge for accepted submissions */}
             {hasAccepted && currentQuarterStatus === "Accepted" && (
               <div className="flex items-center gap-1 px-2 py-1 bg-emerald-100 rounded-lg">
                 <CheckCircle size={10} className="text-emerald-600" />
@@ -575,11 +633,11 @@ const UserTaskIdPage = () => {
           </div>
         )}
 
-        {/* ── Rejected documents ── */}
+        {/* ── Rejected Documents Section ── */}
         {rejectedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
-              <AlertTriangle size={16} /> Action Required: Returned Evidence
+              <AlertTriangle size={16} /> Action Required: Rejected Evidence
             </h3>
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
               {rejectedDocs.map(({ doc, quarterLabel, rejectionReason, year, submission }) => (
@@ -605,23 +663,69 @@ const UserTaskIdPage = () => {
                         Rejected
                       </span>
                     </div>
-                    {(submission.reviewStatus === "Pending" || doc.status === "Rejected" || 
-                      (doc.status === "Additional" && submission.reviewStatus === "Accepted")) && (
-                      <div className="mt-2">
-                        <button
-                          onClick={() => handleDeleteDocument(doc, submission)}
-                          disabled={deletingDocId === doc.id || actionLoading}
-                          className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {deletingDocId === doc.id ? (
-                            <Loader2 size={10} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={10} />
-                          )}
-                          Delete Document
-                        </button>
-                      </div>
-                    )}
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleResubmitDocument(doc, submission)}
+                        disabled={resubmittingDocs[doc.id] || actionLoading}
+                        className="flex items-center gap-1 text-[8px] font-black text-blue-600 hover:text-blue-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {resubmittingDocs[doc.id] ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <RefreshCw size={10} />
+                        )}
+                        Resubmit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDocument(doc, submission)}
+                        disabled={deletingDocId === doc.id || actionLoading}
+                        className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {deletingDocId === doc.id ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={10} />
+                        )}
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Resubmitted Documents Section (pending review) ── */}
+        {resubmittedDocs.length > 0 && (
+          <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-amber-600">
+              <Clock size={16} /> Resubmitted — Awaiting Review
+            </h3>
+            <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
+              {resubmittedDocs.map(({ doc, quarterLabel, year }) => (
+                <div
+                  key={doc.id}
+                  className="bg-amber-50 border border-amber-100 p-5 rounded-[2rem] flex gap-4 items-start"
+                >
+                  <div className="p-4 bg-white rounded-2xl text-amber-500 shadow-sm shrink-0">
+                    <Clock size={24} />
+                  </div>
+                  <div className="flex-1 space-y-1 min-w-0">
+                    <p className="text-[10px] font-black text-amber-900 uppercase truncate">
+                      {doc.fileName ?? "Evidence File"}
+                    </p>
+                    <p className="text-xs text-amber-700 font-medium italic">
+                      Resubmitted — waiting for admin review
+                    </p>
+                    <div className="flex items-center gap-2 pt-2 flex-wrap">
+                      <span className="text-[8px] font-black bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full uppercase">
+                        {quarterLabel} {year}
+                      </span>
+                      <span className="text-[8px] font-black bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full uppercase">
+                        Under Review
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -678,6 +782,8 @@ const UserTaskIdPage = () => {
           <section className={`rounded-[2rem] p-6 border shadow-sm ${
             activeSub.reviewStatus === "Accepted" 
               ? "bg-emerald-50 border-emerald-200" 
+              : activeSub.reviewStatus === "Correction Needed"
+              ? "bg-amber-50 border-amber-200"
               : "bg-white border-gray-100"
           }`}>
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32] mb-4">
@@ -686,6 +792,11 @@ const UserTaskIdPage = () => {
               {activeSub.reviewStatus === "Accepted" && (
                 <span className="ml-2 text-[8px] font-black bg-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full uppercase">
                   100% Complete
+                </span>
+              )}
+              {activeSub.reviewStatus === "Correction Needed" && (
+                <span className="ml-2 text-[8px] font-black bg-amber-200 text-amber-700 px-2 py-0.5 rounded-full uppercase">
+                  Corrections Required
                 </span>
               )}
             </h3>
@@ -718,216 +829,191 @@ const UserTaskIdPage = () => {
               {activeSub.reviewStatus === "Accepted" && (
                 <p className="text-[8px] text-emerald-600 font-black">✅ Fully Approved</p>
               )}
+              {activeSub.reviewStatus === "Correction Needed" && (
+                <p className="text-[8px] text-amber-600 font-black">⚠️ Corrections Required</p>
+              )}
             </div>
           </section>
         )}
 
         {/* ── Document Registry ── */}
-<section className="space-y-6">
-  <div className="flex items-center justify-between">
-    <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
-      <FileText size={16} className="text-[#c2a336]" /> Document Registry
-    </h3>
-    {editingDocId && (
-      <p className="text-[8px] text-gray-400 italic">Editing description…</p>
-    )}
-  </div>
+        <section className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
+              <FileText size={16} className="text-[#c2a336]" /> Document Registry
+            </h3>
+            {editingDocId && (
+              <p className="text-[8px] text-gray-400 italic">Editing description…</p>
+            )}
+          </div>
 
-  {activeDocs.length === 0 ? (
-    <div className="py-20 text-center bg-white rounded-[2rem] border-2 border-dashed border-gray-100">
-      <p className="text-[10px] text-gray-300 font-black uppercase tracking-widest">
-        No active documents filed in the registry
-      </p>
-    </div>
-  ) : (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
-        const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
-        const submissionReviewStatus = submission.reviewStatus;
-        
-        // Determine document status based on submission status
-        let docStatus = doc.status;
-        let isPending = false;
-        let isAcceptedDoc = false;
-        let isAdditional = false;
-        
-        // If submission is Accepted, documents should show as Accepted
-        if (submissionReviewStatus === "Accepted") {
-          isAcceptedDoc = true;
-          docStatus = "Accepted";
-        } 
-        // If submission is Pending, documents are under review
-        else if (submissionReviewStatus === "Pending") {
-          isPending = true;
-          docStatus = "Under Review";
-        }
-        // If document has explicit status
-        else if (doc.status === "Accepted") {
-          isAcceptedDoc = true;
-        } else if (doc.status === "Additional") {
-          isAdditional = true;
-        } else if (doc.status === "Pending" || !doc.status) {
-          isPending = true;
-          docStatus = "Under Review";
-        }
-
-        // Determine if document is "Additional" (post-approval)
-        if (doc.status === "Additional" && submissionReviewStatus === "Accepted") {
-          isAdditional = true;
-          isAcceptedDoc = true; // Also mark as accepted
-        }
-
-        const canEdit = canEditDescription(doc.status);
-        const canDelete = canDeleteDocument(doc.status, submissionReviewStatus);
-        const isEditing = editingDocId === doc.id;
-        const isDeleting = deletingDocId === doc.id;
-
-        let badgeColor = "bg-gray-100 text-gray-700";
-        let badgeText = docStatus ?? "Under Review";
-        
-        if (isPending) {
-          badgeColor = "bg-amber-100 text-amber-700";
-          badgeText = "Under Review";
-        } else if (isAcceptedDoc) {
-          badgeColor = "bg-emerald-100 text-emerald-700";
-          badgeText = "✅ Approved";
-        } else if (isAdditional) {
-          badgeColor = "bg-blue-100 text-blue-700";
-          badgeText = "📎 Additional";
-        }
-
-        return (
-          <div
-            key={doc.id}
-            className={`p-5 rounded-[2rem] border transition-all hover:shadow-md flex flex-col ${
-              isAdditional ? "bg-blue-50/50 border-blue-200" : "bg-white border-gray-100"
-            }`}
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className={`p-3 rounded-2xl ${
-                isPending    ? "bg-amber-50 text-amber-500"
-                : isAcceptedDoc ? "bg-emerald-50 text-emerald-500"
-                : isAdditional ? "bg-blue-50 text-blue-500"
-                :               "bg-gray-50 text-gray-500"
-              }`}>
-                {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
-              </div>
-              <div className="flex items-center gap-1">
-                {canEdit && !isEditing && (
-                  <button
-                    onClick={() => handleStartEdit(doc)}
-                    className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
-                    title="Edit description"
-                    disabled={isDeleting || actionLoading}
-                  >
-                    <Edit2 size={14} />
-                  </button>
-                )}
-                {canDelete && !isEditing && (
-                  <button
-                    onClick={() => handleDeleteDocument(doc, submission)}
-                    className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                    title={
-                      submissionReviewStatus === "Pending" 
-                        ? "Delete from pending submission" 
-                        : submissionReviewStatus === "Accepted" && isAdditional
-                        ? "Delete additional document"
-                        : "Delete rejected document"
-                    }
-                    disabled={isDeleting || actionLoading}
-                  >
-                    {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  </button>
-                )}
-                <button
-                  onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
-                  className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
-                  title="Preview file"
-                  disabled={isDeleting || actionLoading}
-                >
-                  <ExternalLink size={16} />
-                </button>
-              </div>
+          {activeDocs.length === 0 && rejectedDocs.length === 0 && resubmittedDocs.length === 0 ? (
+            <div className="py-20 text-center bg-white rounded-[2rem] border-2 border-dashed border-gray-100">
+              <p className="text-[10px] text-gray-300 font-black uppercase tracking-widest">
+                No documents filed in the registry
+              </p>
             </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Active/Approved Documents */}
+              {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
+                const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
+                const submissionReviewStatus = submission.reviewStatus;
+                
+                let isPending = false;
+                let isAcceptedDoc = false;
+                let isAdditional = false;
+                
+                if (submissionReviewStatus === "Accepted") {
+                  isAcceptedDoc = true;
+                } else if (submissionReviewStatus === "Pending") {
+                  isPending = true;
+                } else if (doc.status === "Accepted" || doc.status === "Approved") {
+                  isAcceptedDoc = true;
+                } else if (doc.status === "Additional") {
+                  isAdditional = true;
+                } else if (doc.status === "Pending" || !doc.status) {
+                  isPending = true;
+                }
 
-            <p className="text-[11px] font-black text-[#1a3a32] uppercase truncate" title={resolvedName}>
-              {resolvedName}
-            </p>
+                if (doc.status === "Additional" && submissionReviewStatus === "Accepted") {
+                  isAdditional = true;
+                  isAcceptedDoc = true;
+                }
 
-            <div className="flex items-center gap-2 mt-1 mb-4 flex-wrap">
-              <span className="text-[8px] font-black text-gray-300 uppercase">
-                {quarterLabel} {year}
-              </span>
-              <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${badgeColor}`}>
-                {badgeText}
-              </span>
-              {submissionReviewStatus === "Pending" && (
-                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                  Pending Submission
-                </span>
-              )}
-              {submissionReviewStatus === "Accepted" && isAdditional && (
-                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                  Post-Approval
-                </span>
-              )}
-            </div>
+                const canEdit = canEditDescription(doc.status);
+                const canDelete = canDeleteDocument(doc.status, submissionReviewStatus);
+                const isEditing = editingDocId === doc.id;
+                const isDeleting = deletingDocId === doc.id;
 
-            <div className="mt-auto pt-4 border-t border-slate-50">
-              {isEditing ? (
-                <div className="space-y-2">
-                  <textarea
-                    value={editingDescription}
-                    onChange={(e) => setEditingDescription(e.target.value)}
-                    className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
-                    rows={3}
-                    placeholder="Add a description for this document…"
-                    maxLength={500}
-                    autoFocus
-                  />
-                  <div className="flex items-center justify-between">
-                    <span className="text-[8px] text-gray-400">{editingDescription.length}/500</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleCancelEdit}
-                        disabled={updatingDescription}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        <X size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleSaveDescription(doc.id)}
-                        disabled={updatingDescription}
-                        className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {updatingDescription ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                      </button>
+                let badgeColor = "bg-gray-100 text-gray-700";
+                let badgeText = doc.status ?? "Under Review";
+                
+                if (isPending) {
+                  badgeColor = "bg-amber-100 text-amber-700";
+                  badgeText = "Under Review";
+                } else if (isAcceptedDoc) {
+                  badgeColor = "bg-emerald-100 text-emerald-700";
+                  badgeText = "✅ Approved";
+                } else if (isAdditional) {
+                  badgeColor = "bg-blue-100 text-blue-700";
+                  badgeText = "📎 Additional";
+                }
+
+                return (
+                  <div
+                    key={doc.id}
+                    className={`p-5 rounded-[2rem] border transition-all hover:shadow-md flex flex-col ${
+                      isAdditional ? "bg-blue-50/50 border-blue-200" : "bg-white border-gray-100"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between mb-4">
+                      <div className={`p-3 rounded-2xl ${
+                        isPending    ? "bg-amber-50 text-amber-500"
+                        : isAcceptedDoc ? "bg-emerald-50 text-emerald-500"
+                        : isAdditional ? "bg-blue-50 text-blue-500"
+                        :               "bg-gray-50 text-gray-500"
+                      }`}>
+                        {isPending ? <Clock size={20} /> : <ShieldCheck size={20} />}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {canEdit && !isEditing && (
+                          <button
+                            onClick={() => handleStartEdit(doc)}
+                            className="p-2 text-gray-400 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                            title="Edit description"
+                            disabled={isDeleting || actionLoading}
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                        )}
+                        {canDelete && !isEditing && (
+                          <button
+                            onClick={() => handleDeleteDocument(doc, submission)}
+                            className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                            disabled={isDeleting || actionLoading}
+                          >
+                            {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: resolvedName })}
+                          className="p-2 text-gray-300 hover:text-[#1a3a32] hover:bg-gray-100 rounded-xl transition-all"
+                          disabled={isDeleting || actionLoading}
+                        >
+                          <ExternalLink size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] font-black text-[#1a3a32] uppercase truncate" title={resolvedName}>
+                      {resolvedName}
+                    </p>
+
+                    <div className="flex items-center gap-2 mt-1 mb-4 flex-wrap">
+                      <span className="text-[8px] font-black text-gray-300 uppercase">
+                        {quarterLabel} {year}
+                      </span>
+                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${badgeColor}`}>
+                        {badgeText}
+                      </span>
+                    </div>
+
+                    <div className="mt-auto pt-4 border-t border-slate-50">
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={editingDescription}
+                            onChange={(e) => setEditingDescription(e.target.value)}
+                            className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[#1a3a32] focus:border-[#1a3a32] resize-none"
+                            rows={3}
+                            placeholder="Add a description for this document…"
+                            maxLength={500}
+                            autoFocus
+                          />
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] text-gray-400">{editingDescription.length}/500</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleCancelEdit}
+                                disabled={updatingDescription}
+                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg transition-colors disabled:opacity-50"
+                              >
+                                <X size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleSaveDescription(doc.id)}
+                                disabled={updatingDescription}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 rounded-lg transition-colors disabled:opacity-50"
+                              >
+                                {updatingDescription ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : doc.description ? (
+                        <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
+                          "{doc.description}"
+                        </p>
+                      ) : canEdit ? (
+                        <button
+                          onClick={() => handleStartEdit(doc)}
+                          className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
+                        >
+                          + Add description
+                        </button>
+                      ) : (
+                        <p className="text-[8px] text-gray-300 italic text-center py-2">
+                          No description provided
+                        </p>
+                      )}
                     </div>
                   </div>
-                </div>
-              ) : doc.description ? (
-                <p className="text-[10px] text-slate-400 font-medium italic leading-relaxed">
-                  "{doc.description}"
-                </p>
-              ) : canEdit ? (
-                <button
-                  onClick={() => handleStartEdit(doc)}
-                  className="w-full text-center py-2 text-[8px] text-gray-400 hover:text-[#1a3a32] uppercase tracking-wider transition-colors border border-dashed border-gray-200 rounded-lg hover:border-[#1a3a32]/20"
-                >
-                  + Add description
-                </button>
-              ) : (
-                <p className="text-[8px] text-gray-300 italic text-center py-2">
-                  No description provided
-                </p>
-              )}
+                );
+              })}
             </div>
-          </div>
-        );
-      })}
-    </div>
-  )}
-</section>
+          )}
+        </section>
       </div>
 
       {isModalOpen && (
