@@ -723,7 +723,6 @@ const UserTaskIdPage = () => {
         )}
 
         {/* ── Document Registry ── */}
-      // ── Document Registry ──
 <section className="space-y-6">
   <div className="flex items-center justify-between">
     <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
