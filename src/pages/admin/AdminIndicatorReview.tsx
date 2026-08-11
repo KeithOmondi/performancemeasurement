@@ -18,6 +18,9 @@ import {
   Trash2,
   CheckCircle,
   X,
+  Check,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -30,8 +33,12 @@ import {
   getIndicatorByIdAdmin,
   getSubmitterName,
   getPreviousRejectionReason,
+  approveQuarter,
+  rejectQuarter,
+  fetchQuarterStatuses,
   type ISubmission,
   type IDocument,
+  type IQuarterStatus,
 } from "../../store/slices/adminIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
@@ -89,6 +96,42 @@ function documentStatusBadge(doc: IDocument): { color: string; label: string } {
     default:
       return { color: "bg-amber-100 text-amber-700", label: "Pending" };
   }
+}
+
+function quarterStatusBadge(status: IQuarterStatus): { color: string; label: string; icon: React.ReactNode } {
+  if (status.isComplete) {
+    return {
+      color: "bg-emerald-100 text-emerald-700 border-emerald-200",
+      label: "Complete",
+      icon: <CheckCircle2 size={12} />,
+    };
+  }
+  if (status.isRejected) {
+    return {
+      color: "bg-rose-100 text-rose-700 border-rose-200",
+      label: "Rejected",
+      icon: <XCircle size={12} />,
+    };
+  }
+  if (status.isPending) {
+    return {
+      color: "bg-amber-100 text-amber-700 border-amber-200",
+      label: "Pending",
+      icon: <Clock size={12} />,
+    };
+  }
+  if (status.isPartial) {
+    return {
+      color: "bg-blue-100 text-blue-700 border-blue-200",
+      label: "Partial",
+      icon: <AlertOctagon size={12} />,
+    };
+  }
+  return {
+    color: "bg-gray-100 text-gray-600 border-gray-200",
+    label: "Not Started",
+    icon: <AlertOctagon size={12} />,
+  };
 }
 
 // ─── Delete Document Modal ──────────────────────────────────────────────────
@@ -271,6 +314,115 @@ const DocumentActionModal = ({
   );
 };
 
+// ─── Quarter Approval Modal ─────────────────────────────────────────────────
+
+const QuarterActionModal = ({
+  quarter,
+  action,
+  onClose,
+  onConfirm,
+}: {
+  quarter: IQuarterStatus;
+  action: "approve" | "reject";
+  onClose: () => void;
+  onConfirm: (submissionId: string, reason?: string) => void;
+}) => {
+  const [reason, setReason] = useState("");
+  const quarterLabel = quarter.quarter === 0 ? "Annual" : `Q${quarter.quarter}`;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (action === "reject" && !reason.trim()) {
+      alert("Please provide a rejection reason.");
+      return;
+    }
+    onConfirm(quarter.submissionId, action === "reject" ? reason.trim() : undefined);
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10000] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start mb-4">
+          <h3 className="text-lg font-bold text-slate-800">
+            {action === "approve" ? `Approve ${quarterLabel}` : `Reject ${quarterLabel}`}
+          </h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
+            <X size={20} className="text-slate-500" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          You are about to <strong>{action}</strong> {quarterLabel} {quarter.year}.
+          {action === "approve" ? (
+            <span className="block mt-2 text-emerald-600 text-xs">
+              This will mark the quarter as complete and update the overall progress.
+            </span>
+          ) : (
+            <span className="block mt-2 text-rose-600 text-xs">
+              This will flag the quarter for correction and notify the user.
+            </span>
+          )}
+        </p>
+        {action === "reject" && (
+          <form onSubmit={handleSubmit}>
+            <div className="mb-4">
+              <label className="block text-sm font-bold text-slate-700 mb-1">
+                Rejection Reason <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                rows={3}
+                placeholder="Explain what needs to be corrected in this quarter..."
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                required
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-sm font-bold text-white bg-amber-600 rounded-xl hover:bg-amber-700 transition-colors"
+              >
+                Reject
+              </button>
+            </div>
+          </form>
+        )}
+        {action === "approve" && (
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onConfirm(quarter.submissionId)}
+              className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+            >
+              Approve
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminIndicatorReview: React.FC = () => {
@@ -282,6 +434,7 @@ const AdminIndicatorReview: React.FC = () => {
     selectedIndicator: indicator,
     isReviewing,
     isLoading,
+    quarterStatuses,
   } = useAppSelector((state) => state.adminIndicators);
 
   // ── Overall rejection flow state ──────────────────────────────────────────
@@ -308,6 +461,12 @@ const AdminIndicatorReview: React.FC = () => {
     action: "approve" | "reject";
   } | null>(null);
 
+  // ── Quarter action modal state ───────────────────────────────────────────
+  const [quarterActionModal, setQuarterActionModal] = useState<{
+    quarter: IQuarterStatus;
+    action: "approve" | "reject";
+  } | null>(null);
+
   // ── Shared UI state ───────────────────────────────────────────────────────
   const [previewFile, setPreviewFile] = useState<{
     url: string;
@@ -317,7 +476,10 @@ const AdminIndicatorReview: React.FC = () => {
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
-    if (indicatorId) dispatch(getIndicatorByIdAdmin(indicatorId));
+    if (indicatorId) {
+      dispatch(getIndicatorByIdAdmin(indicatorId));
+      dispatch(fetchQuarterStatuses(indicatorId));
+    }
   }, [dispatch, indicatorId]);
 
   const allSubmissions = useMemo<ISubmission[]>(() => {
@@ -401,6 +563,7 @@ const AdminIndicatorReview: React.FC = () => {
         ).unwrap();
         showToast("success", "Submission deleted successfully.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
         resetReviewState();
       } catch (error) {
         showToast("error", (error as string) || "Deletion failed.");
@@ -411,7 +574,7 @@ const AdminIndicatorReview: React.FC = () => {
     [dispatch, indicator, showToast, resetReviewState],
   );
 
-  // ─── Delete document ──────────────────────────────────────────────────────
+  // ── Delete document ──────────────────────────────────────────────────────
 
   const openDeleteDocModal = useCallback((documentId: string, fileName: string) => {
     setDeleteDocModal({ documentId, fileName });
@@ -431,6 +594,7 @@ const AdminIndicatorReview: React.FC = () => {
         ).unwrap();
         showToast("success", "Document deleted successfully.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
         closeDeleteDocModal();
       } catch (error) {
         showToast("error", (error as string) || "Document deletion failed.");
@@ -453,6 +617,7 @@ const AdminIndicatorReview: React.FC = () => {
         ).unwrap();
         showToast("success", "Document approved successfully.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
         setDocActionModal(null);
       } catch (error) {
         showToast("error", (error as string) || "Document approval failed.");
@@ -473,6 +638,7 @@ const AdminIndicatorReview: React.FC = () => {
         ).unwrap();
         showToast("success", "Document rejected successfully.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
         setDocActionModal(null);
       } catch (error) {
         showToast("error", (error as string) || "Document rejection failed.");
@@ -493,6 +659,65 @@ const AdminIndicatorReview: React.FC = () => {
       handleApproveDocument(documentId, submissionId);
     } else if (docActionModal.action === "reject" && reason) {
       handleRejectDocument(documentId, submissionId, reason);
+    }
+  };
+
+  // ─── Quarter action handlers ─────────────────────────────────────────────
+
+  const handleApproveQuarter = useCallback(
+    async (submissionId: string) => {
+      if (!indicator) return;
+      try {
+        await dispatch(
+          approveQuarter({
+            id: indicator.id,
+            payload: { submissionId, adminComment: "Quarter approved by admin." }
+          })
+        ).unwrap();
+        showToast("success", "Quarter approved successfully.");
+        dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
+        setQuarterActionModal(null);
+      } catch (error) {
+        showToast("error", (error as string) || "Quarter approval failed.");
+      }
+    },
+    [dispatch, indicator, showToast],
+  );
+
+  const handleRejectQuarter = useCallback(
+    async (submissionId: string, reason: string) => {
+      if (!indicator) return;
+      try {
+        await dispatch(
+          rejectQuarter({
+            id: indicator.id,
+            payload: { submissionId, reason }
+          })
+        ).unwrap();
+        showToast("success", "Quarter rejected successfully.");
+        dispatch(getIndicatorByIdAdmin(indicator.id));
+        dispatch(fetchQuarterStatuses(indicator.id));
+        setQuarterActionModal(null);
+      } catch (error) {
+        showToast("error", (error as string) || "Quarter rejection failed.");
+      }
+    },
+    [dispatch, indicator, showToast],
+  );
+
+  const openQuarterActionModal = (quarter: IQuarterStatus, action: "approve" | "reject") => {
+    setQuarterActionModal({ quarter, action });
+  };
+
+  const closeQuarterActionModal = () => setQuarterActionModal(null);
+
+  const handleQuarterActionConfirm = (submissionId: string, reason?: string) => {
+    if (!quarterActionModal) return;
+    if (quarterActionModal.action === "approve") {
+      handleApproveQuarter(submissionId);
+    } else if (quarterActionModal.action === "reject" && reason) {
+      handleRejectQuarter(submissionId, reason);
     }
   };
 
@@ -522,6 +747,7 @@ const AdminIndicatorReview: React.FC = () => {
     if (approveSubmission.fulfilled.match(result)) {
       showToast("success", "Submission approved and forwarded to Super Admin.");
       dispatch(getIndicatorByIdAdmin(indicator.id));
+      dispatch(fetchQuarterStatuses(indicator.id));
       resetReviewState();
     } else if (approveSubmission.rejected.match(result)) {
       showToast(
@@ -570,6 +796,7 @@ const AdminIndicatorReview: React.FC = () => {
     if (rejectSubmission.fulfilled.match(result)) {
       showToast("success", "Submission returned for correction.");
       dispatch(getIndicatorByIdAdmin(indicator.id));
+      dispatch(fetchQuarterStatuses(indicator.id));
       resetReviewState();
     } else if (rejectSubmission.rejected.match(result)) {
       showToast(
@@ -707,6 +934,12 @@ const AdminIndicatorReview: React.FC = () => {
                     Correction Needed
                   </div>
                 )}
+                {indicator.progress !== undefined && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-blue-50 text-blue-700 border border-blue-100">
+                    <Check size={12} />
+                    {indicator.progress}% Complete
+                  </div>
+                )}
               </div>
               <h3 className="text-2xl font-serif font-black text-slate-900 mb-4 leading-tight">
                 {indicator.objective?.title || "Objective Title"}
@@ -728,6 +961,71 @@ const AdminIndicatorReview: React.FC = () => {
               </p>
             </div>
           </div>
+
+          {/* ── Quarter Status Overview ── */}
+          {quarterStatuses.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+              <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-slate-700 mb-4">
+                <CalendarDays size={14} /> Quarter Status Overview
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {quarterStatuses.map((quarter) => {
+                  const badge = quarterStatusBadge(quarter);
+                  const quarterLabel = quarter.quarter === 0 ? "Annual" : `Q${quarter.quarter}`;
+                  const isActionable = !quarter.isComplete && !quarter.isRejected;
+
+                  return (
+                    <div
+                      key={quarter.submissionId}
+                      className={`p-4 rounded-xl border ${
+                        quarter.isComplete
+                          ? "bg-emerald-50 border-emerald-200"
+                          : quarter.isRejected
+                          ? "bg-rose-50 border-rose-200"
+                          : quarter.isPending
+                          ? "bg-amber-50 border-amber-200"
+                          : "bg-slate-50 border-slate-200"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-black text-slate-700">
+                          {quarterLabel} {quarter.year}
+                        </span>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black ${badge.color}`}>
+                          {badge.icon}
+                          {badge.label}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500">
+                        Achieved: {quarter.achievedValue} {indicator.unit || "%"}
+                      </p>
+                      <p className="text-[8px] text-slate-400 mt-1">
+                        Status: {quarter.reviewStatus}
+                      </p>
+                      {isActionable && (
+                        <div className="mt-3 flex items-center gap-2">
+                          <button
+                            onClick={() => openQuarterActionModal(quarter, "approve")}
+                            className="flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase transition-colors"
+                          >
+                            <ThumbsUp size={10} />
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => openQuarterActionModal(quarter, "reject")}
+                            className="flex items-center gap-1 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[8px] font-black uppercase transition-colors"
+                          >
+                            <ThumbsDown size={10} />
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Overall Rejection / Correction Textarea */}
           {overallRejectionMode && (
@@ -989,7 +1287,6 @@ const AdminIndicatorReview: React.FC = () => {
                                       const statusBadge =
                                         documentStatusBadge(doc);
 
-                                      // Check if document is pending
                                       const isPending =
                                         doc.status === "Pending" ||
                                         !doc.status;
@@ -1089,7 +1386,6 @@ const AdminIndicatorReview: React.FC = () => {
                                             {/* ── Document Action Buttons ── */}
                                             {!isDeleted && !isApproved && isActionable && (
                                               <>
-                                                {/* Approve button - for Pending, Resubmitted, or Rejected docs */}
                                                 {(isPending || isResubmitted || serverRejected) && (
                                                   <button
                                                     type="button"
@@ -1103,7 +1399,6 @@ const AdminIndicatorReview: React.FC = () => {
                                                   </button>
                                                 )}
                                                 
-                                                {/* Reject button - for Pending or Resubmitted docs only */}
                                                 {(isPending || isResubmitted) && !serverRejected && (
                                                   <button
                                                     type="button"
@@ -1119,7 +1414,6 @@ const AdminIndicatorReview: React.FC = () => {
                                               </>
                                             )}
 
-                                            {/* Delete button - for any non-deleted document */}
                                             {!isDeleted && (
                                               <button
                                                 type="button"
@@ -1202,6 +1496,16 @@ const AdminIndicatorReview: React.FC = () => {
           action={docActionModal.action}
           onClose={closeDocActionModal}
           onConfirm={handleDocActionConfirm}
+        />
+      )}
+
+      {/* Quarter Action Modal */}
+      {quarterActionModal && (
+        <QuarterActionModal
+          quarter={quarterActionModal.quarter}
+          action={quarterActionModal.action}
+          onClose={closeQuarterActionModal}
+          onConfirm={handleQuarterActionConfirm}
         />
       )}
 

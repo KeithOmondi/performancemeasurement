@@ -68,6 +68,29 @@ export interface IDeleteDocumentPayload {
   reason: string;
 }
 
+export interface IApproveQuarterPayload {
+  submissionId: string;
+  adminComment?: string;
+}
+
+export interface IRejectQuarterPayload {
+  submissionId: string;
+  reason: string;
+}
+
+export interface IQuarterStatus {
+  submissionId: string;
+  quarter: number;
+  year: number;
+  achievedValue: number;
+  reviewStatus: string;
+  isComplete: boolean;
+  isPartial: boolean;
+  isPending: boolean;
+  isRejected: boolean;
+  documents: IDocument[];
+}
+
 export interface IReviewHistoryEntry {
   id: string;
   action: string;
@@ -124,6 +147,7 @@ interface IAdminIndicatorState {
   resubmittedWork: IAdminIndicator[];
   approvedIndicators: IAdminIndicator[];
   selectedIndicator: IAdminIndicator | null;
+  quarterStatuses: IQuarterStatus[];
   isLoading: boolean;
   isReviewing: boolean;
   isReopening: boolean;
@@ -136,6 +160,7 @@ const initialState: IAdminIndicatorState = {
   resubmittedWork: [],
   approvedIndicators: [],
   selectedIndicator: null,
+  quarterStatuses: [],
   isLoading: false,
   isReviewing: false,
   isReopening: false,
@@ -226,6 +251,30 @@ export const areAllDocumentsApproved = (submission: ISubmission): boolean => {
   return docs.every((d) => d.status === "Approved" || d.status === "Accepted");
 };
 
+export const getQuarterStatusSummary = (
+  submissions: ISubmission[]
+): IQuarterStatus[] => {
+  return submissions.map((sub) => {
+    const docs = sub.documents || [];
+    const hasRejected = docs.some((d) => d.status === "Rejected");
+    const hasPending = docs.some((d) => d.status === "Pending" || d.status === "Resubmitted");
+    const allApproved = docs.length > 0 && docs.every((d) => d.status === "Approved" || d.status === "Accepted");
+
+    return {
+      submissionId: sub.id,
+      quarter: sub.quarter,
+      year: sub.year,
+      achievedValue: sub.achievedValue || 0,
+      reviewStatus: sub.reviewStatus,
+      // ✅ Use allApproved to determine if complete
+      isComplete: sub.reviewStatus === "Accepted" || sub.reviewStatus === "Verified" || allApproved,
+      isPartial: sub.reviewStatus === "Partially Approved",
+      isPending: sub.reviewStatus === "Pending" || hasPending,
+      isRejected: sub.reviewStatus === "Rejected" || hasRejected,
+      documents: docs,
+    };
+  });
+};
 // ─── Queue Refresh ───────────────────────────────────────────────────────────
 
 const refreshQueues = (state: IAdminIndicatorState) => {
@@ -328,6 +377,51 @@ export const getIndicatorByIdAdmin = createAsyncThunk<
     return res.data?.data;
   } catch (error) {
     return rejectWithValue(extractError(error, "Record not found"));
+  }
+});
+
+// ─── Quarter-Level Actions ──────────────────────────────────────────────────
+
+export const fetchQuarterStatuses = createAsyncThunk<
+  IQuarterStatus[],
+  string,
+  { rejectValue: string }
+>("adminIndicators/fetchQuarterStatuses", async (id, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<{ data: IQuarterStatus[] }>(
+      `/admin/${id}/quarters`
+    );
+    return res.data?.data ?? [];
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Failed to load quarter statuses"));
+  }
+});
+
+export const approveQuarter = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IApproveQuarterPayload },
+  { rejectValue: string }
+>("adminIndicators/approveQuarter", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/quarters/approve`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Quarter approval failed"));
+  }
+});
+
+export const rejectQuarter = createAsyncThunk<
+  IAdminIndicator,
+  { id: string; payload: IRejectQuarterPayload },
+  { rejectValue: string }
+>("adminIndicators/rejectQuarter", async ({ id, payload }, { rejectWithValue }) => {
+  try {
+    await apiPrivate.patch(`/admin/${id}/quarters/reject`, payload);
+    const res = await apiPrivate.get<{ data: IAdminIndicator }>(`/admin/${id}`);
+    return res.data?.data;
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Quarter rejection failed"));
   }
 });
 
@@ -470,6 +564,9 @@ const adminIndicatorSlice = createSlice({
       state.error = null;
     },
     resetAdminState: () => initialState,
+    clearQuarterStatuses: (state) => {
+      state.quarterStatuses = [];
+    },
   },
   extraReducers: (builder) => {
     const setPending =
@@ -515,6 +612,14 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(getIndicatorByIdAdmin.rejected, setRejected("isLoading"))
 
+      // fetchQuarterStatuses
+      .addCase(fetchQuarterStatuses.pending, setPending("isLoading"))
+      .addCase(fetchQuarterStatuses.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.quarterStatuses = action.payload;
+      })
+      .addCase(fetchQuarterStatuses.rejected, setRejected("isLoading"))
+
       // fetchAdminApprovedIndicators
       .addCase(fetchAdminApprovedIndicators.pending, setPending("isLoading"))
       .addCase(fetchAdminApprovedIndicators.fulfilled, (state, action) => {
@@ -539,7 +644,23 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectSubmission.rejected, setRejected("isReviewing"))
 
-      // ─── NEW: approveDocument ─────────────────────────────────────────────
+      // approveQuarter
+      .addCase(approveQuarter.pending, setPending("isReviewing"))
+      .addCase(approveQuarter.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(approveQuarter.rejected, setRejected("isReviewing"))
+
+      // rejectQuarter
+      .addCase(rejectQuarter.pending, setPending("isReviewing"))
+      .addCase(rejectQuarter.fulfilled, (state, action) => {
+        state.isReviewing = false;
+        upsertAndRefresh(state, action.payload);
+      })
+      .addCase(rejectQuarter.rejected, setRejected("isReviewing"))
+
+      // approveDocument
       .addCase(approveDocument.pending, setPending("isReviewing"))
       .addCase(approveDocument.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -547,7 +668,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(approveDocument.rejected, setRejected("isReviewing"))
 
-      // ─── NEW: rejectDocument ──────────────────────────────────────────────
+      // rejectDocument
       .addCase(rejectDocument.pending, setPending("isReviewing"))
       .addCase(rejectDocument.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -555,7 +676,7 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(rejectDocument.rejected, setRejected("isReviewing"))
 
-      // ─── NEW: deleteDocumentAdmin ─────────────────────────────────────────
+      // deleteDocumentAdmin
       .addCase(deleteDocumentAdmin.pending, setPending("isReviewing"))
       .addCase(deleteDocumentAdmin.fulfilled, (state, action) => {
         state.isReviewing = false;
@@ -581,6 +702,11 @@ const adminIndicatorSlice = createSlice({
   },
 });
 
-export const { setSelectedIndicator, clearAdminError, resetAdminState } =
-  adminIndicatorSlice.actions;
+export const { 
+  setSelectedIndicator, 
+  clearAdminError, 
+  resetAdminState,
+  clearQuarterStatuses,
+} = adminIndicatorSlice.actions;
+
 export default adminIndicatorSlice.reducer;

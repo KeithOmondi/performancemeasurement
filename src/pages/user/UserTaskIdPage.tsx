@@ -5,7 +5,7 @@ import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
   AlertTriangle, CheckCircle, XCircle, Edit2, Save, X, Trash2,
-  Plus, RefreshCw,
+  Plus, RefreshCw, FileX, MessageSquareWarning,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -107,7 +107,7 @@ function useStatusBadge(
       case "Correction Needed":
         return {
           icon: AlertTriangle,
-          text: "Correction Needed",
+          text: "⚠️ Correction Needed",
           color: "text-amber-600 bg-amber-50 border-amber-100",
           iconColor: "text-amber-500",
         };
@@ -266,7 +266,7 @@ const UserTaskIdPage = () => {
         doc: d,
         quarterLabel: activeSub.quarter === 0 ? "Annual" : `Q${activeSub.quarter}`,
         year: activeSub.year,
-        rejectionReason: d.rejectionReason,
+        rejectionReason: d.rejectionReason || "No reason provided",
         submission: activeSub,
       }));
   }, [activeSub]);
@@ -284,7 +284,7 @@ const UserTaskIdPage = () => {
       }));
   }, [activeSub]);
 
-  // Active docs (all non-rejected docs)
+  // Active docs (all non-rejected and non-resubmitted docs)
   const activeDocs = useMemo(
     () =>
       allSubmissions
@@ -301,6 +301,9 @@ const UserTaskIdPage = () => {
         ),
     [allSubmissions],
   );
+
+  // Check if there are any rejected documents in the submission
+  const hasRejectedDocs = rejectedDocs.length > 0;
 
   // Button label logic
   const getSubmitButtonLabel = useCallback(() => {
@@ -571,12 +574,24 @@ const UserTaskIdPage = () => {
               </span>
             </div>
 
+            {/* Show Rejected Count Badge */}
+            {hasRejectedDocs && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-100 border border-rose-200 text-rose-700">
+                <FileX size={12} />
+                <span className="text-[8px] font-black uppercase tracking-widest">
+                  {rejectedDocs.length} Document{rejectedDocs.length > 1 ? 's' : ''} Rejected
+                </span>
+              </div>
+            )}
+
             <button
               onClick={handleOpenModal}
               disabled={isButtonDisabled}
               className={`px-6 py-2.5 rounded-xl text-white font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-2 shadow-md hover:shadow-xl ${
                 hasAccepted && currentQuarterStatus === "Accepted"
                   ? "bg-emerald-600 hover:bg-emerald-700"
+                  : hasRejectedDocs
+                  ? "bg-rose-600 hover:bg-rose-700 animate-pulse" // 👈 Highlight if there are rejected docs
                   : "bg-[#1a3a32] hover:bg-[#2a4a42]"
               } disabled:bg-gray-200 disabled:cursor-not-allowed`}
             >
@@ -584,8 +599,10 @@ const UserTaskIdPage = () => {
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <>
-                  {hasAccepted ? <Plus size={14} /> : <ShieldCheck size={14} />}
-                  {submitButtonLabel}
+                  {hasRejectedDocs ? <FileX size={14} /> : hasAccepted ? <Plus size={14} /> : <ShieldCheck size={14} />}
+                  {hasRejectedDocs 
+                    ? `${rejectedDocs.length} Document${rejectedDocs.length > 1 ? 's' : ''} Need Resubmission` 
+                    : submitButtonLabel}
                 </>
               )}
             </button>
@@ -618,6 +635,24 @@ const UserTaskIdPage = () => {
           </div>
         )}
 
+        {/* ── Rejected Documents Alert Banner ── */}
+        {hasRejectedDocs && (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 animate-in fade-in slide-in-from-top-2 duration-500">
+            <div className="flex items-start gap-3 text-rose-700">
+              <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider">
+                  ⚠️ Action Required: {rejectedDocs.length} Document{rejectedDocs.length > 1 ? 's' : ''} Rejected
+                </span>
+                <p className="text-xs text-rose-600 mt-1">
+                  {rejectedDocs.length} document{rejectedDocs.length > 1 ? 's' : ''} in your submission {rejectedDocs.length > 1 ? 'need' : 'needs'} correction. 
+                  Please review the rejection reason{rejectedDocs.length > 1 ? 's' : ''} below and resubmit the corrected document{rejectedDocs.length > 1 ? 's' : ''}.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Resubmission history banner ── */}
         {submissionHistory.length > 1 && (
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
@@ -636,58 +671,92 @@ const UserTaskIdPage = () => {
         {/* ── Rejected Documents Section ── */}
         {rejectedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
-            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
-              <AlertTriangle size={16} /> Action Required: Rejected Evidence
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-rose-600">
+                <FileX size={16} /> Rejected Documents — Need Your Attention
+              </h3>
+              <span className="text-[8px] font-black text-rose-500 bg-rose-50 px-2 py-1 rounded-full border border-rose-200">
+                {rejectedDocs.length} Document{rejectedDocs.length > 1 ? 's' : ''}
+              </span>
+            </div>
+            
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
               {rejectedDocs.map(({ doc, quarterLabel, rejectionReason, year, submission }) => (
                 <div
                   key={doc.id}
-                  className="bg-rose-50 border border-rose-100 p-5 rounded-[2rem] flex gap-4 items-start"
+                  className="bg-rose-50 border-2 border-rose-200 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow"
                 >
-                  <div className="p-4 bg-white rounded-2xl text-rose-500 shadow-sm shrink-0">
-                    <FileText size={24} />
-                  </div>
-                  <div className="flex-1 space-y-1 min-w-0">
-                    <p className="text-[10px] font-black text-rose-900 uppercase truncate">
-                      {doc.fileName ?? "Evidence File"}
-                    </p>
-                    <p className="text-xs text-rose-700 font-medium italic">
-                      "{rejectionReason ?? "Please provide clearer evidence for this metric."}"
-                    </p>
-                    <div className="flex items-center gap-2 pt-2 flex-wrap">
-                      <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
-                        {quarterLabel} {year}
-                      </span>
-                      <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
-                        Rejected
-                      </span>
+                  <div className="flex gap-4 items-start">
+                    <div className="p-4 bg-white rounded-2xl text-rose-500 shadow-sm shrink-0">
+                      <FileX size={24} />
                     </div>
-                    <div className="mt-2 flex items-center gap-2 flex-wrap">
-                      <button
-                        onClick={() => handleResubmitDocument(doc, submission)}
-                        disabled={resubmittingDocs[doc.id] || actionLoading}
-                        className="flex items-center gap-1 text-[8px] font-black text-blue-600 hover:text-blue-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {resubmittingDocs[doc.id] ? (
-                          <Loader2 size={10} className="animate-spin" />
-                        ) : (
-                          <RefreshCw size={10} />
-                        )}
-                        Resubmit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteDocument(doc, submission)}
-                        disabled={deletingDocId === doc.id || actionLoading}
-                        className="flex items-center gap-1 text-[8px] font-black text-rose-600 hover:text-rose-700 uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {deletingDocId === doc.id ? (
-                          <Loader2 size={10} className="animate-spin" />
-                        ) : (
-                          <Trash2 size={10} />
-                        )}
-                        Delete
-                      </button>
+                    <div className="flex-1 space-y-2 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[10px] font-black text-rose-900 uppercase truncate">
+                          {doc.fileName ?? "Evidence File"}
+                        </p>
+                        <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase whitespace-nowrap">
+                          Rejected
+                        </span>
+                      </div>
+                      
+                      {/* Rejection Reason - prominently displayed */}
+                      <div className="bg-white p-3 rounded-xl border border-rose-100">
+                        <div className="flex items-start gap-2">
+                          <MessageSquareWarning size={14} className="text-rose-500 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-[8px] font-black text-rose-600 uppercase tracking-wider">
+                              Rejection Reason:
+                            </p>
+                            <p className="text-[11px] font-medium text-rose-700 leading-relaxed">
+                              "{rejectionReason || 'No specific reason provided'}"
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
+                          {quarterLabel} {year}
+                        </span>
+                        <span className="text-[8px] font-black bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full uppercase">
+                          Requires Resubmission
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center gap-3 flex-wrap pt-2 border-t border-rose-100">
+                        <button
+                          onClick={() => handleResubmitDocument(doc, submission)}
+                          disabled={resubmittingDocs[doc.id] || actionLoading}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                        >
+                          {resubmittingDocs[doc.id] ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={12} />
+                          )}
+                          Resubmit Document
+                        </button>
+                        <button
+                          onClick={() => handleDeleteDocument(doc, submission)}
+                          disabled={deletingDocId === doc.id || actionLoading}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-white border border-rose-200 hover:border-rose-400 text-rose-600 hover:text-rose-700 rounded-xl text-[8px] font-black uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {deletingDocId === doc.id ? (
+                            <Loader2 size={10} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={10} />
+                          )}
+                          Delete
+                        </button>
+                        <button
+                          onClick={() => setPreviewFile({ url: doc.evidenceUrl, name: doc.fileName || "Document" })}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-white border border-rose-200 hover:border-rose-400 text-slate-600 hover:text-slate-800 rounded-xl text-[8px] font-black uppercase tracking-wider transition-colors"
+                        >
+                          <ExternalLink size={10} />
+                          Preview
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -700,13 +769,13 @@ const UserTaskIdPage = () => {
         {resubmittedDocs.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-amber-600">
-              <Clock size={16} /> Resubmitted — Awaiting Review
+              <Clock size={16} /> Resubmitted Documents — Awaiting Review
             </h3>
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-4">
               {resubmittedDocs.map(({ doc, quarterLabel, year }) => (
                 <div
                   key={doc.id}
-                  className="bg-amber-50 border border-amber-100 p-5 rounded-[2rem] flex gap-4 items-start"
+                  className="bg-amber-50 border border-amber-200 p-5 rounded-[2rem] flex gap-4 items-start"
                 >
                   <div className="p-4 bg-white rounded-2xl text-amber-500 shadow-sm shrink-0">
                     <Clock size={24} />
@@ -716,7 +785,7 @@ const UserTaskIdPage = () => {
                       {doc.fileName ?? "Evidence File"}
                     </p>
                     <p className="text-xs text-amber-700 font-medium italic">
-                      Resubmitted — waiting for admin review
+                      ✅ Resubmitted — waiting for admin review
                     </p>
                     <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <span className="text-[8px] font-black bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full uppercase">
@@ -754,7 +823,7 @@ const UserTaskIdPage = () => {
           </div>
 
           <div className={`p-8 rounded-[2rem] text-white shadow-xl relative overflow-hidden group ${
-            hasAccepted ? "bg-emerald-700" : "bg-[#1a3a32]"
+            hasAccepted ? "bg-emerald-700" : hasRejectedDocs ? "bg-rose-700" : "bg-[#1a3a32]"
           }`}>
             <TrendingUp size={80} className="absolute -bottom-4 -right-4 opacity-10 group-hover:scale-110 transition-all" />
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c2a336] mb-2">
@@ -774,6 +843,12 @@ const UserTaskIdPage = () => {
                 <span className="uppercase tracking-wider">Fully Approved</span>
               </div>
             )}
+            {hasRejectedDocs && (
+              <div className="mt-2 flex items-center gap-1 text-[8px] text-rose-200">
+                <AlertTriangle size={10} />
+                <span className="uppercase tracking-wider animate-pulse">Action Required</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -782,6 +857,8 @@ const UserTaskIdPage = () => {
           <section className={`rounded-[2rem] p-6 border shadow-sm ${
             activeSub.reviewStatus === "Accepted" 
               ? "bg-emerald-50 border-emerald-200" 
+              : hasRejectedDocs
+              ? "bg-rose-50 border-rose-200"
               : activeSub.reviewStatus === "Correction Needed"
               ? "bg-amber-50 border-amber-200"
               : "bg-white border-gray-100"
@@ -792,6 +869,11 @@ const UserTaskIdPage = () => {
               {activeSub.reviewStatus === "Accepted" && (
                 <span className="ml-2 text-[8px] font-black bg-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full uppercase">
                   100% Complete
+                </span>
+              )}
+              {hasRejectedDocs && (
+                <span className="ml-2 text-[8px] font-black bg-rose-200 text-rose-700 px-2 py-0.5 rounded-full uppercase animate-pulse">
+                  ⚠️ {rejectedDocs.length} Rejected
                 </span>
               )}
               {activeSub.reviewStatus === "Correction Needed" && (
@@ -829,6 +911,9 @@ const UserTaskIdPage = () => {
               {activeSub.reviewStatus === "Accepted" && (
                 <p className="text-[8px] text-emerald-600 font-black">✅ Fully Approved</p>
               )}
+              {hasRejectedDocs && (
+                <p className="text-[8px] text-rose-600 font-black">⚠️ {rejectedDocs.length} Document{rejectedDocs.length > 1 ? 's' : ''} Rejected</p>
+              )}
               {activeSub.reviewStatus === "Correction Needed" && (
                 <p className="text-[8px] text-amber-600 font-black">⚠️ Corrections Required</p>
               )}
@@ -844,6 +929,11 @@ const UserTaskIdPage = () => {
             </h3>
             {editingDocId && (
               <p className="text-[8px] text-gray-400 italic">Editing description…</p>
+            )}
+            {hasRejectedDocs && (
+              <span className="text-[8px] font-black text-rose-500 bg-rose-50 px-3 py-1 rounded-full border border-rose-200">
+                ⚠️ {rejectedDocs.length} Rejected
+              </span>
             )}
           </div>
 

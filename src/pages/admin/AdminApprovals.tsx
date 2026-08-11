@@ -39,6 +39,14 @@ const formatDateTime = (dateString?: string): string => {
   });
 };
 
+// ─── Helper: Check if indicator has any rejected documents ─────────────────
+const hasRejectedDocuments = (indicator: IAdminIndicator): boolean => {
+  return Object.values(indicator.submissions || {}).flat()
+    .some(sub => sub.documents?.some(doc => doc.status === "Rejected"));
+};
+
+
+
 // ─── Component ──────────────────────────────────────────────────────────────
 const AdminApprovals = () => {
   const dispatch = useAppDispatch();
@@ -98,9 +106,20 @@ const AdminApprovals = () => {
     return Array.from(cycles).sort();
   }, [approvedIndicators]);
 
-  // ── Apply all filters ──
+  // ── Apply all filters AND exclude indicators with rejected documents ──
   const filteredItems = useMemo(() => {
     let result = approvedIndicators;
+
+    // ✅ Exclude indicators with rejected documents
+    result = result.filter(ind => !hasRejectedDocuments(ind));
+
+    // ✅ Only show indicators with status: Completed or Awaiting Super Admin
+    //    (nothing pending should be here)
+    result = result.filter(ind => 
+      ind.status === "Completed" || 
+      ind.status === "Awaiting Super Admin" ||
+      ind.status === "Verified"
+    );
 
     if (searchTerm.trim()) {
       const lower = searchTerm.toLowerCase();
@@ -419,7 +438,7 @@ const AdminApprovals = () => {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredItems.map((indicator: IAdminIndicator) => {
-                  const isCompleted = indicator.status === "Verified" || indicator.status === "Completed";
+                  const isCompleted = indicator.status === "Verified" || indicator.status === "Completed" || indicator.status === "Awaiting Super Admin";
                   const history = indicator.reviewHistory ?? [];
 
                   const adminEntry = [...history]
@@ -446,15 +465,14 @@ const AdminApprovals = () => {
                   const formattedAdmin = formatDateTime(adminDate);
                   const formattedSuper = formatDateTime(superDate);
 
-                  // Check for document-level issues
-                  const hasRejectedDocuments = Object.values(indicator.submissions || {}).flat()
-                    .some(sub => sub.documents?.some(doc => doc.status === "Rejected"));
-                  
+                  // ✅ Only show document-level issues (rejected are filtered out)
                   const hasPendingDocuments = Object.values(indicator.submissions || {}).flat()
                     .some(sub => sub.documents?.some(doc => doc.status === "Pending" || doc.status === "Resubmitted"));
 
                   const hasDeletedDocuments = Object.values(indicator.submissions || {}).flat()
                     .some(sub => sub.documents?.some(doc => doc.status === "Deleted"));
+
+                  const isAwaitingSuperAdmin = indicator.status === "Awaiting Super Admin";
 
                   return (
                     <tr
@@ -484,14 +502,17 @@ const AdminApprovals = () => {
                             )}
                             {/* Document status indicators */}
                             <div className="flex items-center gap-1 ml-2">
-                              {hasRejectedDocuments && (
-                                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" title="Has rejected documents" />
+                              {isAwaitingSuperAdmin && (
+                                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" title="Awaiting Super Admin approval" />
                               )}
                               {hasPendingDocuments && (
                                 <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" title="Has pending documents" />
                               )}
                               {hasDeletedDocuments && (
                                 <span className="w-2 h-2 bg-gray-400 rounded-full" title="Has deleted documents" />
+                              )}
+                              {!isAwaitingSuperAdmin && !hasPendingDocuments && !hasDeletedDocuments && (
+                                <span className="w-2 h-2 bg-emerald-500 rounded-full" title="All documents approved" />
                               )}
                             </div>
                           </div>
