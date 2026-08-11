@@ -13,12 +13,18 @@ import {
   ArrowLeft,
   AlertCircle,
   Loader2,
+  Image as ImageIcon,
+  Video,
+  File,
+  ExternalLink,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchIndicatorById,
   clearSelectedIndicator,
   sendBackToAdmin,
+  type IDocument,
+  type ISubmission,
 } from "../../store/slices/indicatorSlice";
 import { toast } from "react-hot-toast";
 
@@ -27,11 +33,27 @@ interface SuperAdminApprovedModalProps {
   onClose: () => void;
 }
 
+interface PreviewDoc {
+  url: string;
+  name: string;
+  type?: string;
+  description?: string;
+}
+
+/* ─── HELPERS ────────────────────────────────────────────────────────────── */
+
+const DocIcon = ({ fileType }: { fileType?: string }) => {
+  if (fileType === "image") return <ImageIcon size={14} className="text-blue-400" />;
+  if (fileType === "video") return <Video size={14} className="text-purple-400" />;
+  return <File size={14} className="text-slate-400" />;
+};
+
 const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedModalProps) => {
   const dispatch = useAppDispatch();
   const { selectedIndicator, detailLoading, actionLoading } = useAppSelector((state) => state.indicators);
   const [sendingBack, setSendingBack] = useState(false);
   const [sendBackReason, setSendBackReason] = useState("");
+  const [previewDoc, setPreviewDoc] = useState<PreviewDoc | null>(null);
 
   useEffect(() => {
     if (indicatorId) {
@@ -52,6 +74,15 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
 
   const getYearFromDate = (dateStr: string) => new Date(dateStr).getFullYear();
 
+  const openPreview = (doc: IDocument, idx: number) => {
+    setPreviewDoc({
+      url: doc.evidenceUrl,
+      name: doc.fileName || `Document ${idx + 1}`,
+      type: doc.fileType,
+      description: doc.description,
+    });
+  };
+
   const handleSendBackToAdmin = async () => {
     if (!window.confirm(
       "This will send this indicator back to the admin queue for review. Continue?"
@@ -66,9 +97,7 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
         reason: sendBackReason.trim() || "Sent back to admin for verification" 
       })).unwrap();
       toast.success("Indicator sent back to admin queue");
-      // Refresh the indicator data
       await dispatch(fetchIndicatorById(indicatorId));
-      // Close the modal after a short delay
       setTimeout(() => onClose(), 1500);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to send back to admin");
@@ -76,6 +105,29 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
       setSendingBack(false);
     }
   };
+
+  // ─── Helper: Get all submissions (handles both array and grouped object) ──
+  const getAllSubmissions = (): ISubmission[] => {
+    if (!selectedIndicator?.submissions) return [];
+    
+    // If it's already an array
+    if (Array.isArray(selectedIndicator.submissions)) {
+      return selectedIndicator.submissions;
+    }
+    
+    // If it's a grouped object (Record<string, ISubmission[]>)
+    const grouped = selectedIndicator.submissions as Record<string, ISubmission[]>;
+    const result: ISubmission[] = [];
+    for (const key of Object.keys(grouped)) {
+      const subs = grouped[key];
+      if (Array.isArray(subs)) {
+        result.push(...subs);
+      }
+    }
+    return result;
+  };
+
+  const allSubmissions = getAllSubmissions();
 
   const modalContent = (
     <div
@@ -227,7 +279,7 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                 </div>
               </div>
 
-              {/* ✅ Send Back to Admin - For indicators awaiting admin approval */}
+              {/* Send Back to Admin - For indicators awaiting admin approval */}
               {selectedIndicator.status === "Awaiting Admin Approval" && (
                 <div className="rounded-xl bg-amber-50 border border-amber-200 p-5">
                   <div className="flex items-start gap-3">
@@ -266,42 +318,60 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                 </div>
               )}
 
-              {/* Submissions Table (using only existing fields) */}
-              {selectedIndicator.submissions && selectedIndicator.submissions.length > 0 && (
+              {/* Submissions Table with Document Details */}
+              {allSubmissions.length > 0 && (
                 <div>
                   <h3 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-3 flex items-center gap-2">
                     <Calendar size={14} /> Submitted Reports
                   </h3>
                   <div className="border border-slate-100 rounded-xl overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[700px]">
+                    <table className="w-full text-left text-xs min-w-[900px]">
                       <thead className="bg-slate-50">
                         <tr>
                           <th className="px-4 py-3 font-bold text-slate-500">Period</th>
                           <th className="px-4 py-3 font-bold text-slate-500">Achieved</th>
-                          <th className="px-4 py-3 font-bold text-slate-500">Documents</th>
+                          <th className="px-4 py-3 font-bold text-slate-500">Documents & Descriptions</th>
                           <th className="px-4 py-3 font-bold text-slate-500">Review Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {selectedIndicator.submissions.map((sub) => (
-                          <tr key={sub.id} className="hover:bg-slate-50/50">
-                            <td className="px-4 py-3 font-mono font-bold text-slate-600">
+                        {allSubmissions.map((sub) => (
+                          <tr key={sub.id} className="hover:bg-slate-50/50 align-top">
+                            <td className="px-4 py-3 font-mono font-bold text-slate-600 whitespace-nowrap">
                               Q{sub.quarter} {getYearFromDate(sub.submittedAt)}
                             </td>
-                            <td className="px-4 py-3 font-bold text-slate-700">
+                            <td className="px-4 py-3 font-bold text-slate-700 whitespace-nowrap">
                               {sub.achievedValue} {selectedIndicator.unit}
                             </td>
                             <td className="px-4 py-3">
-                              <div className="flex flex-wrap gap-1">
-                                {sub.documents.map((doc) => (
-                                  <span
-                                    key={doc.id}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-slate-100 text-slate-600"
-                                  >
-                                    {doc.fileName?.split(".")[0].slice(0, 12) || "Document"}
-                                  </span>
-                                ))}
-                              </div>
+                              {sub.documents && sub.documents.length > 0 ? (
+                                <div className="flex flex-col gap-1.5">
+                                  {sub.documents.map((doc, idx) => (
+                                    <button
+                                      key={doc.id || idx}
+                                      onClick={() => openPreview(doc, idx)}
+                                      className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-slate-50 transition-colors text-left w-full group"
+                                    >
+                                      <div className="w-6 h-6 rounded-md bg-slate-100 group-hover:bg-white flex items-center justify-center shrink-0 mt-0.5">
+                                        <DocIcon fileType={doc.fileType} />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-[10px] font-semibold text-slate-700 truncate">
+                                          {doc.fileName || `Document ${idx + 1}`}
+                                        </p>
+                                        {doc.description && (
+                                          <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">
+                                            {doc.description}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <ExternalLink size={10} className="text-slate-300 group-hover:text-emerald-600 shrink-0 mt-1" />
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[9px] text-slate-400 italic">No documents</span>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span
@@ -310,11 +380,18 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                                     ? "bg-emerald-100 text-emerald-700"
                                     : sub.reviewStatus === "Verified"
                                     ? "bg-blue-100 text-blue-700"
+                                    : sub.reviewStatus === "Partially Approved"
+                                    ? "bg-purple-100 text-purple-700"
                                     : "bg-amber-100 text-amber-700"
                                 }`}
                               >
                                 {sub.reviewStatus}
                               </span>
+                              {sub.adminComment && (
+                                <p className="text-[8px] text-slate-400 mt-1 italic line-clamp-2">
+                                  "{sub.adminComment}"
+                                </p>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -380,7 +457,77 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
     </div>
   );
 
-  return createPortal(modalContent, document.body);
+  // ── Document Preview Modal ──────────────────────────────────────────────
+  const previewContent = previewDoc && createPortal(
+    <div
+      className="fixed inset-0 z-[10000] flex flex-col bg-black/90"
+      onClick={() => setPreviewDoc(null)}
+    >
+      <div
+        className="flex items-center justify-between px-5 py-3 bg-[#1a3a32] shrink-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <DocIcon fileType={previewDoc.type} />
+          <div>
+            <p className="text-white text-sm font-semibold leading-tight">
+              {previewDoc.name}
+            </p>
+            <p className="text-emerald-300 text-[9px] uppercase tracking-wider">
+              {previewDoc.type ?? "document"}
+            </p>
+            {previewDoc.description && (
+              <p className="text-emerald-100 text-[10px] mt-1 max-w-lg leading-snug">
+                {previewDoc.description}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href={previewDoc.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] font-bold transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink size={11} /> Open in new tab
+          </a>
+          <button
+            onClick={() => setPreviewDoc(null)}
+            className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+          >
+            <X size={18} className="text-white" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 p-4" onClick={(e) => e.stopPropagation()}>
+        {previewDoc.type === "image" ? (
+          <div className="w-full h-full flex items-center justify-center">
+            <img
+              src={previewDoc.url}
+              alt={previewDoc.name}
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+          </div>
+        ) : (
+          <iframe
+            src={previewDoc.url}
+            title={previewDoc.name}
+            className="w-full h-full rounded-lg bg-white"
+          />
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+
+  return (
+    <>
+      {modalContent}
+      {previewContent}
+    </>
+  );
 };
 
 export default SuperAdminApprovedModal;
