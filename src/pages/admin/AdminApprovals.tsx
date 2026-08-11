@@ -14,13 +14,9 @@ import {
   X,
   Calendar,
   Users,
-  RefreshCw,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { 
-  fetchAdminApprovedIndicators,
-  fetchAllAdminIndicators,
-} from "../../store/slices/adminIndicatorSlice";
+import { fetchAdminApprovedIndicators } from "../../store/slices/adminIndicatorSlice";
 import type { IAdminIndicator } from "../../store/slices/adminIndicatorSlice";
 import ApprovedIndicatorModal from "./ApprovedIndicatorModal";
 
@@ -39,14 +35,6 @@ const formatDateTime = (dateString?: string): string => {
   });
 };
 
-// ─── Helper: Check if indicator has any rejected documents ─────────────────
-const hasRejectedDocuments = (indicator: IAdminIndicator): boolean => {
-  return Object.values(indicator.submissions || {}).flat()
-    .some(sub => sub.documents?.some(doc => doc.status === "Rejected"));
-};
-
-
-
 // ─── Component ──────────────────────────────────────────────────────────────
 const AdminApprovals = () => {
   const dispatch = useAppDispatch();
@@ -57,7 +45,6 @@ const AdminApprovals = () => {
   const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(
     null
   );
-  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // ── Filter states ──
   const [showFilters, setShowFilters] = useState(false);
@@ -72,14 +59,6 @@ const AdminApprovals = () => {
   useEffect(() => {
     dispatch(fetchAdminApprovedIndicators());
   }, [dispatch]);
-
-  // ── Refresh handler ──
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await dispatch(fetchAllAdminIndicators({}));
-    await dispatch(fetchAdminApprovedIndicators());
-    setIsRefreshing(false);
-  };
 
   // ── Extract unique values for filters ──
   const uniqueAssignees = useMemo(() => {
@@ -106,21 +85,11 @@ const AdminApprovals = () => {
     return Array.from(cycles).sort();
   }, [approvedIndicators]);
 
-  // ── Apply all filters AND exclude indicators with rejected documents ──
+  // ── Apply all filters ──
   const filteredItems = useMemo(() => {
     let result = approvedIndicators;
 
-    // ✅ Exclude indicators with rejected documents
-    result = result.filter(ind => !hasRejectedDocuments(ind));
-
-    // ✅ Only show indicators with status: Completed or Awaiting Super Admin
-    //    (nothing pending should be here)
-    result = result.filter(ind => 
-      ind.status === "Completed" || 
-      ind.status === "Awaiting Super Admin" ||
-      ind.status === "Verified"
-    );
-
+    // Search filter
     if (searchTerm.trim()) {
       const lower = searchTerm.toLowerCase();
       result = result.filter(
@@ -132,18 +101,22 @@ const AdminApprovals = () => {
       );
     }
 
+    // Assignee filter
     if (selectedAssignee !== "all") {
       result = result.filter(ind => ind.assigneeName === selectedAssignee);
     }
 
+    // Status filter
     if (selectedStatus !== "all") {
       result = result.filter(ind => ind.status === selectedStatus);
     }
 
+    // Reporting cycle filter
     if (selectedReportingCycle !== "all") {
       result = result.filter(ind => ind.reportingCycle === selectedReportingCycle);
     }
 
+    // Date range filter (based on updatedAt)
     if (dateRange.from) {
       const fromDate = new Date(dateRange.from);
       fromDate.setHours(0, 0, 0, 0);
@@ -175,6 +148,7 @@ const AdminApprovals = () => {
     setSelectedIndicatorId(indicatorId);
   };
 
+  // ── Clear all filters ──
   const clearAllFilters = () => {
     setSearchTerm("");
     setSelectedAssignee("all");
@@ -183,6 +157,7 @@ const AdminApprovals = () => {
     setDateRange({ from: "", to: "" });
   };
 
+  // ── Check if any filter is active ──
   const hasActiveFilters = useMemo(() => {
     return (
       searchTerm.trim() !== "" ||
@@ -225,7 +200,7 @@ const AdminApprovals = () => {
               <h1 className="text-3xl font-serif font-black text-[#1a3a32] tracking-tighter uppercase leading-none">
                 Verified Tasks
               </h1>
-              <div className="flex gap-2 mt-2 flex-wrap">
+              <div className="flex gap-2 mt-2">
                 <span className="bg-emerald-50 text-emerald-700 text-[9px] px-3 py-1 rounded-lg font-black border border-emerald-100 uppercase tracking-widest">
                   {filteredItems.length} Performance Records
                 </span>
@@ -238,14 +213,6 @@ const AdminApprovals = () => {
                     Clear filters
                   </button>
                 )}
-                <button
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="bg-slate-100 text-slate-600 text-[9px] px-3 py-1 rounded-lg font-black hover:bg-slate-200 transition-colors flex items-center gap-1 disabled:opacity-50"
-                >
-                  <RefreshCw size={10} className={isRefreshing ? "animate-spin" : ""} />
-                  {isRefreshing ? "Refreshing..." : "Refresh"}
-                </button>
               </div>
             </div>
           </div>
@@ -304,6 +271,7 @@ const AdminApprovals = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Assignee Filter */}
             <div>
               <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <Users size={12} />
@@ -323,6 +291,7 @@ const AdminApprovals = () => {
               </select>
             </div>
 
+            {/* Status Filter */}
             <div>
               <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <ShieldCheck size={12} />
@@ -342,6 +311,7 @@ const AdminApprovals = () => {
               </select>
             </div>
 
+            {/* Reporting Cycle Filter */}
             <div>
               <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <Calendar size={12} />
@@ -361,6 +331,7 @@ const AdminApprovals = () => {
               </select>
             </div>
 
+            {/* Date Range Filter */}
             <div>
               <label className="block text-[9px] font-black text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <Clock size={12} />
@@ -385,6 +356,7 @@ const AdminApprovals = () => {
             </div>
           </div>
 
+          {/* Filter Actions */}
           <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100">
             <button
               onClick={clearAllFilters}
@@ -433,14 +405,15 @@ const AdminApprovals = () => {
                   <th className="px-6 py-8 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] text-center">
                     Verification Pipeline
                   </th>
-                  <th className="px-6 py-8 w-10" />
+                  <th className="px-6 py-8 w-10" /> {/* spacer */}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredItems.map((indicator: IAdminIndicator) => {
-                  const isCompleted = indicator.status === "Verified" || indicator.status === "Completed" || indicator.status === "Awaiting Super Admin";
+                  const isCompleted = indicator.status === "Verified";
                   const history = indicator.reviewHistory ?? [];
 
+                  // Latest admin "Verified" entry
                   const adminEntry = [...history]
                     .filter(
                       (h) => h.reviewerRole === "admin" && h.action === "Verified"
@@ -450,6 +423,7 @@ const AdminApprovals = () => {
                         new Date(b.at).getTime() - new Date(a.at).getTime()
                     )[0];
 
+                  // Latest superadmin "Approved" entry
                   const superEntry = [...history]
                     .filter(
                       (h) =>
@@ -465,27 +439,19 @@ const AdminApprovals = () => {
                   const formattedAdmin = formatDateTime(adminDate);
                   const formattedSuper = formatDateTime(superDate);
 
-                  // ✅ Only show document-level issues (rejected are filtered out)
-                  const hasPendingDocuments = Object.values(indicator.submissions || {}).flat()
-                    .some(sub => sub.documents?.some(doc => doc.status === "Pending" || doc.status === "Resubmitted"));
-
-                  const hasDeletedDocuments = Object.values(indicator.submissions || {}).flat()
-                    .some(sub => sub.documents?.some(doc => doc.status === "Deleted"));
-
-                  const isAwaitingSuperAdmin = indicator.status === "Awaiting Super Admin";
-
                   return (
                     <tr
                       key={indicator.id}
                       className="hover:bg-slate-50/60 transition-all cursor-pointer group"
                       onClick={() => handleRowClick(indicator.id)}
                     >
+                      {/* Activity Dossier */}
                       <td className="px-10 py-7">
                         <div className="max-w-md">
                           <h3 className="text-[13px] font-black text-[#1a3a32] tracking-tight mb-3 line-clamp-2 leading-snug">
                             {indicator.activity?.description || "Untitled Activity"}
                           </h3>
-                          <div className="flex items-center gap-3 flex-wrap">
+                          <div className="flex items-center gap-3">
                             <div className="w-7 h-7 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200 group-hover:bg-[#1a3a32] group-hover:border-[#1a3a32] transition-colors">
                               <UserCheck
                                 size={12}
@@ -500,25 +466,11 @@ const AdminApprovals = () => {
                                 {indicator.perspective}
                               </span>
                             )}
-                            {/* Document status indicators */}
-                            <div className="flex items-center gap-1 ml-2">
-                              {isAwaitingSuperAdmin && (
-                                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" title="Awaiting Super Admin approval" />
-                              )}
-                              {hasPendingDocuments && (
-                                <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" title="Has pending documents" />
-                              )}
-                              {hasDeletedDocuments && (
-                                <span className="w-2 h-2 bg-gray-400 rounded-full" title="Has deleted documents" />
-                              )}
-                              {!isAwaitingSuperAdmin && !hasPendingDocuments && !hasDeletedDocuments && (
-                                <span className="w-2 h-2 bg-emerald-500 rounded-full" title="All documents approved" />
-                              )}
-                            </div>
                           </div>
                         </div>
                       </td>
 
+                      {/* Execution (progress) */}
                       <td className="px-6 py-7">
                         <div className="flex flex-col items-center gap-2">
                           <span className="text-[11px] font-black text-[#1a3a32]">
@@ -540,8 +492,10 @@ const AdminApprovals = () => {
                         </div>
                       </td>
 
+                      {/* Verification Pipeline */}
                       <td className="px-6 py-7">
                         <div className="flex items-center justify-center gap-4">
+                          {/* Admin node */}
                           <div className="flex flex-col items-center gap-1">
                             <div
                               className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all border ${
@@ -566,6 +520,7 @@ const AdminApprovals = () => {
                             )}
                           </div>
 
+                          {/* Connector */}
                           <div className="flex items-center">
                             <div
                               className={`w-12 h-[2px] rounded-full transition-all ${
@@ -578,6 +533,7 @@ const AdminApprovals = () => {
                             />
                           </div>
 
+                          {/* Super Admin node */}
                           <div className="flex flex-col items-center gap-1">
                             <div
                               className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all border ${
@@ -602,6 +558,7 @@ const AdminApprovals = () => {
                             )}
                           </div>
 
+                          {/* Status badge */}
                           <div className="ml-6">
                             <div
                               className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl border ${
@@ -623,7 +580,7 @@ const AdminApprovals = () => {
                         </div>
                       </td>
 
-                      <td className="px-6 py-7" />
+                      <td className="px-6 py-7" /> {/* spacer */}
                     </tr>
                   );
                 })}
@@ -638,7 +595,6 @@ const AdminApprovals = () => {
         <ApprovedIndicatorModal
           indicatorId={selectedIndicatorId}
           onClose={() => setSelectedIndicatorId(null)}
-          isAdmin={true}
         />
       )}
     </div>

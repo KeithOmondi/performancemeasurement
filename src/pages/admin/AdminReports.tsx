@@ -15,16 +15,30 @@ import ORHC from "../../assets/ORHC.jpg";
 /* ─── STATUS BADGE ──────────────────────────────────────────────────── */
 const StatusBadge = ({ status }: { status: string }) => {
   const isCompleted = status === "Completed";
+  const isPartiallyApproved = status === "Partially Approved" || status === "Awaiting Super Admin";
+  
+  let label = "Incomplete";
+  let bg = "bg-amber-100";
+  let text = "text-amber-700";
+  let border = "border-amber-200";
+  
+  if (isCompleted) {
+    label = "Complete";
+    bg = "bg-emerald-100";
+    text = "text-emerald-700";
+    border = "border-emerald-200";
+  } else if (isPartiallyApproved) {
+    label = "Partial";
+    bg = "bg-purple-100";
+    text = "text-purple-700";
+    border = "border-purple-200";
+  }
   
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-        isCompleted
-          ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-          : "bg-amber-100 text-amber-700 border border-amber-200"
-      }`}
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${bg} ${text} border ${border}`}
     >
-      {isCompleted ? "Complete" : "Incomplete"}
+      {label}
     </span>
   );
 };
@@ -37,24 +51,36 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
 
   // Filter out rejected submissions
   const validSubmissions = submissions.filter(
-    (s) => s.reviewStatus !== 'Rejected'
+    (s) => s.reviewStatus !== 'Rejected' && s.reviewStatus !== 'Correction Needed'
   );
 
   if (validSubmissions.length === 0) {
     return <span>&nbsp;</span>;
   }
 
-  const latestSubmission = validSubmissions.reduce((latest, current) => {
-    const latestDate = new Date(latest.submittedAt);
-    const currentDate = new Date(current.submittedAt);
-    return currentDate > latestDate ? current : latest;
-  }, validSubmissions[0]);
+  // Priority: Accepted > Verified > Partially Approved > Pending
+  const priorityOrder = ['Accepted', 'Verified', 'Partially Approved', 'Pending'];
+  let bestSubmission = null;
+  
+  for (const status of priorityOrder) {
+    const found = validSubmissions.find(s => s.reviewStatus === status);
+    if (found) {
+      bestSubmission = found;
+      break;
+    }
+  }
+  
+  if (!bestSubmission) {
+    bestSubmission = validSubmissions.reduce((latest, current) => {
+      return new Date(current.submittedAt) > new Date(latest.submittedAt) ? current : latest;
+    }, validSubmissions[0]);
+  }
 
-  const documentsWithDescriptions = latestSubmission.documents?.filter(
+  const documentsWithDescriptions = bestSubmission.documents?.filter(
     (doc) => doc.description?.trim()
   ) || [];
 
-  const hasNotes = latestSubmission.notes?.trim();
+  const hasNotes = bestSubmission.notes?.trim();
   const hasDocuments = documentsWithDescriptions.length > 0;
 
   if (!hasNotes && !hasDocuments) {
@@ -65,7 +91,7 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
     <div className="space-y-3">
       {hasNotes && (
         <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
-          {latestSubmission.notes}
+          {bestSubmission.notes}
         </p>
       )}
       
@@ -231,6 +257,9 @@ const TablePerspectiveRows = ({
         // The indicator label is the objective title (only shown once per objective)
         const indicatorLabel = objective.title?.trim() || activity.description;
 
+        // Check if indicator has submissions
+        const hasSubmissions = indicator.submissions && indicator.submissions.length > 0;
+
         return (
           <tr
             key={indicator.indicatorId}
@@ -256,6 +285,11 @@ const TablePerspectiveRows = ({
               {indicator.instructions && (
                 <p className="mt-1 text-[10px] text-slate-400 italic font-medium">
                   {indicator.instructions}
+                </p>
+              )}
+              {!hasSubmissions && (
+                <p className="mt-1 text-[9px] font-bold text-amber-500 uppercase tracking-wider">
+                  No Submission
                 </p>
               )}
             </td>
@@ -288,7 +322,7 @@ const AdminReports = () => {
   const dispatch = useAppDispatch();
   const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
 
-  const [statusFilter, setStatusFilter] = useState<string>("Completed");
+  const [statusFilter, setStatusFilter] = useState<string>("");
   const [viewMode, setViewMode] = useState<"all" | "submitted">("all");
 
   const buildFilters = useCallback((): ReportFilters => {
@@ -299,8 +333,11 @@ const AdminReports = () => {
     }
 
     if (viewMode === "submitted") {
+      // ✅ Show only indicators that have submissions with these statuses
+      // This will show: Completed, Partially Approved, and indicators with no submissions
       apiFilters.hasSubmission = "true";
-      apiFilters.submissionStatus = "Verified,Accepted,Partially Approved";
+      // ✅ Filter for specific submission statuses
+      apiFilters.submissionStatus = "Accepted,Verified,Partially Approved";
     }
 
     return apiFilters;
@@ -311,6 +348,7 @@ const AdminReports = () => {
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
 
+  // ✅ Only re-fetch when filters change
   useEffect(() => {
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
@@ -322,7 +360,7 @@ const AdminReports = () => {
     
     if (viewMode === "submitted") {
       pdfFilters.hasSubmission = "true";
-      pdfFilters.submissionStatus = "Verified,Accepted,Partially Approved";
+      pdfFilters.submissionStatus = "Accepted,Verified,Partially Approved";
     }
     
     dispatch(downloadTrackerPdf(pdfFilters));
@@ -397,12 +435,13 @@ const AdminReports = () => {
             className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white text-slate-600
                        focus:outline-none focus:ring-2 focus:ring-[#1d3331]/20 focus:border-[#1d3331] transition-all"
           >
-            <option value="Completed">Complete</option>
-            <option value="Incomplete">Incomplete</option>
             <option value="">All Statuses</option>
+            <option value="Completed">Complete</option>
+            <option value="Partially Approved">Partially Approved</option>
+            <option value="Incomplete">Incomplete</option>
           </select>
 
-          {(statusFilter !== "Completed" || viewMode !== "all") && (
+          {(statusFilter !== "" || viewMode !== "all") && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
@@ -431,6 +470,14 @@ const AdminReports = () => {
             {pdfLoading ? "Generating…" : "⬇ Download PDF"}
           </button>
         </div>
+        
+        {/* ✅ Show active filter count */}
+        {viewMode === "submitted" && (
+          <div className="flex items-center gap-2 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
+            <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
+            Showing Completed & Partially Approved
+          </div>
+        )}
       </div>
 
       {/* ── ERROR ── */}

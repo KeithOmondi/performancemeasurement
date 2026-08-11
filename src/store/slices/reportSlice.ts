@@ -78,7 +78,7 @@ export interface ReportFilters {
   quarter?: number;
   year?: number;
   hasSubmission?: string;
-  submissionStatus?: string;
+  submissionStatus?: string | string[]; // ✅ Allow array or string
 }
 
 /* ─── API RESPONSE SHAPES ─────────────────────────────────────────────────── */
@@ -139,7 +139,22 @@ function buildParams(filters: ReportFilters): string {
   if (filters.quarter) params.append("quarter", String(filters.quarter));
   if (filters.year) params.append("year", String(filters.year));
   if (filters.hasSubmission) params.append("hasSubmission", filters.hasSubmission);
-  if (filters.submissionStatus) params.append("submissionStatus", filters.submissionStatus);
+  
+  // ✅ Handle submissionStatus as array or string
+  if (filters.submissionStatus) {
+    const statuses = Array.isArray(filters.submissionStatus) 
+      ? filters.submissionStatus 
+      : filters.submissionStatus.split(',');
+    
+    // Only send valid statuses that the backend understands
+    const validStatuses = statuses.filter(s => 
+      ['Accepted', 'Verified', 'Partially Approved', 'Pending', 'Rejected'].includes(s)
+    );
+    
+    if (validStatuses.length > 0) {
+      params.append("submissionStatus", validStatuses.join(','));
+    }
+  }
   
   return params.toString();
 }
@@ -228,8 +243,6 @@ export const downloadTrackerPdf = createAsyncThunk<
 
 /* ─── SLICE ───────────────────────────────────────────────────────────────── */
 
-/* ─── SLICE ───────────────────────────────────────────────────────────────── */
-
 const reportSlice = createSlice({
   name: "reports",
   initialState,
@@ -246,11 +259,12 @@ const reportSlice = createSlice({
     clearReportError(state) {
       state.error = null;
     },
+    // ✅ Set filter to show only Completed and Partially Approved
     setSubmittedFilter(state) {
       state.filters = {
         ...state.filters,
         hasSubmission: "true",
-        submissionStatus: "Completed,PartiallyApproved"
+        submissionStatus: "Accepted,Verified,Partially Approved" // ✅ Use comma-separated string
       };
     },
     clearSubmissionFilters(state) {
@@ -258,18 +272,43 @@ const reportSlice = createSlice({
       const { hasSubmission, submissionStatus, ...rest } = state.filters;
       state.filters = rest;
     },
+    // ✅ Toggle submission filter on/off
     toggleSubmissionFilter(state, action: PayloadAction<boolean>) {
       if (action.payload) {
         state.filters = {
           ...state.filters,
           hasSubmission: "true",
-          submissionStatus: "Completed,PartiallyApproved"
+          submissionStatus: "Accepted,Verified,Partially Approved"
         };
       } else {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { hasSubmission, submissionStatus, ...rest } = state.filters;
         state.filters = rest;
       }
+    },
+    // ✅ Set specific submission status filter
+    setSubmissionStatusFilter(state, action: PayloadAction<string[]>) {
+      const statuses = action.payload.filter(s => 
+        ['Accepted', 'Verified', 'Partially Approved', 'Pending', 'Rejected'].includes(s)
+      );
+      
+      if (statuses.length > 0) {
+        state.filters = {
+          ...state.filters,
+          hasSubmission: "true",
+          submissionStatus: statuses.join(',')
+        };
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { hasSubmission, submissionStatus, ...rest } = state.filters;
+        state.filters = rest;
+      }
+    },
+    // ✅ Reset to show all (including those without submissions)
+    resetToAllIndicators(state) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { hasSubmission, submissionStatus, ...rest } = state.filters;
+      state.filters = rest;
     }
   },
   extraReducers: (builder) => {
@@ -344,6 +383,8 @@ export const {
   setSubmittedFilter,
   clearSubmissionFilters,
   toggleSubmissionFilter,
+  setSubmissionStatusFilter,
+  resetToAllIndicators,
 } = reportSlice.actions;
 
 export default reportSlice.reducer;
