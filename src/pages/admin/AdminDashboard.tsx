@@ -24,6 +24,8 @@ import {
   fetchUpcomingDeadlines,
   type ICalendarEvent,
 } from "../../store/slices/calendarSlice";
+import { getAllStrategicPlans } from "../../store/slices/strategicPlan/strategicPlanSlice";
+import type { IStrategicPlan } from "../../store/slices/strategicPlan/strategicPlanService";
 
 import type { AppDispatch, RootState } from "../../store/store";
 
@@ -87,10 +89,15 @@ const AdminDashboardPage = () => {
     isLoadingUpcoming: upLoad,
   } = useSelector((state: RootState) => state.calendar);
 
+  const { plans, loading: plansLoading } = useSelector(
+    (state: RootState) => state.strategicPlan
+  );
+
   // Data fetching
   useEffect(() => {
     dispatch(fetchAllAdminIndicators());
     dispatch(fetchUpcomingDeadlines({ days: 30 }));
+    dispatch(getAllStrategicPlans());
   }, [dispatch]);
 
   useEffect(() => {
@@ -99,7 +106,7 @@ const AdminDashboardPage = () => {
     dispatch(fetchCalendarEvents({ from, to }));
   }, [dispatch, calMonth, calYear]);
 
-  // Derived statistics (local, because dashboardSlice is ignored)
+  // Derived statistics
   const stats = useMemo(() => {
     const total = indicators.length;
     const assigned = indicators.filter((i) => i.status !== "Assigned").length;
@@ -112,6 +119,42 @@ const AdminDashboardPage = () => {
     const overdue = indicators.filter(isIndicatorOverdue).length;
     return { total, assigned, unassigned, pendingReview, approved, returnedForCorrection, overdue };
   }, [indicators]);
+
+  // ✅ Perspectives - uses activity.description and objective.title from the indicator
+  const perspectives = useMemo(() => {
+    if (!plans.length || !indicators.length) return [];
+
+    return plans.map((plan: IStrategicPlan) => {
+      let totalActivities = 0;
+      let assignedActivities = 0;
+      let totalWeight = 0;
+      let achievedWeight = 0;
+
+      plan.objectives?.forEach((obj) => {
+        obj.activities?.forEach((act) => {
+          totalActivities++;
+          // ✅ Find indicator by matching activity description or id
+          const indicator = indicators.find((ind) => 
+            ind.activity?.description === act.description || 
+            ind.objective?.title === obj.title
+          );
+          if (indicator && indicator.assigneeName && indicator.status !== "Assigned") {
+            assignedActivities++;
+            totalWeight += indicator.weight || 0;
+            achievedWeight += (indicator.progress || 0) * ((indicator.weight || 0) / 100);
+          }
+        });
+      });
+
+      const completionPercentage = totalWeight > 0 ? Math.round((achievedWeight / totalWeight) * 100) : 0;
+      return {
+        name: plan.perspective,
+        totalActivities,
+        assignedActivities,
+        completionPercentage,
+      };
+    });
+  }, [plans, indicators]);
 
   // Pending queue (only indicators that need admin action)
   const pendingQueue = useMemo(
@@ -162,7 +205,9 @@ const AdminDashboardPage = () => {
     setSelectedDay(null);
   }, [calMonth]);
 
-  if (iLoad && indicators.length === 0) {
+  const isLoading = iLoad && indicators.length === 0;
+
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-[#fcfcf7] flex flex-col items-center justify-center p-4">
         <Loader2 className="animate-spin text-[#1d3331] mb-4" size={40} />
@@ -311,14 +356,45 @@ const AdminDashboardPage = () => {
           </div>
         </div>
 
-        {/* Strategic Matrix (placeholder – replace with actual data source) */}
+        {/* ✅ Strategic Matrix - Now with real data */}
         <div className="lg:col-span-4">
           <h3 className="text-xl font-serif font-bold text-[#1d3331] mb-6">Strategic Matrix</h3>
-          <div className="py-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
-            <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-              Perspective data not available
-            </p>
-          </div>
+          {plansLoading ? (
+            <div className="flex items-center justify-center h-40">
+              <Loader2 size={20} className="animate-spin text-slate-300" />
+            </div>
+          ) : perspectives.length === 0 ? (
+            <div className="py-12 text-center border-2 border-dashed border-slate-100 rounded-2xl">
+              <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                No perspective data available
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {perspectives.map((p) => (
+                <div
+                  key={p.name}
+                  className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm group hover:shadow-md transition-all"
+                >
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-[11px] font-black uppercase text-[#1d3331]">{p.name}</h4>
+                    <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-full">
+                      {p.completionPercentage}%
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-bold mb-3 uppercase tracking-tighter">
+                    {p.assignedActivities} / {p.totalActivities} activities assigned
+                  </p>
+                  <div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-[#1d3331] h-full group-hover:bg-emerald-700 transition-all duration-500"
+                      style={{ width: `${p.completionPercentage}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

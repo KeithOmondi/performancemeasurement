@@ -43,68 +43,73 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-/* ─── EVIDENCE CELL – leaves blank when no submissions ── */
+/* ─── EVIDENCE CELL – Shows ALL quarters with labels ──────────────── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
-    return <span>&nbsp;</span>;
+    return <span className="text-slate-400 text-[10px] italic">No evidence</span>;
   }
 
+  // Sort submissions by year and quarter
+  const sortedSubmissions = [...submissions].sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    return a.quarter - b.quarter;
+  });
+
   // Filter out rejected submissions
-  const validSubmissions = submissions.filter(
+  const validSubmissions = sortedSubmissions.filter(
     (s) => s.reviewStatus !== 'Rejected' && s.reviewStatus !== 'Correction Needed'
   );
 
   if (validSubmissions.length === 0) {
-    return <span>&nbsp;</span>;
-  }
-
-  // Priority: Accepted > Verified > Partially Approved > Pending
-  const priorityOrder = ['Accepted', 'Verified', 'Partially Approved', 'Pending'];
-  let bestSubmission = null;
-  
-  for (const status of priorityOrder) {
-    const found = validSubmissions.find(s => s.reviewStatus === status);
-    if (found) {
-      bestSubmission = found;
-      break;
-    }
-  }
-  
-  if (!bestSubmission) {
-    bestSubmission = validSubmissions.reduce((latest, current) => {
-      return new Date(current.submittedAt) > new Date(latest.submittedAt) ? current : latest;
-    }, validSubmissions[0]);
-  }
-
-  const documentsWithDescriptions = bestSubmission.documents?.filter(
-    (doc) => doc.description?.trim()
-  ) || [];
-
-  const hasNotes = bestSubmission.notes?.trim();
-  const hasDocuments = documentsWithDescriptions.length > 0;
-
-  if (!hasNotes && !hasDocuments) {
-    return <span>&nbsp;</span>;
+    return <span className="text-slate-400 text-[10px] italic">No valid evidence</span>;
   }
 
   return (
-    <div className="space-y-3">
-      {hasNotes && (
-        <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
-          {bestSubmission.notes}
-        </p>
-      )}
-      
-      {hasDocuments && (
-        <ul className="space-y-1 pl-3 mt-1.5">
-          {documentsWithDescriptions.map((doc, idx) => (
-            <li key={idx} className="flex gap-2 text-[10px] text-slate-700">
-              <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
-              <span className="font-medium">{doc.description}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+      {validSubmissions.map((sub, idx) => {
+        const periodLabel = sub.quarter === 0 ? 'Annual' : `Q${sub.quarter}`;
+        const hasNotes = sub.notes?.trim();
+        const docsWithDesc = sub.documents?.filter(d => d.description?.trim()) || [];
+        const docsToShow = docsWithDesc.length > 0 ? docsWithDesc : sub.documents || [];
+
+        // Skip if no notes and no documents
+        if (!hasNotes && docsToShow.length === 0) return null;
+
+        return (
+          <div key={sub.submissionId || idx} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
+            {/* Quarter Header */}
+            <div className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              {periodLabel} {sub.year} · <span className={`${
+                sub.reviewStatus === 'Accepted' ? 'text-emerald-600' :
+                sub.reviewStatus === 'Verified' ? 'text-blue-600' :
+                sub.reviewStatus === 'Partially Approved' ? 'text-purple-600' :
+                'text-amber-600'
+              }`}>{sub.reviewStatus}</span>
+            </div>
+
+            {/* Notes */}
+            {hasNotes && (
+              <p className="text-slate-600 text-[10px] mb-1.5 pl-2 italic border-l-2 border-slate-200">
+                {sub.notes}
+              </p>
+            )}
+            
+            {/* Documents with descriptions */}
+            {docsToShow.length > 0 && (
+              <ul className="space-y-1 pl-2">
+                {docsToShow.map((doc, docIdx) => (
+                  <li key={docIdx} className="flex gap-2 text-[10px] text-slate-700">
+                    <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
+                    <span className="font-medium break-words">
+                      {doc.description?.trim() || doc.fileName || 'Document'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -282,6 +287,40 @@ const TablePerspectiveRows = ({
             {/* ── Explanatory Notes ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
+              
+              {/* Show submission summary */}
+              {indicator.submissions && indicator.submissions.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {[...indicator.submissions]
+                    .sort((a, b) => {
+                      if (a.year !== b.year) return a.year - b.year;
+                      return a.quarter - b.quarter;
+                    })
+                    .filter(s => s.reviewStatus !== 'Rejected' && s.reviewStatus !== 'Correction Needed')
+                    .map((sub, idx) => {
+                      const periodLabel = sub.quarter === 0 ? 'Annual' : `Q${sub.quarter}`;
+                      return (
+                        <div key={idx} className="text-[9px] text-slate-500">
+                          <span className="font-medium">{periodLabel} {sub.year}:</span>
+                          <span className={`ml-1 ${
+                            sub.reviewStatus === 'Accepted' ? 'text-emerald-600' :
+                            sub.reviewStatus === 'Verified' ? 'text-blue-600' :
+                            sub.reviewStatus === 'Partially Approved' ? 'text-purple-600' :
+                            'text-amber-600'
+                          }`}>
+                            {sub.reviewStatus}
+                          </span>
+                          {sub.documents && sub.documents.length > 0 && (
+                            <span className="ml-1 text-slate-400">
+                              ({sub.documents.length} doc{sub.documents.length !== 1 ? 's' : ''})
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+              
               {indicator.instructions && (
                 <p className="mt-1 text-[10px] text-slate-400 italic font-medium">
                   {indicator.instructions}
@@ -333,10 +372,7 @@ const AdminReports = () => {
     }
 
     if (viewMode === "submitted") {
-      // ✅ Show only indicators that have submissions with these statuses
-      // This will show: Completed, Partially Approved, and indicators with no submissions
       apiFilters.hasSubmission = "true";
-      // ✅ Filter for specific submission statuses
       apiFilters.submissionStatus = "Accepted,Verified,Partially Approved";
     }
 
@@ -348,7 +384,6 @@ const AdminReports = () => {
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
 
-  // ✅ Only re-fetch when filters change
   useEffect(() => {
     dispatch(fetchTrackerReport(buildFilters()));
   }, [dispatch, buildFilters]);
@@ -471,7 +506,7 @@ const AdminReports = () => {
           </button>
         </div>
         
-        {/* ✅ Show active filter count */}
+        {/* Show active filter count */}
         {viewMode === "submitted" && (
           <div className="flex items-center gap-2 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
             <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
