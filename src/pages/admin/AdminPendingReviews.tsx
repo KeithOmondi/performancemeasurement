@@ -16,17 +16,21 @@ import {
   Filter,
   X,
   Clock,
+  ArrowLeft,
+  AlertCircle,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchAllAdminIndicators,
+  fetchSentBackIndicators,
+  fetchReturnedIndicators,
   type IAdminIndicator,
   type ISubmissionsByPeriod,
 } from "../../store/slices/adminIndicatorSlice";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type FilterType = "all" | "quarterly" | "annual" | "resubmitted";
+type FilterType = "all" | "quarterly" | "annual" | "resubmitted" | "sentback" | "returned";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -104,12 +108,18 @@ const AdminPendingReviews = () => {
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
 
-  const { pendingAdminReview, isLoading } = useAppSelector(
-    (state) => state.adminIndicators
-  );
+  const { 
+    pendingAdminReview, 
+    sentBackIndicators,
+    returnedIndicators,
+    isLoading 
+  } = useAppSelector((state) => state.adminIndicators);
 
+  // ✅ Initial fetch - load all indicators and sent back/returned lists
   useEffect(() => {
     dispatch(fetchAllAdminIndicators({ status: "Awaiting Admin Approval" }));
+    dispatch(fetchSentBackIndicators());
+    dispatch(fetchReturnedIndicators());
   }, [dispatch]);
 
   const handleOpenDossier = useCallback(
@@ -129,19 +139,46 @@ const AdminPendingReviews = () => {
     [pendingAdminReview]
   );
 
-  // Counts derived from the already-filtered pool
+  // ✅ Combine all indicator sources for the main view
+  const allIndicators = useMemo(() => {
+    const combined = [...withDocuments];
+    
+    // Add sent back indicators if not already in the list
+    sentBackIndicators.forEach((ind) => {
+      if (!combined.some((i) => i.id === ind.id)) {
+        combined.push(ind);
+      }
+    });
+    
+    // Add returned indicators if not already in the list
+    returnedIndicators.forEach((ind) => {
+      if (!combined.some((i) => i.id === ind.id)) {
+        combined.push(ind);
+      }
+    });
+    
+    return combined;
+  }, [withDocuments, sentBackIndicators, returnedIndicators]);
+
+  // Counts derived from the combined pool
   const counts = useMemo(
     () => ({
-      all: withDocuments.length,
-      quarterly: withDocuments.filter((ind) => ind.reportingCycle === "Quarterly").length,
-      annual: withDocuments.filter((ind) => ind.reportingCycle === "Annual").length,
-      resubmitted: withDocuments.filter(hasResubmission).length,
+      all: allIndicators.length,
+      quarterly: allIndicators.filter((ind) => ind.reportingCycle === "Quarterly").length,
+      annual: allIndicators.filter((ind) => ind.reportingCycle === "Annual").length,
+      resubmitted: allIndicators.filter(hasResubmission).length,
+      sentback: sentBackIndicators.length,
+      returned: returnedIndicators.length,
     }),
-    [withDocuments]
+    [allIndicators, sentBackIndicators, returnedIndicators]
   );
 
   const filteredRecords = useMemo(() => {
-    return withDocuments.filter((ind) => {
+    // ✅ Check if indicator is in sent back or returned lists
+    const isSentBack = (id: string) => sentBackIndicators.some((i) => i.id === id);
+    const isReturned = (id: string) => returnedIndicators.some((i) => i.id === id);
+
+    return allIndicators.filter((ind) => {
       const matchesSearch =
         !searchTerm ||
         ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -151,13 +188,16 @@ const AdminPendingReviews = () => {
 
       if (!matchesSearch) return false;
 
+      // ✅ Apply filters including new ones
       if (activeFilter === "quarterly") return ind.reportingCycle === "Quarterly";
       if (activeFilter === "annual") return ind.reportingCycle === "Annual";
       if (activeFilter === "resubmitted") return hasResubmission(ind);
+      if (activeFilter === "sentback") return isSentBack(ind.id);
+      if (activeFilter === "returned") return isReturned(ind.id);
 
       return true;
     });
-  }, [withDocuments, searchTerm, activeFilter]);
+  }, [allIndicators, searchTerm, activeFilter, sentBackIndicators, returnedIndicators]);
 
   const clearFilters = () => {
     setSearchTerm("");
@@ -166,7 +206,7 @@ const AdminPendingReviews = () => {
 
   // ── Loading ─────────────────────────────────────────────────────────────
 
-  if (isLoading && pendingAdminReview.length === 0) {
+  if (isLoading && pendingAdminReview.length === 0 && sentBackIndicators.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] bg-[#fdfcfc]">
         <div className="relative mb-4">
@@ -191,14 +231,28 @@ const AdminPendingReviews = () => {
       {/* HEADER */}
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-2 flex-wrap">
             <h1 className="text-xl font-serif font-black text-[#1a3a32] tracking-tighter uppercase leading-none">
               Audit Queue
             </h1>
             <div className="flex items-center bg-[#1a3a32] text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
               <span className="w-2 h-2 bg-emerald-400 rounded-full mr-2 animate-pulse" />
-              {filteredRecords.length} PENDING VERIFICATION
+              {filteredRecords.length} PENDING
             </div>
+            {/* ✅ Show sent back count badge */}
+            {counts.sentback > 0 && (
+              <div className="flex items-center bg-amber-500 text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
+                <ArrowLeft size={10} className="mr-1.5" />
+                {counts.sentback} Sent Back
+              </div>
+            )}
+            {/* ✅ Show returned count badge */}
+            {counts.returned > 0 && (
+              <div className="flex items-center bg-rose-500 text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
+                <AlertCircle size={10} className="mr-1.5" />
+                {counts.returned} Returned
+              </div>
+            )}
           </div>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
             Registry Evidence Review & Frequency Verification
@@ -276,6 +330,32 @@ const AdminPendingReviews = () => {
             <History size={12} />
             Resubmitted ({counts.resubmitted})
           </button>
+
+          {/* ✅ NEW: Sent Back filter button */}
+          <button
+            onClick={() => setActiveFilter("sentback")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              activeFilter === "sentback"
+                ? "bg-amber-600 text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            <ArrowLeft size={12} />
+            Sent Back ({counts.sentback})
+          </button>
+
+          {/* ✅ NEW: Returned filter button */}
+          <button
+            onClick={() => setActiveFilter("returned")}
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+              activeFilter === "returned"
+                ? "bg-rose-600 text-white shadow-md"
+                : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
+            }`}
+          >
+            <AlertCircle size={12} />
+            Returned ({counts.returned})
+          </button>
         </div>
 
         {(activeFilter !== "all" || searchTerm) && (
@@ -298,7 +378,11 @@ const AdminPendingReviews = () => {
                 ? "bg-blue-500"
                 : activeFilter === "annual"
                 ? "bg-amber-500"
-                : "bg-amber-500"
+                : activeFilter === "resubmitted"
+                ? "bg-amber-500"
+                : activeFilter === "sentback"
+                ? "bg-amber-600"
+                : "bg-rose-500"
             }`}
           />
           <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">
@@ -307,7 +391,11 @@ const AdminPendingReviews = () => {
               ? "Quarterly"
               : activeFilter === "annual"
               ? "Annual"
-              : "Resubmitted"}{" "}
+              : activeFilter === "resubmitted"
+              ? "Resubmitted"
+              : activeFilter === "sentback"
+              ? "Sent Back by Super Admin"
+              : "Returned/Rejected"}{" "}
             submissions only
           </span>
         </div>
@@ -328,7 +416,6 @@ const AdminPendingReviews = () => {
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Performance
                 </th>
-                {/* NEW COLUMN: Submitted On */}
                 <th className="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
                   Submitted On
                 </th>
@@ -377,18 +464,41 @@ const AdminPendingReviews = () => {
                   const documentCount = getDocumentCount(indicator);
                   const documentNames = getDocumentNames(indicator);
                   const latestDocuments = latestPending?.documents ?? [];
+                  
+                  // ✅ Check if this indicator was sent back
+                  const isSentBack = sentBackIndicators.some((i) => i.id === indicator.id);
+                  // ✅ Check if this indicator was returned
+                  const isReturned = returnedIndicators.some((i) => i.id === indicator.id);
 
                   return (
                     <tr
                       key={indicator.id}
-                      className="group hover:bg-slate-50/80 transition-all"
+                      className={`group hover:bg-slate-50/80 transition-all ${
+                        isSentBack ? "bg-amber-50/30" : ""
+                      } ${isReturned ? "bg-rose-50/30" : ""}`}
                     >
                       {/* Submission Details */}
                       <td className="px-8 py-6">
                         <div className="flex flex-col gap-2">
-                          <span className="w-fit text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200">
-                            {indicator.perspective}
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="w-fit text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200">
+                              {indicator.perspective}
+                            </span>
+                            {/* ✅ Show sent back badge */}
+                            {isSentBack && (
+                              <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-amber-100 text-amber-700 border border-amber-200">
+                                <ArrowLeft size={8} />
+                                Sent Back
+                              </span>
+                            )}
+                            {/* ✅ Show returned badge */}
+                            {isReturned && (
+                              <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-rose-100 text-rose-700 border border-rose-200">
+                                <AlertCircle size={8} />
+                                Returned
+                              </span>
+                            )}
+                          </div>
                           <h3 className="text-[13.5px] font-black text-[#1a3a32] leading-tight max-w-sm">
                             {indicator.objective?.title || "Untitled Objective"}
                           </h3>
@@ -408,7 +518,7 @@ const AdminPendingReviews = () => {
                             </span>
                           </div>
                         </div>
-                       </td>
+                      </td>
 
                       {/* Cycle Type */}
                       <td className="px-6 py-6 text-center">
@@ -433,7 +543,7 @@ const AdminPendingReviews = () => {
                             </div>
                           )}
                         </div>
-                       </td>
+                      </td>
 
                       {/* Performance */}
                       <td className="px-6 py-6">
@@ -449,7 +559,10 @@ const AdminPendingReviews = () => {
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
                               className={`h-full transition-all duration-1000 ${
-                                isResub ? "bg-amber-500" : "bg-[#1a3a32]"
+                                isResub ? "bg-amber-500" : 
+                                isSentBack ? "bg-amber-400" :
+                                isReturned ? "bg-rose-400" :
+                                "bg-[#1a3a32]"
                               }`}
                               style={{ width: `${indicator.progress}%` }}
                             />
@@ -462,9 +575,9 @@ const AdminPendingReviews = () => {
                             </div>
                           )}
                         </div>
-                       </td>
+                      </td>
 
-                      {/* NEW CELL: Submitted On */}
+                      {/* Submitted On */}
                       <td className="px-6 py-6">
                         <div className="flex flex-col gap-1.5">
                           {submittedDate ? (
@@ -488,7 +601,7 @@ const AdminPendingReviews = () => {
                             <span className="text-[9px] text-slate-400 italic">—</span>
                           )}
                         </div>
-                       </td>
+                      </td>
 
                       {/* Documents */}
                       <td className="px-6 py-6">
@@ -533,11 +646,25 @@ const AdminPendingReviews = () => {
                               </div>
                             )}
                         </div>
-                       </td>
+                      </td>
 
                       {/* Status */}
                       <td className="px-6 py-6">
-                        {isResub ? (
+                        {isSentBack ? (
+                          <div className="flex items-center gap-2 text-amber-700 bg-amber-100 w-fit px-3 py-1 rounded-xl border border-amber-200">
+                            <ArrowLeft size={12} />
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              Sent Back
+                            </span>
+                          </div>
+                        ) : isReturned ? (
+                          <div className="flex items-center gap-2 text-rose-700 bg-rose-100 w-fit px-3 py-1 rounded-xl border border-rose-200">
+                            <AlertCircle size={12} />
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              Returned
+                            </span>
+                          </div>
+                        ) : isResub ? (
                           <div className="flex items-center gap-2 text-amber-600 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
                             <History size={12} className="animate-pulse" />
                             <span className="text-[9px] font-black uppercase tracking-widest">
@@ -552,7 +679,7 @@ const AdminPendingReviews = () => {
                             </span>
                           </div>
                         )}
-                       </td>
+                      </td>
 
                       {/* Action */}
                       <td className="px-8 py-6 text-right">
@@ -560,8 +687,12 @@ const AdminPendingReviews = () => {
                           onClick={() => handleOpenDossier(indicator.id)}
                           disabled={isOpening}
                           className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${
-                            isResub
+                            isSentBack
                               ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200"
+                              : isReturned
+                              ? "bg-rose-600 text-white hover:bg-rose-700 shadow-lg shadow-rose-200"
+                              : isResub
+                              ? "bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-200"
                               : "bg-[#1a3a32] text-white hover:bg-black shadow-lg shadow-emerald-900/10"
                           } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
@@ -577,13 +708,13 @@ const AdminPendingReviews = () => {
                             </>
                           )}
                         </button>
-                       </td>
+                      </td>
                     </tr>
                   );
                 })
               )}
             </tbody>
-           </table>
+          </table>
         </div>
       </div>
     </div>

@@ -20,10 +20,11 @@
      PATCH  /:id/reopen                reopenIndicator
      PATCH  /:id/assign                assignIndicator
      DELETE /:id/unassign              unassignIndicator
-     PATCH  /:id/reassign              reassignIndicator      // NEW
-     POST   /:id/add-users             addUsersToIndicator   // NEW
-     DELETE /:id/remove-users          removeUsersFromIndicator // NEW
+     PATCH  /:id/reassign              reassignIndicator
+     POST   /:id/add-users             addUsersToIndicator
+     DELETE /:id/remove-users          removeUsersFromIndicator
      GET    /:id/partial-approvals     getPartialApprovalsHistory
+     PATCH  /:id/send-back-to-admin    sendBackToAdmin       // NEW
 ───────────────────────────────────────────────────────────────────────────── */
 
 import {
@@ -46,6 +47,7 @@ import type {
   IReassignPayload,
   IAddUsersPayload,
   IRemoveUsersPayload,
+  ISendBackToAdminPayload,
 } from "../../types/Indicatortypes";
 
 /* ─── RE-EXPORT TYPES (so existing imports don't break) ─────────────────── */
@@ -64,6 +66,7 @@ export type {
   IReassignPayload,
   IAddUsersPayload,
   IRemoveUsersPayload,
+  ISendBackToAdminPayload,
   IAssignee,
   IndicatorStatus,
   ReviewAction,
@@ -150,10 +153,14 @@ const deriveCategories = (indicators: IIndicator[]) => {
       unassigned.push(ind);
     }
 
+    // ✅ Fix: Ensure submissions is an array before using .some()
+    const hasPendingSubmission = Array.isArray(ind.submissions) && 
+      ind.submissions.some((s) => s.reviewStatus === "Pending");
+
     if (
       ind.status === "Awaiting Admin Approval" ||
       ind.status === "Awaiting Super Admin" ||
-      ind.submissions?.some((s) => s.reviewStatus === "Pending")
+      hasPendingSubmission
     ) {
       review.push(ind);
     }
@@ -185,10 +192,14 @@ const upsertOne = (state: IndicatorState, updated: IIndicator) => {
   replaceIn(state.superAdminApprovedIndicators);
 
   if (state.selectedIndicator?.id === updated.id) {
-    // Preserve relations that are only loaded via fetchById
+    // ✅ Ensure submissions and reviewHistory are always arrays
     state.selectedIndicator = {
-      submissions: state.selectedIndicator.submissions,
-      reviewHistory: state.selectedIndicator.reviewHistory,
+      submissions: Array.isArray(state.selectedIndicator.submissions) 
+        ? state.selectedIndicator.submissions 
+        : [],
+      reviewHistory: Array.isArray(state.selectedIndicator.reviewHistory) 
+        ? state.selectedIndicator.reviewHistory 
+        : [],
       ...updated,
     };
   }
@@ -400,7 +411,7 @@ export const unassignIndicator = createAsyncThunk(
   }
 );
 
-// ── NEW: Multi-Assignee Operations ──────────────────────────────────────
+// ── Multi-Assignee Operations ──────────────────────────────────────────────
 
 export const reassignIndicator = createAsyncThunk(
   "indicators/reassign",
@@ -452,6 +463,29 @@ export const removeUsersFromIndicator = createAsyncThunk(
       if (arg.refetchAfter !== false) {
         dispatch(fetchIndicatorById(arg.id));
       }
+      return res.data.data as IIndicator;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+// ── Send Back to Admin ──────────────────────────────────────────────────────
+
+export const sendBackToAdmin = createAsyncThunk(
+  "indicators/sendBackToAdmin",
+  async (
+    arg: ISendBackToAdminPayload,
+    { rejectWithValue, dispatch }
+  ) => {
+    try {
+      const res = await apiPrivate.patch(`/indicators/${arg.id}/send-back-to-admin`, {
+        reason: arg.reason,
+      });
+      dispatch(fetchIndicatorCounts());
+      dispatch(fetchIndicators());
+      // Also refresh the super admin approved list
+      dispatch(fetchSuperAdminApprovedIndicators(false));
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -854,7 +888,7 @@ const indicatorSlice = createSlice({
         state.error = payload as string;
       });
 
-    /* ── NEW: reassignIndicator ── */
+    /* ── reassignIndicator ── */
     builder
       .addCase(reassignIndicator.pending, (state) => {
         state.actionLoading = true;
@@ -869,7 +903,7 @@ const indicatorSlice = createSlice({
         state.error = payload as string;
       });
 
-    /* ── NEW: addUsersToIndicator ── */
+    /* ── addUsersToIndicator ── */
     builder
       .addCase(addUsersToIndicator.pending, (state) => {
         state.actionLoading = true;
@@ -884,7 +918,7 @@ const indicatorSlice = createSlice({
         state.error = payload as string;
       });
 
-    /* ── NEW: removeUsersFromIndicator ── */
+    /* ── removeUsersFromIndicator ── */
     builder
       .addCase(removeUsersFromIndicator.pending, (state) => {
         state.actionLoading = true;
@@ -895,6 +929,29 @@ const indicatorSlice = createSlice({
         upsertOne(state, payload);
       })
       .addCase(removeUsersFromIndicator.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── sendBackToAdmin ── */
+    builder
+      .addCase(sendBackToAdmin.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(sendBackToAdmin.fulfilled, (state, { payload }) => {
+        state.actionLoading = false;
+        upsertOne(state, payload);
+        // Remove from super admin approved list if it was there
+        state.superAdminApprovedIndicators = state.superAdminApprovedIndicators.filter(
+          (ind) => ind.id !== payload.id
+        );
+        // Remove from review indicators if it was there
+        state.reviewIndicators = state.reviewIndicators.filter(
+          (ind) => ind.id !== payload.id
+        );
+      })
+      .addCase(sendBackToAdmin.rejected, (state, { payload }) => {
         state.actionLoading = false;
         state.error = payload as string;
       });

@@ -138,10 +138,12 @@ const UserTaskIdPage = () => {
   const [updatingDescription, setUpdatingDescription] = useState(false);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [resubmittingDocs, setResubmittingDocs] = useState<Record<string, boolean>>({});
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date>(new Date());
 
   const lastSubmissionIdRef = useRef<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isRefreshingRef = useRef(false);
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Store ─────────────────────────────────────────────────────────────────
   const currentIndicator = useAppSelector((s) => s.userIndicators.currentIndicator);
@@ -175,21 +177,39 @@ const UserTaskIdPage = () => {
     });
   };
 
-  const refreshData = useCallback(async () => {
+  // ── Refresh Data ──────────────────────────────────────────────────────────
+  const refreshData = useCallback(async (showRefreshToast = false) => {
     if (!id || isRefreshingRef.current) return;
     isRefreshingRef.current = true;
     try {
-      await dispatch(fetchIndicatorDetails(id));
+      const result = await dispatch(fetchIndicatorDetails(id)).unwrap();
+      setLastRefreshTime(new Date());
+      
+      // Check if any documents were deleted by comparing lengths
+      // This is a simple way to detect changes
+      if (result) {
+        // You could add additional logic here to detect what changed
+        if (showRefreshToast) {
+          showToast("Data refreshed successfully", "success", 2000);
+        }
+      }
     } catch (err) {
       console.error("Refresh failed:", err);
+      if (showRefreshToast) {
+        showToast("Failed to refresh data", "error", 2000);
+      }
     } finally {
       isRefreshingRef.current = false;
     }
-  }, [id, dispatch]);
+  }, [id, dispatch, showToast]);
 
   // ── Effects ───────────────────────────────────────────────────────────────
+  
+  // Initial load
   useEffect(() => {
-    if (id) dispatch(fetchIndicatorDetails(id));
+    if (id) {
+      dispatch(fetchIndicatorDetails(id));
+    }
     return () => {
       dispatch(clearIndicatorError());
       dispatch(clearLastSubmissionId());
@@ -197,11 +217,30 @@ const UserTaskIdPage = () => {
     };
   }, [id, dispatch]);
 
+  // Set up polling for real-time updates (every 30 seconds)
+  useEffect(() => {
+    if (id) {
+      refreshIntervalRef.current = setInterval(() => {
+        // Silent refresh - don't show toast for auto-refresh
+        refreshData(false);
+      }, 30000); // 30 seconds
+    }
+
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
+    };
+  }, [id, refreshData]);
+
+  // Handle successful actions
   useEffect(() => {
     if (lastActionSuccess) {
       showToast(lastActionSuccess, "success", 4000);
       dispatch(clearLastActionSuccess());
-      refreshData();
+      // Refresh data after any successful action
+      refreshData(false);
     }
   }, [lastActionSuccess, dispatch, showToast, refreshData]);
 
@@ -214,11 +253,17 @@ const UserTaskIdPage = () => {
     ) {
       lastSubmissionIdRef.current = lastSubmissionId;
       showToast("Filing submitted successfully! Awaiting admin review.", "success", 5000);
-      refreshData();
+      refreshData(false);
     }
   }, [lastSubmissionId, uploading, error, showToast, refreshData]);
 
-  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+  useEffect(() => () => { 
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (error) {
@@ -238,7 +283,7 @@ const UserTaskIdPage = () => {
   const hasAccepted = currentIndicator ? hasAcceptedSubmission(currentIndicator) : false;
   const acceptedSubmission = currentIndicator ? getAcceptedSubmissionForCurrentQuarter(currentIndicator) : undefined;
 
-  // ── Memos — depend on currentIndicator only, no refreshTrigger needed ────
+  // ── Memos — depend on currentIndicator only ──────────────────────────────
   const allSubmissions = useMemo<ISubmissionUI[]>(
     () => (currentIndicator ? flattenSubmissions(currentIndicator) : []),
     [currentIndicator],
@@ -284,14 +329,18 @@ const UserTaskIdPage = () => {
       }));
   }, [activeSub]);
 
-  // Active docs (all non-rejected and non-resubmitted docs)
+  // ✅ FIXED: Active docs - filter out Deleted, Rejected, and Resubmitted
   const activeDocs = useMemo(
     () =>
       allSubmissions
         .filter((sub) => sub.reviewStatus !== "Rejected")
         .flatMap((sub) =>
           (sub.documents ?? [])
-            .filter((d: IDocumentUI) => d.status !== "Rejected" && d.status !== "Resubmitted")
+            .filter((d: IDocumentUI) => 
+              d.status !== "Rejected" && 
+              d.status !== "Resubmitted" &&
+              d.status !== "Deleted" // ✅ Filter out deleted documents
+            )
             .map((d) => ({
               doc: d,
               quarterLabel: sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`,
@@ -328,13 +377,13 @@ const UserTaskIdPage = () => {
   }, [uploading]);
 
   const handleOpenModal = useCallback(async () => {
-    if (id) await refreshData();
+    if (id) await refreshData(false);
     setIsModalOpen(true);
   }, [id, refreshData]);
 
   // ── Description edit handlers ─────────────────────────────────────────────
   const canEditDescription = (docStatus: string | undefined): boolean => {
-    return docStatus !== "Accepted" && docStatus !== "Approved";
+    return docStatus !== "Accepted" && docStatus !== "Approved" && docStatus !== "Deleted";
   };
 
   const handleStartEdit = (doc: IDocumentUI) => {
@@ -363,31 +412,20 @@ const UserTaskIdPage = () => {
       showToast("Document description updated successfully.", "success");
       setEditingDocId(null);
       setEditingDescription("");
-      await refreshData();
+      await refreshData(false);
     } catch (err) {
       console.error("Failed to update description:", err);
       showToast(
         err instanceof Error ? err.message : "Failed to update description. Please try again.",
         "error",
       );
-      await refreshData();
+      await refreshData(false);
     } finally {
       setUpdatingDescription(false);
     }
   };
 
-  // ── Delete document handler ───────────────────────────────────────────────
-  const canDeleteDocument = (
-    docStatus: string | undefined,
-    submissionReviewStatus?: string,
-  ): boolean => {
-    if (docStatus === "Rejected") return true;
-    if (docStatus === "Resubmitted") return false; // Can't delete resubmitted docs
-    if (submissionReviewStatus === "Pending") return true;
-    if (docStatus === "Additional" && submissionReviewStatus === "Accepted") return true;
-    return false;
-  };
-
+  // ── Delete document handler ──────────────────────────────────────────────
   const getDeleteConfirmMessage = (doc: IDocumentUI, submission: ISubmissionUI): string => {
     if (submission.reviewStatus === "Pending")
       return "Are you sure you want to delete this document from your pending submission? This action cannot be undone.";
@@ -395,28 +433,32 @@ const UserTaskIdPage = () => {
       return "Are you sure you want to delete this rejected document? This action cannot be undone.";
     if (doc.status === "Additional" && submission.reviewStatus === "Accepted")
       return "Are you sure you want to delete this additional document from your approved submission? This action cannot be undone.";
+    if (doc.status === "Approved")
+      return "Are you sure you want to delete this approved document? This will remove it from the submission.";
+    if (doc.status === "Deleted")
+      return "This document has already been deleted.";
     return "Are you sure you want to delete this document? This action cannot be undone.";
   };
 
+  // ✅ FIXED: Improved delete handler with proper refresh
   const handleDeleteDocument = async (doc: IDocumentUI, submission: ISubmissionUI) => {
     if (!id) return;
-
-    const isPendingSubmission = submission.reviewStatus === "Pending";
-    const isRejectedDocument = doc.status === "Rejected";
-    const isAdditionalOnAccepted = doc.status === "Additional" && submission.reviewStatus === "Accepted";
-
-    if (!isPendingSubmission && !isRejectedDocument && !isAdditionalOnAccepted) {
-      showToast(
-        "This document cannot be deleted. Only rejected documents, documents from pending submissions, or additional documents on approved submissions can be deleted.",
-        "error",
-      );
+    
+    // Don't allow deleting already deleted documents
+    if (doc.status === "Deleted") {
+      showToast("This document has already been deleted.", "error", 3000);
       return;
     }
+
+    const isPendingSubmission = submission.reviewStatus === "Pending";
+    const isAdditionalOnAccepted = doc.status === "Additional" && submission.reviewStatus === "Accepted";
 
     if (!window.confirm(getDeleteConfirmMessage(doc, submission))) return;
 
     setDeletingDocId(doc.id);
     try {
+      // If the submission is pending or it's an additional document on an accepted submission,
+      // use the deletePendingDocument endpoint
       if (isPendingSubmission || isAdditionalOnAccepted) {
         await dispatch(deletePendingDocument({
           indicatorId: id,
@@ -425,16 +467,32 @@ const UserTaskIdPage = () => {
         })).unwrap();
         showToast("Document removed successfully.", "success");
       } else {
+        // For all other cases, use the regular deleteDocument endpoint
         await dispatch(deleteDocument(doc.id)).unwrap();
-        showToast("Rejected document deleted successfully.", "success");
+        showToast("Document deleted successfully.", "success");
       }
-      await refreshData();
+      
+      // ✅ Force multiple refreshes to ensure consistency
+      await refreshData(false);
+      
+      // ✅ Small delay and refresh again to catch any backend processing
+      setTimeout(() => {
+        refreshData(false);
+      }, 500);
+      
+      // ✅ Final refresh after a bit longer
+      setTimeout(() => {
+        refreshData(false);
+      }, 1500);
+      
     } catch (err) {
       console.error("Failed to delete document:", err);
       showToast(
         err instanceof Error ? err.message : "Failed to delete document. Please try again.",
         "error",
       );
+      // Refresh to restore consistency if deletion failed
+      await refreshData(false);
     } finally {
       setDeletingDocId(null);
     }
@@ -472,7 +530,7 @@ const UserTaskIdPage = () => {
         result?.message || `Document "${doc.fileName || 'Evidence'}" resubmitted successfully.`,
         "success"
       );
-      await refreshData();
+      await refreshData(false);
     } catch (err) {
       console.error("Failed to resubmit document:", err);
       showToast(
@@ -488,7 +546,7 @@ const UserTaskIdPage = () => {
   const handleModalClose = useCallback(async () => {
     setIsModalOpen(false);
     setTimeout(() => {
-      refreshData();
+      refreshData(false);
     }, 100);
   }, [refreshData]);
 
@@ -512,7 +570,7 @@ const UserTaskIdPage = () => {
         }));
       }
       
-      await refreshData();
+      await refreshData(false);
       
       setTimeout(() => {
         setIsModalOpen(false);
@@ -560,6 +618,23 @@ const UserTaskIdPage = () => {
           </button>
 
           <div className="flex items-center gap-3 flex-wrap">
+            {/* ✅ Manual Refresh Button */}
+            <button
+              onClick={() => refreshData(true)}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">
+                Refresh
+              </span>
+            </button>
+
+            {/* Last refresh time indicator */}
+            <span className="text-[8px] text-gray-400">
+              Updated: {lastRefreshTime.toLocaleTimeString()}
+            </span>
+
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-gray-100 shadow-sm">
               <Calendar size={12} className="text-[#c2a336]" />
               <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
@@ -591,7 +666,7 @@ const UserTaskIdPage = () => {
                 hasAccepted && currentQuarterStatus === "Accepted"
                   ? "bg-emerald-600 hover:bg-emerald-700"
                   : hasRejectedDocs
-                  ? "bg-rose-600 hover:bg-rose-700 animate-pulse" // 👈 Highlight if there are rejected docs
+                  ? "bg-rose-600 hover:bg-rose-700 animate-pulse"
                   : "bg-[#1a3a32] hover:bg-[#2a4a42]"
               } disabled:bg-gray-200 disabled:cursor-not-allowed`}
             >
@@ -926,6 +1001,9 @@ const UserTaskIdPage = () => {
           <div className="flex items-center justify-between">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] flex items-center gap-2 text-[#1a3a32]">
               <FileText size={16} className="text-[#c2a336]" /> Document Registry
+              <span className="ml-2 text-[8px] font-normal text-gray-400">
+                ({activeDocs.length} active)
+              </span>
             </h3>
             {editingDocId && (
               <p className="text-[8px] text-gray-400 italic">Editing description…</p>
@@ -945,7 +1023,7 @@ const UserTaskIdPage = () => {
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Active/Approved Documents */}
+              {/* Active/Approved Documents - Deleted are filtered out */}
               {activeDocs.map(({ doc, quarterLabel, year, submission }) => {
                 const resolvedName = doc.fileName ?? "UNTITLED_EVIDENCE";
                 const submissionReviewStatus = submission.reviewStatus;
@@ -972,7 +1050,6 @@ const UserTaskIdPage = () => {
                 }
 
                 const canEdit = canEditDescription(doc.status);
-                const canDelete = canDeleteDocument(doc.status, submissionReviewStatus);
                 const isEditing = editingDocId === doc.id;
                 const isDeleting = deletingDocId === doc.id;
 
@@ -1017,11 +1094,13 @@ const UserTaskIdPage = () => {
                             <Edit2 size={14} />
                           </button>
                         )}
-                        {canDelete && !isEditing && (
+                        {/* ✅ Delete button - always visible for all documents except Deleted */}
+                        {doc.status !== "Deleted" && !isEditing && (
                           <button
                             onClick={() => handleDeleteDocument(doc, submission)}
                             className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                             disabled={isDeleting || actionLoading}
+                            title="Delete this document"
                           >
                             {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                           </button>

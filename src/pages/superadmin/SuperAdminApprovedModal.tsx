@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -10,9 +10,17 @@ import {
   UserCheck,
   Calendar,
   ArrowRight,
+  ArrowLeft,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
-import { fetchIndicatorById, clearSelectedIndicator } from "../../store/slices/indicatorSlice";
+import {
+  fetchIndicatorById,
+  clearSelectedIndicator,
+  sendBackToAdmin,
+} from "../../store/slices/indicatorSlice";
+import { toast } from "react-hot-toast";
 
 interface SuperAdminApprovedModalProps {
   indicatorId: string;
@@ -21,7 +29,9 @@ interface SuperAdminApprovedModalProps {
 
 const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedModalProps) => {
   const dispatch = useAppDispatch();
-  const { selectedIndicator, detailLoading } = useAppSelector((state) => state.indicators);
+  const { selectedIndicator, detailLoading, actionLoading } = useAppSelector((state) => state.indicators);
+  const [sendingBack, setSendingBack] = useState(false);
+  const [sendBackReason, setSendBackReason] = useState("");
 
   useEffect(() => {
     if (indicatorId) {
@@ -41,6 +51,31 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
   }, []);
 
   const getYearFromDate = (dateStr: string) => new Date(dateStr).getFullYear();
+
+  const handleSendBackToAdmin = async () => {
+    if (!window.confirm(
+      "This will send this indicator back to the admin queue for review. Continue?"
+    )) {
+      return;
+    }
+    
+    setSendingBack(true);
+    try {
+      await dispatch(sendBackToAdmin({ 
+        id: indicatorId, 
+        reason: sendBackReason.trim() || "Sent back to admin for verification" 
+      })).unwrap();
+      toast.success("Indicator sent back to admin queue");
+      // Refresh the indicator data
+      await dispatch(fetchIndicatorById(indicatorId));
+      // Close the modal after a short delay
+      setTimeout(() => onClose(), 1500);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to send back to admin");
+    } finally {
+      setSendingBack(false);
+    }
+  };
 
   const modalContent = (
     <div
@@ -191,6 +226,45 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                   </div>
                 </div>
               </div>
+
+              {/* ✅ Send Back to Admin - For indicators awaiting admin approval */}
+              {selectedIndicator.status === "Awaiting Admin Approval" && (
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-5">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle size={20} className="text-amber-500 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-bold text-amber-700">
+                        Waiting for Admin Review
+                      </p>
+                      <p className="text-xs text-amber-600 mt-1">
+                        This indicator was reopened or sent back and needs admin verification before Super Admin review.
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        <textarea
+                          value={sendBackReason}
+                          onChange={(e) => setSendBackReason(e.target.value)}
+                          placeholder="Optional: Add a reason for sending back to admin..."
+                          className="w-full resize-none rounded-lg border border-amber-200 text-xs p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white"
+                          rows={2}
+                          disabled={sendingBack}
+                        />
+                        <button
+                          onClick={handleSendBackToAdmin}
+                          disabled={sendingBack || actionLoading}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-60"
+                        >
+                          {sendingBack ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <ArrowLeft size={16} />
+                          )}
+                          Send Back to Admin Queue
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Submissions Table (using only existing fields) */}
               {selectedIndicator.submissions && selectedIndicator.submissions.length > 0 && (

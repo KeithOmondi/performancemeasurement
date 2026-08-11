@@ -13,7 +13,8 @@ export type IndicatorStatus =
   | "Awaiting Super Admin"
   | "Rejected by Super Admin"
   | "Completed"
-  | "Unassigned";
+  | "Unassigned"
+  | "Sent Back to Admin"; // ✅ Add this new status
 
 export type ReviewAction =
   | "Submitted"
@@ -28,7 +29,8 @@ export type ReviewAction =
   | "Document Description Updated"
   | "Reassigned"
   | "Users Added"
-  | "Users Removed";
+  | "Users Removed"
+  | "Sent Back to Admin"; // ✅ Add this new review action
 
 export type ReviewerRole = "user" | "admin" | "superadmin";
 
@@ -269,4 +271,11 @@ export interface IUpdateIndicatorPayload {
   deadline?: string;
   instructions?: string;
   reportingCycle?: ReportingCycle;
+}
+
+/* ─── NEW: Send Back to Admin Payload ───────────────────────────────────── */
+
+export interface ISendBackToAdminPayload {
+  id: string;
+  reason?: string;
 }

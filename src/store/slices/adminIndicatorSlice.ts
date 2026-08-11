@@ -88,6 +88,7 @@ export interface IQuarterStatus {
   isPartial: boolean;
   isPending: boolean;
   isRejected: boolean;
+  isSentBack?: boolean;
   documents: IDocument[];
 }
 
@@ -146,6 +147,8 @@ interface IAdminIndicatorState {
   pendingAdminReview: IAdminIndicator[];
   resubmittedWork: IAdminIndicator[];
   approvedIndicators: IAdminIndicator[];
+  sentBackIndicators: IAdminIndicator[];    // ✅ NEW
+  returnedIndicators: IAdminIndicator[];    // ✅ NEW
   selectedIndicator: IAdminIndicator | null;
   quarterStatuses: IQuarterStatus[];
   isLoading: boolean;
@@ -159,6 +162,8 @@ const initialState: IAdminIndicatorState = {
   pendingAdminReview: [],
   resubmittedWork: [],
   approvedIndicators: [],
+  sentBackIndicators: [],     // ✅ NEW
+  returnedIndicators: [],     // ✅ NEW
   selectedIndicator: null,
   quarterStatuses: [],
   isLoading: false,
@@ -266,7 +271,6 @@ export const getQuarterStatusSummary = (
       year: sub.year,
       achievedValue: sub.achievedValue || 0,
       reviewStatus: sub.reviewStatus,
-      // ✅ Use allApproved to determine if complete
       isComplete: sub.reviewStatus === "Accepted" || sub.reviewStatus === "Verified" || allApproved,
       isPartial: sub.reviewStatus === "Partially Approved",
       isPending: sub.reviewStatus === "Pending" || hasPending,
@@ -275,6 +279,7 @@ export const getQuarterStatusSummary = (
     };
   });
 };
+
 // ─── Queue Refresh ───────────────────────────────────────────────────────────
 
 const refreshQueues = (state: IAdminIndicatorState) => {
@@ -364,6 +369,38 @@ export const fetchResubmittedIndicators = createAsyncThunk<
     return res.data?.data ?? [];
   } catch (error) {
     return rejectWithValue(extractError(error, "Failed to load resubmissions"));
+  }
+});
+
+// ✅ NEW: Fetch indicators sent back by super admin
+export const fetchSentBackIndicators = createAsyncThunk<
+  IAdminIndicator[],
+  void,
+  { rejectValue: string }
+>("adminIndicators/fetchSentBack", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<{ data: IAdminIndicator[] }>(
+      "/admin/sent-back"
+    );
+    return res.data?.data ?? [];
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Failed to load sent back indicators"));
+  }
+});
+
+// ✅ NEW: Fetch returned/rejected indicators
+export const fetchReturnedIndicators = createAsyncThunk<
+  IAdminIndicator[],
+  void,
+  { rejectValue: string }
+>("adminIndicators/fetchReturned", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<{ data: IAdminIndicator[] }>(
+      "/admin/returned"
+    );
+    return res.data?.data ?? [];
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Failed to load returned indicators"));
   }
 });
 
@@ -601,6 +638,38 @@ const adminIndicatorSlice = createSlice({
         refreshQueues(state);
       })
       .addCase(fetchResubmittedIndicators.rejected, setRejected("isLoading"))
+
+      // ✅ NEW: fetchSentBackIndicators
+      .addCase(fetchSentBackIndicators.pending, setPending("isLoading"))
+      .addCase(fetchSentBackIndicators.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.sentBackIndicators = action.payload;
+        // Also add to allAssignments if not already there
+        action.payload.forEach((updated) => {
+          const exists = state.allAssignments.some((i) => i.id === updated.id);
+          if (!exists) {
+            state.allAssignments.push(updated);
+          }
+        });
+        refreshQueues(state);
+      })
+      .addCase(fetchSentBackIndicators.rejected, setRejected("isLoading"))
+
+      // ✅ NEW: fetchReturnedIndicators
+      .addCase(fetchReturnedIndicators.pending, setPending("isLoading"))
+      .addCase(fetchReturnedIndicators.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.returnedIndicators = action.payload;
+        // Also add to allAssignments if not already there
+        action.payload.forEach((updated) => {
+          const exists = state.allAssignments.some((i) => i.id === updated.id);
+          if (!exists) {
+            state.allAssignments.push(updated);
+          }
+        });
+        refreshQueues(state);
+      })
+      .addCase(fetchReturnedIndicators.rejected, setRejected("isLoading"))
 
       // getIndicatorByIdAdmin
       .addCase(getIndicatorByIdAdmin.pending, setPending("isLoading"))

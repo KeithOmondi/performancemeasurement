@@ -29,7 +29,6 @@ interface EnhancedIndicator extends IIndicator {
   submissionId?: string;
   approvedAt?: string;
   approvedValue?: number;
-  hasVerifiedSubmission: boolean;
 }
 
 const SuperAdminApprovals = () => {
@@ -44,9 +43,6 @@ const SuperAdminApprovals = () => {
     dispatch(fetchIndicators());
   }, [dispatch]);
 
-  // ✅ Move Date.now() to a useEffect and store it in state
-  const [now] = useState(() => Date.now());
-
   const approvalsList = useMemo<EnhancedIndicator[]>(() => {
     const result: EnhancedIndicator[] = [];
 
@@ -56,12 +52,8 @@ const SuperAdminApprovals = () => {
       );
       const isCertified = !!superApproval;
 
-      const hasVerifiedSubmission = ind.submissions?.some(
-        (s) => s.reviewStatus === "Verified" && s.isReviewed === true
-      ) ?? false;
-
       const isAwaiting = ind.status === "Awaiting Super Admin";
-      if (!hasVerifiedSubmission && !isAwaiting && !isCertified) return;
+      if (!isAwaiting && !isCertified) return;
 
       const adminReviewEvent = ind.reviewHistory?.find(
         (h) => h.action === "Verified" && h.reviewerRole === "admin"
@@ -74,42 +66,24 @@ const SuperAdminApprovals = () => {
         (s) => s.reviewStatus === "Accepted"
       );
 
-      // Calculate waiting days using the stored `now` value
-      const verifiedAt = adminReviewEvent?.at || verifiedSubmission?.submittedAt;
-      let waitingDays = 0;
-      if (verifiedAt) {
-        waitingDays = Math.floor((now - new Date(verifiedAt).getTime()) / (1000 * 60 * 60 * 24));
-      }
-
       result.push({
         ...ind,
         isCertified,
-        hasVerifiedSubmission,
         verifiedByAdmin: adminReviewEvent?.reviewedByName || (verifiedSubmission?.adminComment ? "Admin" : undefined),
-        verifiedAt: verifiedAt,
+        verifiedAt: adminReviewEvent?.at || verifiedSubmission?.submittedAt,
         adminComment: verifiedSubmission?.adminComment,
         submittedValue: verifiedSubmission?.achievedValue,
         submissionId: verifiedSubmission?.id,
         approvedAt: superApproval?.at,
         approvedValue: approvedSubmission?.achievedValue,
-        // Add waitingDays as a property for sorting/filtering
-        _waitingDays: waitingDays,
-      } as EnhancedIndicator & { _waitingDays: number });
+      });
     });
 
-    // Sort: Pending first (hasVerifiedSubmission), then certified, then by waiting days
     return result.sort((a, b) => {
-      // Show pending (hasVerifiedSubmission) first
-      if (a.hasVerifiedSubmission && !b.hasVerifiedSubmission) return -1;
-      if (!a.hasVerifiedSubmission && b.hasVerifiedSubmission) return 1;
-      // Then show certified
       if (a.isCertified !== b.isCertified) return a.isCertified ? 1 : -1;
-      // Then by waiting days (longest waiting first)
-      const aDays = (a as EnhancedIndicator & { _waitingDays: number })._waitingDays || 0;
-      const bDays = (b as EnhancedIndicator & { _waitingDays: number })._waitingDays || 0;
-      return bDays - aDays;
+      return new Date(b.verifiedAt || "").getTime() - new Date(a.verifiedAt || "").getTime();
     });
-  }, [indicators, now]);
+  }, [indicators]);
 
   const filteredList = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -127,12 +101,6 @@ const SuperAdminApprovals = () => {
     });
   }, [approvalsList, searchTerm, filterCycle]);
 
-  // ✅ Helper function to calculate waiting days in render
-  const getWaitingDays = (verifiedAt?: string) => {
-    if (!verifiedAt) return 0;
-    return Math.floor((now - new Date(verifiedAt).getTime()) / (1000 * 60 * 60 * 24));
-  };
-
   const formatDateTime = (dateStr?: string) => {
     if (!dateStr) return "N/A";
     const date = new Date(dateStr);
@@ -149,6 +117,7 @@ const SuperAdminApprovals = () => {
 
   const handleCloseModal = () => {
     setSelectedIndicatorId(null);
+    // Refresh the list after modal closes
     dispatch(fetchIndicators());
   };
 
@@ -163,7 +132,7 @@ const SuperAdminApprovals = () => {
     );
   }
 
-  const pendingCount = approvalsList.filter((i) => i.hasVerifiedSubmission && !i.isCertified).length;
+  const pendingCount = approvalsList.filter((i) => !i.isCertified).length;
   const certifiedCount = approvalsList.filter((i) => i.isCertified).length;
 
   return (
@@ -239,21 +208,6 @@ const SuperAdminApprovals = () => {
               Annual ({approvalsList.filter((i) => i.reportingCycle === "Annual").length})
             </button>
           </div>
-
-          {/* Priority Warning for old submissions */}
-          {pendingCount > 0 && (
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-              <div className="flex items-center gap-2 text-amber-700">
-                <AlertCircle size={14} />
-                <span className="text-[9px] font-bold uppercase tracking-wider">
-                  {pendingCount} submission(s) awaiting your review
-                </span>
-                <span className="text-[8px] text-amber-600 ml-auto">
-                  Check the oldest submissions first
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Content */}
@@ -296,7 +250,8 @@ const SuperAdminApprovals = () => {
                 ? indicator.approvedValue ?? indicator.submittedValue ?? 0
                 : indicator.submittedValue ?? latestSubmission?.achievedValue ?? 0;
               
-              const waitingDays = getWaitingDays(indicator.verifiedAt);
+              const isFinalQuarter = !isAnnual && indicator.activeQuarter === 4;
+              const willComplete = isAnnual || isFinalQuarter;
 
               return (
                 <div
@@ -304,13 +259,7 @@ const SuperAdminApprovals = () => {
                   className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden hover:shadow-lg ${
                     indicator.isCertified
                       ? "border-emerald-200 bg-emerald-50/10"
-                      : indicator.hasVerifiedSubmission && !indicator.isCertified
-                      ? waitingDays > 60
-                        ? "border-red-300 bg-red-50/10"
-                        : waitingDays > 30
-                        ? "border-amber-300 bg-amber-50/10"
-                        : "border-emerald-100"
-                      : "border-slate-200"
+                      : "border-emerald-100"
                   }`}
                 >
                   <div className="p-6">
@@ -335,29 +284,10 @@ const SuperAdminApprovals = () => {
                               <Award size={10} />
                               Final Certified
                             </span>
-                          ) : indicator.hasVerifiedSubmission ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-blue-100 text-blue-700 border border-blue-200">
-                              <CheckCircle size={10} />
-                              Verified by Admin
-                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
-                              <Clock size={10} />
-                              Awaiting Admin
-                            </span>
-                          )}
-
-                          {/* Waiting time badge */}
-                          {indicator.hasVerifiedSubmission && !indicator.isCertified && waitingDays > 0 && (
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${
-                              waitingDays > 60
-                                ? "bg-red-100 text-red-700 border border-red-200"
-                                : waitingDays > 30
-                                ? "bg-amber-100 text-amber-700 border border-amber-200"
-                                : "bg-slate-100 text-slate-700 border border-slate-200"
-                            }`}>
-                              <Clock size={10} />
-                              {waitingDays} days waiting
+                              <CheckCircle size={10} />
+                              Verified by Admin
                             </span>
                           )}
 
@@ -365,6 +295,20 @@ const SuperAdminApprovals = () => {
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
                               <Clock size={10} />
                               Resubmission #{resubmissionCount}
+                            </span>
+                          )}
+
+                          {!indicator.isCertified && !willComplete && indicator.reportingCycle === "Quarterly" && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                              <AlertCircle size={10} />
+                              Q{indicator.activeQuarter} of 4
+                            </span>
+                          )}
+
+                          {!indicator.isCertified && willComplete && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
+                              <CheckCircle size={10} />
+                              Final Quarter
                             </span>
                           )}
                         </div>
@@ -419,7 +363,8 @@ const SuperAdminApprovals = () => {
                         {!isAnnual && (
                           <div className="mb-3 p-2 bg-blue-50 rounded-lg inline-block">
                             <p className="text-[9px] font-bold text-blue-700 uppercase tracking-wider">
-                              Reporting Period: Q{indicator.activeQuarter} • {new Date().getFullYear()}
+                              Reporting Period: Q{indicator.activeQuarter} •{" "}
+                              {new Date().getFullYear()}
                             </p>
                           </div>
                         )}
@@ -429,7 +374,8 @@ const SuperAdminApprovals = () => {
                           <div className="flex items-center gap-1.5">
                             <User size={12} className="text-slate-400" />
                             <span className="font-bold text-slate-700">
-                              Assignee: {indicator.assigneeDisplayName || "Unassigned"}
+                              Assignee:{" "}
+                              {indicator.assigneeDisplayName || "Unassigned"}
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -469,7 +415,8 @@ const SuperAdminApprovals = () => {
                         {/* Submission ID */}
                         <div className="mt-3 flex items-center gap-1 text-[9px] font-mono text-slate-400">
                           <Hash size={9} />
-                          Submission ID: {indicator.submissionId?.slice(-12).toUpperCase() || "N/A"}
+                          Submission ID:{" "}
+                          {indicator.submissionId?.slice(-12).toUpperCase() || "N/A"}
                         </div>
                       </div>
 
@@ -482,17 +429,15 @@ const SuperAdminApprovals = () => {
                           <Eye size={14} /> Review Details
                         </button>
 
-                        {!indicator.isCertified && indicator.hasVerifiedSubmission ? (
-                          <div className="w-full text-center px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
-                            Pending Review
-                          </div>
-                        ) : indicator.isCertified ? (
+                        {!indicator.isCertified ? (
+                          <>
+                            <div className="w-full text-center px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
+                              Pending Review
+                            </div>
+                          </>
+                        ) : (
                           <div className="w-full text-center px-5 py-2.5 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
                             Already Certified
-                          </div>
-                        ) : (
-                          <div className="w-full text-center px-5 py-2.5 bg-slate-100 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest">
-                            Not Yet Verified
                           </div>
                         )}
                       </div>
