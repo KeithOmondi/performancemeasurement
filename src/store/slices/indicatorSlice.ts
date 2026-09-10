@@ -13,6 +13,7 @@
      GET    /approved-by-superadmin    getSuperAdminApprovedIndicators
      GET    /submissions/queue         getAllSubmissions  (queue)
      DELETE /submissions/:id           deleteSubmission
+     DELETE /documents/:id             deleteSingleDocument   // NEW
      GET    /:id                       getIndicatorById
      PATCH  /:id                       updateIndicator
      DELETE /:id                       deleteIndicator
@@ -24,7 +25,7 @@
      POST   /:id/add-users             addUsersToIndicator
      DELETE /:id/remove-users          removeUsersFromIndicator
      GET    /:id/partial-approvals     getPartialApprovalsHistory
-     PATCH  /:id/send-back-to-admin    sendBackToAdmin       // NEW
+     PATCH  /:id/send-back-to-admin    sendBackToAdmin
 ───────────────────────────────────────────────────────────────────────────── */
 
 import {
@@ -78,7 +79,13 @@ export type {
   Quarter,
 } from "../../types/Indicatortypes";
 
-/* ─── STATE ──────────────────────────────────────────────────────────────── */
+// ─── DELETE SINGLE DOCUMENT PAYLOAD ──────────────────────────────────────
+
+interface IDeleteDocumentPayload {
+  documentId: string;
+}
+
+// ─── STATE ────────────────────────────────────────────────────────────────
 
 interface IndicatorState {
   /** Full unfiltered list returned by GET / */
@@ -559,6 +566,26 @@ export const deleteSubmission = createAsyncThunk(
       await apiPrivate.delete(`/indicators/submissions/${arg.submissionId}`);
       dispatch(fetchIndicatorById(arg.indicatorId));
       return arg;
+    } catch (err) {
+      return rejectWithValue(extractError(err));
+    }
+  }
+);
+
+// ─── DELETE SINGLE DOCUMENT ──────────────────────────────────────────────
+
+export const deleteSingleDocument = createAsyncThunk<
+  string, // Return type
+  IDeleteDocumentPayload, // Argument type
+  { rejectValue: string }
+>(
+  "indicators/deleteSingleDocument",
+  async (arg: IDeleteDocumentPayload, { rejectWithValue, dispatch }) => {
+    try {
+      await apiPrivate.delete(`/indicators/documents/${arg.documentId}`);
+      // Refresh indicators to update the UI
+      dispatch(fetchIndicators());
+      return arg.documentId;
     } catch (err) {
       return rejectWithValue(extractError(err));
     }
@@ -1046,6 +1073,22 @@ const indicatorSlice = createSlice({
         }
       })
       .addCase(deleteSubmission.rejected, (state, { payload }) => {
+        state.actionLoading = false;
+        state.error = payload as string;
+      });
+
+    /* ── deleteSingleDocument ── */
+    builder
+      .addCase(deleteSingleDocument.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteSingleDocument.fulfilled, (state) => {
+        state.actionLoading = false;
+        // The document is deleted, refresh indicators to update UI
+        // fetchIndicators is already dispatched in the thunk
+      })
+      .addCase(deleteSingleDocument.rejected, (state, { payload }) => {
         state.actionLoading = false;
         state.error = payload as string;
       });

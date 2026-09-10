@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   fetchTrackerReport,
   fetchReportSummary,
@@ -7,6 +7,7 @@ import {
   type IPerspective,
   type IIndicator,
   type ISubmission,
+  type ReportFilters,
 } from "../../store/slices/reportSlice";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import ORHC from "../../assets/ORHC.jpg";
@@ -14,74 +15,101 @@ import ORHC from "../../assets/ORHC.jpg";
 /* ─── STATUS BADGE ──────────────────────────────────────────────────── */
 const StatusBadge = ({ status }: { status: string }) => {
   const isCompleted = status === "Completed";
+  const isPartiallyApproved = status === "Partially Approved" || status === "Awaiting Super Admin";
+  
+  let label = "Incomplete";
+  let bg = "bg-amber-100";
+  let text = "text-amber-700";
+  let border = "border-amber-200";
+  
+  if (isCompleted) {
+    label = "Complete";
+    bg = "bg-emerald-100";
+    text = "text-emerald-700";
+    border = "border-emerald-200";
+  } else if (isPartiallyApproved) {
+    label = "Partial";
+    bg = "bg-purple-100";
+    text = "text-purple-700";
+    border = "border-purple-200";
+  }
   
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-        isCompleted
-          ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-          : "bg-amber-100 text-amber-700 border border-amber-200"
-      }`}
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${bg} ${text} border ${border}`}
     >
-      {isCompleted ? "Complete" : "Incomplete"}
+      {label}
     </span>
   );
 };
 
-/* ─── EVIDENCE CELL – only shows the latest submission's notes and document descriptions ── */
+/* ─── EVIDENCE CELL – Shows ALL quarters with labels ──────────────── */
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
-    return (
-      <span className="text-slate-400 italic text-[10px] font-medium">
-        No submissions yet
-      </span>
-    );
+    return <span className="text-slate-400 text-[10px] italic">No evidence</span>;
   }
 
-  // Find the latest submission based on submittedAt
-  const latestSubmission = submissions.reduce((latest, current) => {
-    const latestDate = new Date(latest.submittedAt);
-    const currentDate = new Date(current.submittedAt);
-    return currentDate > latestDate ? current : latest;
-  }, submissions[0]);
+  // Sort submissions by year and quarter
+  const sortedSubmissions = [...submissions].sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    return a.quarter - b.quarter;
+  });
 
-  // Filter documents to only show those with descriptions
-  const documentsWithDescriptions = latestSubmission.documents?.filter(
-    (doc) => doc.description?.trim()
-  ) || [];
+  // Filter out rejected submissions
+  const validSubmissions = sortedSubmissions.filter(
+    (s) => s.reviewStatus !== 'Rejected' && s.reviewStatus !== 'Correction Needed'
+  );
 
-  // Check if there's anything to show
-  const hasNotes = latestSubmission.notes?.trim();
-  const hasDocuments = documentsWithDescriptions.length > 0;
-
-  if (!hasNotes && !hasDocuments) {
-    return (
-      <span className="text-slate-400 italic text-[10px] font-medium">
-        No evidence provided
-      </span>
-    );
+  if (validSubmissions.length === 0) {
+    return <span className="text-slate-400 text-[10px] italic">No valid evidence</span>;
   }
 
   return (
-    <div className="space-y-3">
-      {/* Notes from the latest submission */}
-      {hasNotes && (
-        <p className="text-slate-600 text-[10px] mb-1.5 pl-3 italic border-l-2 border-slate-200">
-          {latestSubmission.notes}
-        </p>
-      )}
-      
-      {/* Document descriptions from the latest submission */}
-      {hasDocuments && (
-        <ul className="space-y-1 pl-3 mt-1.5">
-          {documentsWithDescriptions.map((doc, idx) => (
-            <li key={idx} className="flex gap-2 text-[10px] text-slate-700">
-              <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
-              <span className="font-medium">{doc.description}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+      {validSubmissions.map((sub, idx) => {
+        const periodLabel = sub.quarter === 0 ? 'Annual' : `Q${sub.quarter}`;
+        const hasNotes = sub.notes?.trim();
+        const docsWithDesc = sub.documents?.filter(d => d.description?.trim()) || [];
+        const docsToShow = docsWithDesc.length > 0 ? docsWithDesc : sub.documents || [];
+
+        // Skip if no notes and no documents
+        if (!hasNotes && docsToShow.length === 0) return null;
+
+        return (
+          <div key={sub.submissionId || idx} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
+            {/* Quarter Header */}
+            <div className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              {periodLabel} {sub.year} · <span className={`${
+                sub.reviewStatus === 'Accepted' ? 'text-emerald-600' :
+                sub.reviewStatus === 'Verified' ? 'text-blue-600' :
+                sub.reviewStatus === 'Partially Approved' ? 'text-purple-600' :
+                'text-amber-600'
+              }`}>{sub.reviewStatus}</span>
+            </div>
+
+            {/* Notes */}
+            {hasNotes && (
+              <p className="text-slate-600 text-[10px] mb-1.5 pl-2 italic border-l-2 border-slate-200">
+                {sub.notes}
+              </p>
+            )}
+            
+            {/* Documents with descriptions */}
+            {docsToShow.length > 0 && (
+              <ul className="space-y-1 pl-2">
+                {docsToShow.map((doc, docIdx) => (
+                  <li key={docIdx} className="flex gap-2 text-[10px] text-slate-700">
+                    <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
+                    <span className="font-medium break-words">
+                      {doc.description?.trim() || doc.fileName || 'Document'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -92,8 +120,8 @@ const SummaryCards = () => {
 
   if (summaryLoading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
             className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse shadow-sm"
@@ -108,35 +136,64 @@ const SummaryCards = () => {
 
   const totals = summary.reduce(
     (acc, s) => ({
-      total:          acc.total          + s.totalIndicators,
-      completed:      acc.completed      + s.completed,
+      total: acc.total + s.totalIndicators,
+      completed: acc.completed + s.completed,
       awaitingReview: acc.awaitingReview + s.awaitingReview,
-      overdue:        acc.overdue        + s.overdue,
+      overdue: acc.overdue + s.overdue,
+      hasSubmissions: acc.hasSubmissions + (s.hasSubmissions || 0),
+      submittedComplete: acc.submittedComplete + (s.submittedComplete || 0),
     }),
-    { total: 0, completed: 0, awaitingReview: 0, overdue: 0 }
+    { total: 0, completed: 0, awaitingReview: 0, overdue: 0, hasSubmissions: 0, submittedComplete: 0 }
   );
 
+  const submissionRate = totals.total > 0 
+    ? Math.round((totals.hasSubmissions / totals.total) * 100) 
+    : 0;
+
   const cards: { label: string; value: number; colour: string; bg: string }[] = [
-    { label: "Total Indicators", value: totals.total,          colour: "text-[#1d3331]", bg: "bg-slate-50" },
-    { label: "Complete",         value: totals.completed,      colour: "text-emerald-700", bg: "bg-emerald-50" },
-    { label: "Incomplete",       value: totals.total - totals.completed, colour: "text-amber-700", bg: "bg-amber-50" },
-    { label: "Overdue",          value: totals.overdue,        colour: "text-red-600", bg: "bg-red-50" },
+    { label: "Total Indicators", value: totals.total, colour: "text-[#1d3331]", bg: "bg-slate-50" },
+    { label: "Submitted", value: totals.hasSubmissions, colour: "text-blue-700", bg: "bg-blue-50" },
+    { label: "Complete", value: totals.completed, colour: "text-emerald-700", bg: "bg-emerald-50" },
+    { label: "Incomplete", value: totals.total - totals.hasSubmissions, colour: "text-amber-700", bg: "bg-amber-50" },
+    { label: "Overdue", value: totals.overdue, colour: "text-red-600", bg: "bg-red-50" },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-      {cards.map((c) => (
-        <div
-          key={c.label}
-          className={`${c.bg} rounded-xl border border-slate-200 p-5 shadow-sm`}
-        >
-          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
-            {c.label}
-          </p>
-          <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        {cards.map((c) => (
+          <div
+            key={c.label}
+            className={`${c.bg} rounded-xl border border-slate-200 p-5 shadow-sm`}
+          >
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+              {c.label}
+            </p>
+            <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm mb-6">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
+            Submission Rate
+          </span>
+          <span className="text-sm font-black text-blue-700">
+            {submissionRate}%
+          </span>
         </div>
-      ))}
-    </div>
+        <div className="w-full bg-slate-200 rounded-full h-2.5">
+          <div 
+            className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+            style={{ width: `${submissionRate}%` }}
+          />
+        </div>
+        <p className="text-[9px] text-slate-400 mt-1.5">
+          {totals.hasSubmissions} of {totals.total} indicators have been submitted
+        </p>
+      </div>
+    </>
   );
 };
 
@@ -157,17 +214,13 @@ const TablePerspectiveRows = ({
   perspective: IPerspective;
   getIndex: () => number;
 }) => {
-  // Flatten objective → activity → indicator into a single array first,
-  // computing "isFirstForObjective" as plain data — no mutation during render.
   type FlatRow = {
     objective: IPerspective["objectives"][number];
     activity: IPerspective["objectives"][number]["activities"][number];
     indicator: IIndicator;
-    isFirstForObjective: boolean;
   };
 
   const flatRows: FlatRow[] = [];
-  let prevObjectiveId: string | null = null;
 
   for (const objective of perspective.objectives) {
     for (const activity of objective.activities) {
@@ -176,9 +229,7 @@ const TablePerspectiveRows = ({
           objective,
           activity,
           indicator,
-          isFirstForObjective: objective.id !== prevObjectiveId,
         });
-        prevObjectiveId = objective.id;
       }
     }
   }
@@ -196,9 +247,23 @@ const TablePerspectiveRows = ({
         </td>
       </tr>
 
-      {flatRows.map(({ objective, activity, indicator, isFirstForObjective }) => {
+      {flatRows.map(({ objective, activity, indicator }, index) => {
         getIndex();
+        
+        // Determine if this is the first activity for this objective
+        let isFirstForObjective = false;
+        if (index === 0) {
+          isFirstForObjective = true;
+        } else {
+          const prevRow = flatRows[index - 1];
+          isFirstForObjective = prevRow.objective.id !== objective.id;
+        }
+
+        // The indicator label is the objective title (only shown once per objective)
         const indicatorLabel = objective.title?.trim() || activity.description;
+
+        // Check if indicator has submissions
+        const hasSubmissions = indicator.submissions && indicator.submissions.length > 0;
 
         return (
           <tr
@@ -222,9 +287,48 @@ const TablePerspectiveRows = ({
             {/* ── Explanatory Notes ── */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
+              
+              {/* Show submission summary */}
+              {indicator.submissions && indicator.submissions.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {[...indicator.submissions]
+                    .sort((a, b) => {
+                      if (a.year !== b.year) return a.year - b.year;
+                      return a.quarter - b.quarter;
+                    })
+                    .filter(s => s.reviewStatus !== 'Rejected' && s.reviewStatus !== 'Correction Needed')
+                    .map((sub, idx) => {
+                      const periodLabel = sub.quarter === 0 ? 'Annual' : `Q${sub.quarter}`;
+                      return (
+                        <div key={idx} className="text-[9px] text-slate-500">
+                          <span className="font-medium">{periodLabel} {sub.year}:</span>
+                          <span className={`ml-1 ${
+                            sub.reviewStatus === 'Accepted' ? 'text-emerald-600' :
+                            sub.reviewStatus === 'Verified' ? 'text-blue-600' :
+                            sub.reviewStatus === 'Partially Approved' ? 'text-purple-600' :
+                            'text-amber-600'
+                          }`}>
+                            {sub.reviewStatus}
+                          </span>
+                          {sub.documents && sub.documents.length > 0 && (
+                            <span className="ml-1 text-slate-400">
+                              ({sub.documents.length} doc{sub.documents.length !== 1 ? 's' : ''})
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+              
               {indicator.instructions && (
                 <p className="mt-1 text-[10px] text-slate-400 italic font-medium">
                   {indicator.instructions}
+                </p>
+              )}
+              {!hasSubmissions && (
+                <p className="mt-1 text-[9px] font-bold text-amber-500 uppercase tracking-wider">
+                  No Submission
                 </p>
               )}
             </td>
@@ -257,55 +361,55 @@ const UserReports = () => {
   const dispatch = useAppDispatch();
   const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
 
-  const [activePerspective, setActivePerspective] = useState<string>("all");
-  const [statusFilter, setStatusFilter]           = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"all" | "submitted">("all");
+
+  const buildFilters = useCallback((): ReportFilters => {
+    const apiFilters: ReportFilters = {};
+    
+    if (statusFilter) {
+      apiFilters.status = statusFilter;
+    }
+
+    if (viewMode === "submitted") {
+      apiFilters.hasSubmission = "true";
+      apiFilters.submissionStatus = "Accepted,Verified,Partially Approved";
+    }
+
+    return apiFilters;
+  }, [statusFilter, viewMode]);
 
   useEffect(() => {
     dispatch(fetchReportSummary());
-    dispatch(fetchTrackerReport({}));
-  }, [dispatch]);
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
   useEffect(() => {
-    dispatch(fetchTrackerReport(filters));
-  }, [dispatch, filters]);
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
-  const visibleData: IPerspective[] =
-    activePerspective === "all"
-      ? data
-      : data.filter((p) =>
-          p.perspective.toUpperCase().startsWith(activePerspective.toUpperCase())
-        );
-
-  const filteredData: IPerspective[] = statusFilter
-    ? visibleData
-        .map((p) => ({
-          ...p,
-          objectives: p.objectives
-            .map((o) => ({
-              ...o,
-              activities: o.activities
-                .map((a) => ({
-                  ...a,
-                  indicators: a.indicators.filter(
-                    (ind) => ind.status === statusFilter
-                  ),
-                }))
-                .filter((a) => a.indicators.length > 0),
-            }))
-            .filter((o) => o.activities.length > 0),
-        }))
-        .filter((p) => p.objectives.length > 0)
-    : visibleData;
+  const visibleData: IPerspective[] = data;
 
   const handleDownloadPdf = () => {
-    dispatch(downloadTrackerPdf(filters));
+    const pdfFilters: ReportFilters = { ...filters };
+    
+    if (viewMode === "submitted") {
+      pdfFilters.hasSubmission = "true";
+      pdfFilters.submissionStatus = "Accepted,Verified,Partially Approved";
+    }
+    
+    dispatch(downloadTrackerPdf(pdfFilters));
   };
 
   const handleClearFilters = () => {
     setStatusFilter("");
-    setActivePerspective("all");
+    setViewMode("all");
     dispatch(clearReportFilters());
   };
+
+  const handleRefresh = useCallback(() => {
+    dispatch(fetchTrackerReport(buildFilters()));
+  }, [dispatch, buildFilters]);
 
   let indicatorIndex = 0;
 
@@ -336,23 +440,30 @@ const UserReports = () => {
 
       {/* ── FILTERS ── */}
       <div className="bg-white p-3 rounded-2xl shadow-sm border border-slate-100 mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1">
-          {["all", "A", "B", "C", "D"].map((p) => (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-xl border border-slate-200 overflow-hidden">
             <button
-              key={p}
-              onClick={() => setActivePerspective(p)}
-              className={`px-5 py-2.5 rounded-xl text-[9px] font-black uppercase transition-all ${
-                activePerspective === p
-                  ? "bg-[#1d3331] text-white shadow-lg"
-                  : "bg-transparent text-slate-400 hover:text-[#1d3331]"
+              onClick={() => setViewMode("submitted")}
+              className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
+                viewMode === "submitted"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-white text-slate-500 hover:bg-slate-50"
               }`}
             >
-              {p === "all" ? "All Sections" : `Section ${p}`}
+              Submitted Only
             </button>
-          ))}
-        </div>
+            <button
+              onClick={() => setViewMode("all")}
+              className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
+                viewMode === "all"
+                  ? "bg-[#1d3331] text-white"
+                  : "bg-white text-slate-500 hover:bg-slate-50"
+              }`}
+            >
+              All Indicators
+            </button>
+          </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -361,10 +472,11 @@ const UserReports = () => {
           >
             <option value="">All Statuses</option>
             <option value="Completed">Complete</option>
+            <option value="Partially Approved">Partially Approved</option>
             <option value="Incomplete">Incomplete</option>
           </select>
 
-          {(statusFilter || activePerspective !== "all") && (
+          {(statusFilter !== "" || viewMode !== "all") && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
@@ -375,7 +487,7 @@ const UserReports = () => {
           )}
 
           <button
-            onClick={() => dispatch(fetchTrackerReport(filters))}
+            onClick={handleRefresh}
             disabled={loading}
             className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white
                        text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-all"
@@ -393,6 +505,14 @@ const UserReports = () => {
             {pdfLoading ? "Generating…" : "⬇ Download PDF"}
           </button>
         </div>
+        
+        {/* Show active filter count */}
+        {viewMode === "submitted" && (
+          <div className="flex items-center gap-2 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
+            <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
+            Showing Completed & Partially Approved
+          </div>
+        )}
       </div>
 
       {/* ── ERROR ── */}
@@ -432,7 +552,7 @@ const UserReports = () => {
             </thead>
 
             <tbody>
-              {filteredData.length === 0 ? (
+              {visibleData.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -442,7 +562,7 @@ const UserReports = () => {
                   </td>
                 </tr>
               ) : (
-                filteredData.map((perspective) => (
+                visibleData.map((perspective) => (
                   <TablePerspectiveRows
                     key={perspective.perspective}
                     perspective={perspective}

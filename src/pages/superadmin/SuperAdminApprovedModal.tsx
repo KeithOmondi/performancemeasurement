@@ -17,12 +17,14 @@ import {
   Video,
   File,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
   fetchIndicatorById,
   clearSelectedIndicator,
   sendBackToAdmin,
+  deleteSingleDocument,
   type IDocument,
   type ISubmission,
 } from "../../store/slices/indicatorSlice";
@@ -54,6 +56,7 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
   const [sendingBack, setSendingBack] = useState(false);
   const [sendBackReason, setSendBackReason] = useState("");
   const [previewDoc, setPreviewDoc] = useState<PreviewDoc | null>(null);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (indicatorId) {
@@ -81,6 +84,24 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
       type: doc.fileType,
       description: doc.description,
     });
+  };
+
+  const handleDeleteDocument = async (documentId: string, fileName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${fileName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingDocId(documentId);
+    try {
+      await dispatch(deleteSingleDocument({ documentId })).unwrap();
+      toast.success("Document deleted successfully");
+      // Refresh the indicator data
+      await dispatch(fetchIndicatorById(indicatorId));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete document");
+    } finally {
+      setDeletingDocId(null);
+    }
   };
 
   const handleSendBackToAdmin = async () => {
@@ -347,26 +368,43 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                               {sub.documents && sub.documents.length > 0 ? (
                                 <div className="flex flex-col gap-1.5">
                                   {sub.documents.map((doc, idx) => (
-                                    <button
+                                    <div
                                       key={doc.id || idx}
-                                      onClick={() => openPreview(doc, idx)}
                                       className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-slate-50 transition-colors text-left w-full group"
                                     >
-                                      <div className="w-6 h-6 rounded-md bg-slate-100 group-hover:bg-white flex items-center justify-center shrink-0 mt-0.5">
-                                        <DocIcon fileType={doc.fileType} />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-[10px] font-semibold text-slate-700 truncate">
-                                          {doc.fileName || `Document ${idx + 1}`}
-                                        </p>
-                                        {doc.description && (
-                                          <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">
-                                            {doc.description}
+                                      <button
+                                        onClick={() => openPreview(doc, idx)}
+                                        className="flex items-start gap-2 flex-1 min-w-0"
+                                      >
+                                        <div className="w-6 h-6 rounded-md bg-slate-100 group-hover:bg-white flex items-center justify-center shrink-0 mt-0.5">
+                                          <DocIcon fileType={doc.fileType} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-[10px] font-semibold text-slate-700 truncate">
+                                            {doc.fileName || `Document ${idx + 1}`}
                                           </p>
+                                          {doc.description && (
+                                            <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">
+                                              {doc.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                        <ExternalLink size={10} className="text-slate-300 group-hover:text-emerald-600 shrink-0 mt-1" />
+                                      </button>
+                                      {/* ✅ Delete Document Button */}
+                                      <button
+                                        onClick={() => handleDeleteDocument(doc.id!, doc.fileName || `Document ${idx + 1}`)}
+                                        disabled={deletingDocId === doc.id}
+                                        className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition-colors shrink-0 mt-0.5"
+                                        title="Delete document"
+                                      >
+                                        {deletingDocId === doc.id ? (
+                                          <Loader2 size={14} className="animate-spin" />
+                                        ) : (
+                                          <Trash2 size={14} />
                                         )}
-                                      </div>
-                                      <ExternalLink size={10} className="text-slate-300 group-hover:text-emerald-600 shrink-0 mt-1" />
-                                    </button>
+                                      </button>
+                                    </div>
                                   ))}
                                 </div>
                               ) : (
