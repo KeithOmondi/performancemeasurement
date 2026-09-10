@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -29,6 +29,7 @@ import {
   fetchPartialApprovalsHistory,
   type IPartialApproval,
   type IDocument,
+  type ISubmission,
 } from "../../store/slices/indicatorSlice";
 import { toast } from "react-hot-toast";
 
@@ -47,6 +48,19 @@ interface PreviewDoc {
 }
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
+
+/**
+ * Safely coerces any value into an array.
+ * Handles arrays, object maps (returns Object.values), null/undefined (returns []).
+ * Prevents crashes from API responses where nested collections
+ * (submissions, reviewHistory, documents, partialApprovals) come back
+ * as objects or primitives instead of arrays.
+ */
+const asArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object") return Object.values(value) as T[];
+  return [];
+};
 
 const DocIcon = ({ fileType }: { fileType?: string }) => {
   if (fileType === "image") return <ImageIcon size={14} className="text-blue-400" />;
@@ -97,6 +111,18 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
   }, [dispatch, indicatorId]);
 
   const indicator = selectedIndicator;
+
+  /* ── Normalize all collections once ── */
+  const submissionsArray = useMemo(
+    () => asArray<ISubmission>(indicator?.submissions),
+    [indicator?.submissions]
+  );
+
+  const partialApprovalsArray = useMemo(
+    () => asArray<IPartialApproval>(partialApprovals),
+    [partialApprovals]
+  );
+
   const isAnnual = indicator?.reportingCycle === "Annual";
   const isCompleted = indicator?.status === "Completed";
   const canReview =
@@ -107,23 +133,36 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
   const unit = indicator?.unit ?? "%";
   const remainingNeeded = Math.max(0, target - currentProgress);
   const isFullyComplete = currentProgress >= target;
-  const hasPartialApprovals = partialApprovals && partialApprovals.length > 0;
+  const hasPartialApprovals = partialApprovalsArray.length > 0;
 
-  const allSubmissions = [...(indicator?.submissions ?? [])].sort(
-    (a, b) =>
-      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+  const allSubmissions = useMemo(
+    () =>
+      [...submissionsArray].sort(
+        (a, b) =>
+          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      ),
+    [submissionsArray]
   );
+
   const latestSubmission = allSubmissions[0];
 
-  const approvalByQuarterYear = (partialApprovals as IPartialApproval[]).reduce<
-    Record<string, IPartialApproval>
-  >((acc, a) => {
-    const key = `${a.quarter}-${a.year}`;
-    if (!acc[key] || new Date(a.approvedAt) > new Date(acc[key].approvedAt)) {
-      acc[key] = a;
-    }
-    return acc;
-  }, {});
+  const approvalByQuarterYear = useMemo(
+    () =>
+      partialApprovalsArray.reduce<Record<string, IPartialApproval>>(
+        (acc, a) => {
+          const key = `${a.quarter}-${a.year}`;
+          if (
+            !acc[key] ||
+            new Date(a.approvedAt) > new Date(acc[key].approvedAt)
+          ) {
+            acc[key] = a;
+          }
+          return acc;
+        },
+        {}
+      ),
+    [partialApprovalsArray]
+  );
 
   const parsedProgress = parseFloat(progressValue) || 0;
   const previewProgress = Math.min(target, currentProgress + parsedProgress);
@@ -190,6 +229,14 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
 
     if (hasError) return;
 
+    // ✅ Guard: we cannot review without a submission to target. Previously
+    // the payload used `latestSubmission?.quarter` which became `undefined`
+    // and the backend defaulted to Q1, producing a confusing 404.
+    if (!latestSubmission) {
+      toast.error("No submission available to review for this indicator.");
+      return;
+    }
+
     const parsed = parseFloat(progressValue);
     const isPartial =
       decision === "approve" &&
@@ -206,8 +253,9 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
             reason: comment.trim() || undefined,
             progressOverride: decision === "approve" ? parsed : 0,
             isPartialApproval: isPartial,
-            year: latestSubmission?.year ?? new Date().getFullYear(),
-            quarter: latestSubmission?.quarter,
+            // ✅ Use the real quarter/year from the submission we're reviewing.
+            year: latestSubmission.year,
+            quarter: latestSubmission.quarter,
             ...(needsNextDeadline && nextDeadline ? { nextDeadline } : {}),
           },
         })
@@ -253,23 +301,19 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
 
   /* ── Status styling ── */
   const statusColors: Record<string, string> = {
-    "Awaiting Super Admin":
-      "bg-amber-50 border-amber-200 text-amber-700",
-    Completed:
-      "bg-emerald-50 border-emerald-200 text-emerald-700",
-    "Rejected by Super Admin":
-      "bg-rose-50 border-rose-200 text-rose-700",
+    "Awaiting Super Admin": "bg-amber-50 border-amber-200 text-amber-700",
+    Completed: "bg-emerald-50 border-emerald-200 text-emerald-700",
+    "Rejected by Super Admin": "bg-rose-50 border-rose-200 text-rose-700",
   };
   const statusColor =
     statusColors[indicator.status ?? ""] ??
     "bg-slate-50 border-slate-200 text-slate-600";
 
-  const StatusIcon =
-    isCompleted
-      ? CheckCircle2
-      : indicator.status === "Rejected by Super Admin"
-      ? XCircle
-      : Clock;
+  const StatusIcon = isCompleted
+    ? CheckCircle2
+    : indicator.status === "Rejected by Super Admin"
+    ? XCircle
+    : Clock;
 
   /* ── Render ── */
   return createPortal(
@@ -282,7 +326,6 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
         }}
       >
         <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[94vh] overflow-hidden flex flex-col shadow-2xl">
-
           {/* Header */}
           <div className="px-6 pt-5 pb-4 border-b border-slate-100 shrink-0 bg-white">
             <div className="flex items-start justify-between gap-4">
@@ -333,10 +376,8 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
 
           {/* Body: two columns */}
           <div className="flex-1 overflow-hidden flex min-h-0">
-
             {/* ── LEFT: Submission info ── */}
             <div className="flex-1 overflow-y-auto p-5 space-y-4 border-r border-slate-100">
-
               {/* Progress bar */}
               <div className="bg-slate-50 rounded-xl p-4">
                 <div className="flex items-end justify-between mb-2">
@@ -404,7 +445,7 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                     </p>
                   </div>
                   <div className="divide-y divide-slate-50">
-                    {(partialApprovals as IPartialApproval[]).map((a) => (
+                    {partialApprovalsArray.map((a) => (
                       <div
                         key={a.id}
                         className="px-4 py-2.5 flex items-center justify-between"
@@ -451,6 +492,9 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                       : "Annual";
                     const periodKey = `${sub.quarter}-${sub.year}`;
                     const matchedApproval = approvalByQuarterYear[periodKey];
+
+                    // ✅ Normalize documents per submission
+                    const documents = asArray<IDocument>(sub.documents);
 
                     const statusChip: Record<
                       string,
@@ -576,7 +620,7 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                         </div>
 
                         {/* ── Documents ── */}
-                        {sub.documents && sub.documents.length > 0 && (
+                        {documents.length > 0 && (
                           <div
                             className={`border-t p-3 ${
                               isLatest
@@ -585,16 +629,17 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                             }`}
                           >
                             <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider mb-2">
-                              Evidence · {sub.documents.length} file
-                              {sub.documents.length !== 1 ? "s" : ""}
+                              Evidence · {documents.length} file
+                              {documents.length !== 1 ? "s" : ""}
                               {!isLatest && matchedApproval && (
                                 <span className="ml-2 text-emerald-600 normal-case font-medium">
-                                  (approved {formatDate(matchedApproval.approvedAt)})
+                                  (approved{" "}
+                                  {formatDate(matchedApproval.approvedAt)})
                                 </span>
                               )}
                             </p>
                             <div className="flex flex-col gap-2">
-                              {(sub.documents as IDocument[]).map((doc, di) => (
+                              {documents.map((doc, di) => (
                                 <button
                                   key={doc.id ?? di}
                                   onClick={() => openPreview(doc, di)}
@@ -613,7 +658,6 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                                     <p className="text-[8px] text-slate-400 uppercase mt-0.5">
                                       {doc.fileType ?? "file"}
                                     </p>
-                                    {/* ✅ Document description */}
                                     {doc.description && (
                                       <p className="text-[9px] text-slate-500 mt-1 leading-snug line-clamp-2">
                                         {doc.description}
@@ -660,7 +704,6 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
 
             {/* ── RIGHT: Decision panel ── */}
             <div className="w-[320px] shrink-0 overflow-y-auto p-5 space-y-4 bg-slate-50/50">
-
               {/* Cycle badge */}
               <div
                 className={`rounded-xl p-3 flex items-center gap-2 ${
@@ -1019,7 +1062,6 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                   <p className="text-emerald-300 text-[9px] uppercase tracking-wider">
                     {previewDoc.type ?? "document"}
                   </p>
-                  {/* ✅ Description in preview toolbar */}
                   {previewDoc.description && (
                     <p className="text-emerald-100 text-[10px] mt-1 max-w-lg leading-snug">
                       {previewDoc.description}

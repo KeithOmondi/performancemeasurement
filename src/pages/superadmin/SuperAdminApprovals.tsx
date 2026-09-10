@@ -31,11 +31,31 @@ interface EnhancedIndicator extends IIndicator {
   approvedValue?: number;
 }
 
+/**
+ * Safely coerces an unknown value into an array.
+ * Handles: arrays, objects (returns Object.values), null/undefined (returns []).
+ * This guards against API responses where `submissions` or `reviewHistory`
+ * may come back as an object map or a count instead of an array.
+ */
+const asArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object") return Object.values(value) as T[];
+  return [];
+};
+
+// Convenience aliases for the nested types inside IIndicator
+type Submission = NonNullable<IIndicator["submissions"]>[number];
+type ReviewEvent = NonNullable<IIndicator["reviewHistory"]>[number];
+
 const SuperAdminApprovals = () => {
   const dispatch = useAppDispatch();
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterCycle, setFilterCycle] = useState<"all" | "quarterly" | "annual">("all");
-  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(null);
+  const [filterCycle, setFilterCycle] = useState<
+    "all" | "quarterly" | "annual"
+  >("all");
+  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(
+    null
+  );
 
   const { indicators, loading } = useAppSelector((state) => state.indicators);
 
@@ -47,7 +67,11 @@ const SuperAdminApprovals = () => {
     const result: EnhancedIndicator[] = [];
 
     indicators.forEach((ind) => {
-      const superApproval = ind.reviewHistory?.find(
+      // ✅ Normalize submissions & reviewHistory to arrays
+      const submissions = asArray<Submission>(ind.submissions);
+      const reviewHistory = asArray<ReviewEvent>(ind.reviewHistory);
+
+      const superApproval = reviewHistory.find(
         (h) => h.action === "Approved" && h.reviewerRole === "superadmin"
       );
       const isCertified = !!superApproval;
@@ -55,21 +79,24 @@ const SuperAdminApprovals = () => {
       const isAwaiting = ind.status === "Awaiting Super Admin";
       if (!isAwaiting && !isCertified) return;
 
-      const adminReviewEvent = ind.reviewHistory?.find(
+      const adminReviewEvent = reviewHistory.find(
         (h) => h.action === "Verified" && h.reviewerRole === "admin"
       );
-      const verifiedSubmission = ind.submissions?.find(
+
+      const verifiedSubmission = submissions.find(
         (s) => s.reviewStatus === "Verified" && s.isReviewed === true
       );
 
-      const approvedSubmission = ind.submissions?.find(
+      const approvedSubmission = submissions.find(
         (s) => s.reviewStatus === "Accepted"
       );
 
       result.push({
         ...ind,
         isCertified,
-        verifiedByAdmin: adminReviewEvent?.reviewedByName || (verifiedSubmission?.adminComment ? "Admin" : undefined),
+        verifiedByAdmin:
+          adminReviewEvent?.reviewedByName ||
+          (verifiedSubmission?.adminComment ? "Admin" : undefined),
         verifiedAt: adminReviewEvent?.at || verifiedSubmission?.submittedAt,
         adminComment: verifiedSubmission?.adminComment,
         submittedValue: verifiedSubmission?.achievedValue,
@@ -81,7 +108,10 @@ const SuperAdminApprovals = () => {
 
     return result.sort((a, b) => {
       if (a.isCertified !== b.isCertified) return a.isCertified ? 1 : -1;
-      return new Date(b.verifiedAt || "").getTime() - new Date(a.verifiedAt || "").getTime();
+      return (
+        new Date(b.verifiedAt || "").getTime() -
+        new Date(a.verifiedAt || "").getTime()
+      );
     });
   }, [indicators]);
 
@@ -89,8 +119,10 @@ const SuperAdminApprovals = () => {
     const searchLower = searchTerm.toLowerCase();
 
     return approvalsList.filter((ind) => {
-      if (filterCycle === "quarterly" && ind.reportingCycle !== "Quarterly") return false;
-      if (filterCycle === "annual" && ind.reportingCycle !== "Annual") return false;
+      if (filterCycle === "quarterly" && ind.reportingCycle !== "Quarterly")
+        return false;
+      if (filterCycle === "annual" && ind.reportingCycle !== "Annual")
+        return false;
       if (!searchTerm) return true;
 
       return (
@@ -108,7 +140,10 @@ const SuperAdminApprovals = () => {
       ? "N/A"
       : date.toLocaleDateString() +
           " " +
-          date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
   };
 
   const handleViewDetails = (indicatorId: string) => {
@@ -194,7 +229,9 @@ const SuperAdminApprovals = () => {
               }`}
             >
               <Layers size={12} />
-              Quarterly ({approvalsList.filter((i) => i.reportingCycle === "Quarterly").length})
+              Quarterly (
+              {approvalsList.filter((i) => i.reportingCycle === "Quarterly").length}
+              )
             </button>
             <button
               onClick={() => setFilterCycle("annual")}
@@ -205,7 +242,8 @@ const SuperAdminApprovals = () => {
               }`}
             >
               <CalendarDays size={12} />
-              Annual ({approvalsList.filter((i) => i.reportingCycle === "Annual").length})
+              Annual (
+              {approvalsList.filter((i) => i.reportingCycle === "Annual").length})
             </button>
           </div>
         </div>
@@ -228,7 +266,10 @@ const SuperAdminApprovals = () => {
               </>
             ) : (
               <>
-                <CheckCircle className="mx-auto mb-4 text-emerald-200" size={48} />
+                <CheckCircle
+                  className="mx-auto mb-4 text-emerald-200"
+                  size={48}
+                />
                 <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">
                   No Records Found
                 </h2>
@@ -242,15 +283,22 @@ const SuperAdminApprovals = () => {
           <div className="grid gap-4">
             {filteredList.map((indicator) => {
               const isAnnual = indicator.reportingCycle === "Annual";
-              const latestSubmission = indicator.submissions?.find(
+
+              // ✅ Normalize submissions before use in render
+              const submissions = asArray<Submission>(indicator.submissions);
+              const latestSubmission = submissions.find(
                 (s) => s.reviewStatus === "Verified"
               );
+
               const resubmissionCount = latestSubmission?.resubmissionCount ?? 0;
               const achievedValue = indicator.isCertified
                 ? indicator.approvedValue ?? indicator.submittedValue ?? 0
-                : indicator.submittedValue ?? latestSubmission?.achievedValue ?? 0;
-              
-              const isFinalQuarter = !isAnnual && indicator.activeQuarter === 4;
+                : indicator.submittedValue ??
+                  latestSubmission?.achievedValue ??
+                  0;
+
+              const isFinalQuarter =
+                !isAnnual && indicator.activeQuarter === 4;
               const willComplete = isAnnual || isFinalQuarter;
 
               return (
@@ -275,7 +323,11 @@ const SuperAdminApprovals = () => {
                                 : "bg-blue-100 text-blue-700 border border-blue-200"
                             }`}
                           >
-                            {isAnnual ? <CalendarDays size={10} /> : <Layers size={10} />}
+                            {isAnnual ? (
+                              <CalendarDays size={10} />
+                            ) : (
+                              <Layers size={10} />
+                            )}
                             {indicator.reportingCycle}
                           </span>
 
@@ -298,12 +350,14 @@ const SuperAdminApprovals = () => {
                             </span>
                           )}
 
-                          {!indicator.isCertified && !willComplete && indicator.reportingCycle === "Quarterly" && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
-                              <AlertCircle size={10} />
-                              Q{indicator.activeQuarter} of 4
-                            </span>
-                          )}
+                          {!indicator.isCertified &&
+                            !willComplete &&
+                            indicator.reportingCycle === "Quarterly" && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
+                                <AlertCircle size={10} />
+                                Q{indicator.activeQuarter} of 4
+                              </span>
+                            )}
 
                           {!indicator.isCertified && willComplete && (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
@@ -324,7 +378,9 @@ const SuperAdminApprovals = () => {
                         <div className="flex flex-wrap items-center gap-6 mb-3">
                           <div>
                             <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                              {indicator.isCertified ? "Certified Value" : "Submitted Value"}
+                              {indicator.isCertified
+                                ? "Certified Value"
+                                : "Submitted Value"}
                             </p>
                             <p className="text-lg font-bold text-emerald-600">
                               {achievedValue}
@@ -349,7 +405,9 @@ const SuperAdminApprovals = () => {
                               <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-emerald-500 rounded-full"
-                                  style={{ width: `${indicator.progress || 0}%` }}
+                                  style={{
+                                    width: `${indicator.progress || 0}%`,
+                                  }}
                                 />
                               </div>
                               <span className="text-[10px] font-bold text-slate-600">
@@ -379,7 +437,10 @@ const SuperAdminApprovals = () => {
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <CheckCircle size={12} className="text-emerald-500" />
+                            <CheckCircle
+                              size={12}
+                              className="text-emerald-500"
+                            />
                             <span className="text-slate-500">
                               Verified by: {indicator.verifiedByAdmin || "Admin"}
                             </span>
@@ -394,7 +455,8 @@ const SuperAdminApprovals = () => {
                             <div className="flex items-center gap-1.5">
                               <Award size={12} className="text-emerald-500" />
                               <span className="text-slate-500">
-                                Certified on: {formatDateTime(indicator.approvedAt)}
+                                Certified on:{" "}
+                                {formatDateTime(indicator.approvedAt)}
                               </span>
                             </div>
                           )}
@@ -404,7 +466,8 @@ const SuperAdminApprovals = () => {
                         {indicator.adminComment && (
                           <div className="mt-3 p-3 bg-slate-50 rounded-xl border-l-4 border-emerald-400">
                             <p className="text-[9px] font-bold uppercase tracking-wider mb-1 text-slate-500 flex items-center gap-1">
-                              <MessageSquare size={10} /> Admin Verification Note:
+                              <MessageSquare size={10} /> Admin Verification
+                              Note:
                             </p>
                             <p className="text-[11px] font-medium text-slate-700">
                               "{indicator.adminComment}"
@@ -416,7 +479,8 @@ const SuperAdminApprovals = () => {
                         <div className="mt-3 flex items-center gap-1 text-[9px] font-mono text-slate-400">
                           <Hash size={9} />
                           Submission ID:{" "}
-                          {indicator.submissionId?.slice(-12).toUpperCase() || "N/A"}
+                          {indicator.submissionId?.slice(-12).toUpperCase() ||
+                            "N/A"}
                         </div>
                       </div>
 
