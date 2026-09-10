@@ -32,11 +32,11 @@ const STATUS_GROUP_VALUES: Record<StatusGroup, string[]> = {
   Partial: ["Partially Approved", "Awaiting Super Admin"],
   Incomplete: [
     "Pending",
-    "Verified",
     "Awaiting Admin Approval",
     "Rejected by Admin",
     "Rejected by Super Admin",
     "Correction Needed",
+    "Unassigned",
   ],
 };
 
