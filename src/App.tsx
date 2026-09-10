@@ -56,6 +56,7 @@ import SuperAdminApproved from "./pages/superadmin/SuperAdminApproved";
 import SuperAdminApprovalPage from "./pages/superadmin/SuperAdminApprovalPage";
 import AdminReports from "./pages/admin/AdminReports";
 import UserReports from "./pages/user/UserReports";
+import UserSpotcheck from "./pages/user/UserSpotcheck";
 
 const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
@@ -172,6 +173,7 @@ const App = () => {
             <Route path="/user/history" element={<UserHistory />} />
              <Route path="/user/reports" element={<UserReports />} />
             <Route path="/user/approvals" element={<UserApprovals />} />
+            <Route path="/user/spot-check" element={<UserSpotcheck />} />
             
           </Route>
         </Route>

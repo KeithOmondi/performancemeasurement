@@ -8,6 +8,7 @@ import {
   X,
   CheckCircle,
   XCircle,
+  Book,
 } from "lucide-react";
 import { useDispatch } from "react-redux";
 import type { AppDispatch } from "../../store/store";
@@ -29,6 +30,7 @@ const UserSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
     { name: "Rejected Submissions", path: "/user/rejects", icon: XCircle },
     { name: "Submission History", path: "/user/history", icon: History },
     { name: "Reports", path: "/user/reports", icon: History },
+    { name: "SpotCheck Reports", path: "/user/spot-check", icon: Book },
     { name: "Settings", path: "/user/profile", icon: User },
   ];
 

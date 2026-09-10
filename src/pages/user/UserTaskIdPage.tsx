@@ -26,7 +26,9 @@ import {
   getAcceptedSubmissionForCurrentQuarter,
   resubmitDocuments,
 } from "../../store/slices/userIndicatorSlice";
-import SubmissionModal from "./SubmissionModal";
+import SubmissionModal, {
+  type SubmissionResult,
+} from "./SubmissionModal";
 import type { ISubmissionUI, IDocumentUI } from "../../store/slices/userIndicatorSlice";
 import FilePreviewModal from "../PreviewModal";
 
@@ -551,17 +553,17 @@ const UserTaskIdPage = () => {
   }, [refreshData]);
 
   // ── Submission handler ──────────────────────────────────────────────────
-  const handleSubmissionSubmit = useCallback(async (formData: FormData) => {
-    if (!id) return;
-    
-    console.log("📤 [UserTaskIdPage] Submitting form data...");
-    
-    try {
+  const handleSubmissionSubmit = useCallback(
+    async (formData: FormData): Promise<SubmissionResult> => {
+      if (!id) throw new Error("Missing indicator id");
+
+      console.log("📤 [UserTaskIdPage] Submitting form data...");
+
       const result = await dispatch(updateSubmission({ id, formData })).unwrap();
       console.log("✅ [UserTaskIdPage] Submission result:", result);
-      
+
       showToast(result?.message ?? "Submission processed successfully.", "success");
-      
+
       if (result?.submission) {
         console.log("📦 [UserTaskIdPage] Updating state with submission:", result.submission);
         dispatch(addOrUpdateSubmissionInState({
@@ -569,21 +571,19 @@ const UserTaskIdPage = () => {
           submission: result.submission,
         }));
       }
-      
+
       await refreshData(false);
-      
+
       setTimeout(() => {
         setIsModalOpen(false);
       }, 500);
-      
-    } catch (err) {
-      console.error("❌ [UserTaskIdPage] Submission failed:", err);
-      showToast(
-        err instanceof Error ? err.message : "Failed to process submission. Please try again.",
-        "error",
-      );
-    }
-  }, [id, dispatch, showToast, refreshData]);
+
+      // ✅ Hand the full response back so the modal can read `submissionId`
+      // and attach any picked spot-check documents to it.
+      return result as SubmissionResult;
+    },
+    [id, dispatch, showToast, refreshData],
+  );
 
   // ── Loading / empty states ────────────────────────────────────────────────
   if (loading && !currentIndicator) {

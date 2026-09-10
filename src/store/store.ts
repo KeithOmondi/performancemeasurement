@@ -14,6 +14,7 @@ import examinerReducer from "./slices/examinerSlice"
 import archiveReducer from "./slices/archiveslice"
 import notificationsReducer from "./slices/notificationslice"
 import calendarReducer from "./slices/calendarSlice"
+import spotCheckReducer from "./slices/spotCheckSlice"
 
 export const store = configureStore({
   reducer: {
@@ -31,7 +32,8 @@ export const store = configureStore({
     examiner: examinerReducer,
     archive: archiveReducer,
     notifications: notificationsReducer,
-    calendar: calendarReducer
+    calendar: calendarReducer,
+    spotCheck: spotCheckReducer
     // Add other features (e.g., products, cart) here later
   },
   // DevTools is enabled by default in development mode

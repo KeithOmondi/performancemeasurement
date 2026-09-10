@@ -3,7 +3,8 @@ import { useDispatch, useSelector } from "react-redux";
 import {
   X, Upload, CheckCircle2, Loader2, AlertCircle,
   Trash2, FileText, Users,
-  RefreshCw, PlusCircle, Clock, AlertTriangle, Send, Eye
+  RefreshCw, PlusCircle, Clock, AlertTriangle, Send, Eye,
+  FolderOpen, UploadCloud,
 } from "lucide-react";
 import {
   updateSubmission,
@@ -13,18 +14,56 @@ import {
   fetchIndicatorDetails,
   addOrUpdateSubmissionInState,
 } from "../../store/slices/userIndicatorSlice";
+import {
+  linkSpotCheckDocuments,
+} from "../../store/slices/spotCheckSlice";
 import type { AppDispatch, RootState } from "../../store/store";
 import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
 import toast from "react-hot-toast";
+import SpotCheckPicker from "../../components/spotcheck/SpotCheckPicker";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Shape of the value resolved from `updateSubmission(...).unwrap()`.
+ *
+ * The backend hoists `submissionId` to the top level of the response,
+ * so we primarily read from there. `data.submissionId` and
+ * `data.submission.id` are kept as documented fallbacks for
+ * backwards compatibility with older response shapes.
+ *
+ * Exported so parent components that supply `onSubmit` can type their
+ * return value identically.
+ */
+export interface SubmissionResult {
+  message?: string;
+  submissionId?: string;               // ← primary source (hoisted by backend)
+  data?: {
+    submissionId?: string;
+    quarter?: number;
+    year?: number;
+    submission?: {
+      id?: string;
+    } & Record<string, unknown>;
+  };
+  // Legacy top-level fields, retained as fallbacks
+  id?: string;
+  submission?: {
+    id?: string;
+  } & Record<string, unknown>;
+}
 
 interface SubmissionModalProps {
   task: IIndicatorUI | null;
   onClose: () => void;
   existingSubmission?: ISubmissionUI;
-  /** Optional callback to handle submission externally. If not provided, uses Redux dispatch. */
-  onSubmit?: (formData: FormData) => Promise<void>;
+  /**
+   * Optional callback to handle submission externally. If provided, the
+   * parent takes over the network request and MUST return the submission
+   * result so the modal can attach picked spot-check documents to it.
+   * If not provided, the modal dispatches `updateSubmission` itself.
+   */
+  onSubmit?: (formData: FormData) => Promise<SubmissionResult>;
   /** Force the modal to treat the indicator as quarterly, even if reporting_cycle is "Annual". */
   forceQuarterly?: boolean;
   /** View-only mode to see submitted evidence without editing */
@@ -38,6 +77,7 @@ interface ExtendedFile {
 }
 
 type SubmitMode = "replace" | "append";
+type EvidenceTab = "upload" | "spotcheck";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,6 +98,7 @@ const SubmissionModal = ({
 }: SubmissionModalProps) => {
   const dispatch      = useDispatch<AppDispatch>();
   const { uploading } = useSelector((state: RootState) => state.userIndicators);
+  const { libraryItems } = useSelector((state: RootState) => state.spotCheck);
 
   // ── Determine if the indicator is annual ──────────────────────────────────
   const isAnnual = forceQuarterly ? false : task?.reporting_cycle === "Annual";
@@ -97,6 +138,12 @@ const SubmissionModal = ({
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showExistingEvidence, setShowExistingEvidence] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  /* ── Evidence source tab ── */
+  const [evidenceTab, setEvidenceTab] = useState<EvidenceTab>("upload");
+
+  /* ── Selected spot check documents ── */
+  const [selectedSpotCheckDocIds, setSelectedSpotCheckDocIds] = useState<string[]>([]);
 
   const syncedSubmissionIdRef = useRef<string | undefined>(undefined);
 
@@ -164,6 +211,7 @@ const SubmissionModal = ({
     setSubmitMode("replace");
     setValidationErrors({});
     setShowExistingEvidence(false);
+    setSelectedSpotCheckDocIds([]);   // ← clear picked spot-check docs on quarter switch
     syncedSubmissionIdRef.current = undefined;
   }, []);
 
@@ -248,9 +296,12 @@ const SubmissionModal = ({
   const validateForm = useCallback((): boolean => {
     const errors: Record<string, string> = {};
 
-    // Only require files if not viewOnly and not just adding documents
-    if (!viewOnly && submissionType !== "addDocuments" && fileEntries.length === 0) {
-      errors.files = "At least one evidence file is required";
+    // Require at least one source of evidence (uploaded files OR picked spot-check docs)
+    const hasAnyEvidence =
+      fileEntries.length > 0 || selectedSpotCheckDocIds.length > 0;
+
+    if (!viewOnly && submissionType !== "addDocuments" && !hasAnyEvidence) {
+      errors.files = "Add at least one file or pick from the spot check library";
     }
 
     if (fileEntries.length > 0) {
@@ -266,7 +317,7 @@ const SubmissionModal = ({
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [fileEntries, submissionType, viewOnly]);
+  }, [fileEntries, submissionType, viewOnly, selectedSpotCheckDocIds]);
 
   // ─── Submit ──────────────────────────────────────────────────────────────────
 
@@ -310,26 +361,100 @@ const SubmissionModal = ({
     setIsSubmitting(true);
 
     try {
-      let result;
-      
-      if (onSubmit) {
-        await onSubmit(formData);
-        result = { message: "Submitted successfully" };
+      // ✅ Typed as SubmissionResult — no `any` needed downstream.
+      let result: SubmissionResult;
+
+      // A submission call is only needed if there's actually something
+      // to send. If the user picked only spot-check documents and a
+      // submission already exists, the link step below will handle
+      // everything without hitting the submission endpoint.
+      const hasOwnFiles = fileEntries.length > 0;
+      const hasExistingSubmission = !!currentPeriodSubmission;
+      const needsSubmissionCall = hasOwnFiles || !hasExistingSubmission;
+
+      if (!needsSubmissionCall) {
+        console.log(
+          "📎 [SubmissionModal] No files to upload and submission already exists — skipping submission call and going straight to link."
+        );
+        result = {
+          submissionId: currentPeriodSubmission?.id,
+          data: { submissionId: currentPeriodSubmission?.id },
+        };
+      } else if (onSubmit) {
+        // ✅ Parent handles the network request and returns the full
+        // response, including the hoisted `submissionId`. We use that
+        // directly for the linking step below.
+        result = await onSubmit(formData);
+        console.log("✅ [SubmissionModal] Parent onSubmit result:", result);
       } else {
         // Use the updateSubmission thunk which handles the smart routing
-        result = await dispatch(updateSubmission({ id: task!.id, formData })).unwrap();
+        const thunkResult = await dispatch(
+          updateSubmission({ id: task!.id, formData })
+        ).unwrap();
+
+        // Cast once, at the boundary, to a documented shape.
+        result = thunkResult as SubmissionResult;
+
         console.log("✅ [SubmissionModal] Submission result:", result);
-        
+
         // ✅ IMPORTANT: Refresh the indicator details to get the updated submission
         // This ensures the UI shows the new documents immediately
         await dispatch(fetchIndicatorDetails(task!.id)).unwrap();
-        
+
         // Also update the submission in the Redux state directly
-        if (result.submission) {
+        const maybeSubmission = result.data?.submission ?? result.submission;
+        if (maybeSubmission) {
           dispatch(addOrUpdateSubmissionInState({
             indicatorId: task!.id,
-            submission: result.submission,
+            submission: maybeSubmission as unknown as ISubmissionUI,
           }));
+        }
+      }
+
+      /* ── Link picked spot-check documents to the submission ── */
+      if (selectedSpotCheckDocIds.length > 0) {
+        /* Prefer a submission ID if one already exists; otherwise tell the
+           backend to create one from the indicator coordinates. */
+        const existingId =
+          result.submissionId ??
+          result.data?.submissionId ??
+          currentPeriodSubmission?.id;
+
+        try {
+          const linkResult = await dispatch(
+            linkSpotCheckDocuments({
+              submissionId: existingId ?? "new",
+              spotCheckDocumentIds: selectedSpotCheckDocIds,
+              // Only used when submissionId is not a real UUID:
+              indicatorId: task!.id,
+              quarter: quarterValue,
+              year,
+            })
+          ).unwrap();
+
+          /* ✅ The link endpoint returns the fully-merged submission
+             (own docs + linked docs), so we can push it into Redux
+             immediately and let the registry update without waiting
+             for another refetch. */
+          if (linkResult.submission) {
+            dispatch(
+              addOrUpdateSubmissionInState({
+                indicatorId: task!.id,
+                submission: linkResult.submission as unknown as ISubmissionUI,
+              })
+            );
+          }
+
+          toast.success(
+            `${selectedSpotCheckDocIds.length} spot-check document(s) attached.`
+          );
+        } catch (linkErr) {
+          console.error("❌ [SubmissionModal] Link error:", linkErr);
+          toast.error(
+            typeof linkErr === "string"
+              ? linkErr
+              : "Failed to attach spot-check documents."
+          );
         }
       }
 
@@ -660,39 +785,86 @@ const SubmissionModal = ({
                 </div>
               )}
 
-              {/* ── Upload zone ── */}
+              {/* ── Evidence source: tab toggle + upload / spot check picker ── */}
               {!viewOnly && (
                 <div className="space-y-2.5">
                   <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">
                     Evidence Documents {!isPending && '*'}
                   </label>
-                  <div className="relative group">
-                    <input
-                      type="file"
-                      multiple
-                      disabled={isAccepted}
-                      onChange={handleFileChange}
-                      accept={ALLOWED_FILE_TYPES.join(",")}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
-                    />
-                    <div
-                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
-                        isAccepted
-                          ? "bg-slate-50 border-slate-200"
-                          : validationErrors.files
-                            ? "border-rose-300 bg-rose-50/30"
-                            : "border-slate-200 bg-white group-hover:border-[#c2a336]"
+
+                  {/* Source toggle */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEvidenceTab("upload")}
+                      className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all ${
+                        evidenceTab === "upload"
+                          ? "bg-[#1a3a32] text-white border-[#1a3a32]"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-[#1a3a32]"
                       }`}
                     >
-                      <Upload className="mx-auto mb-2 text-slate-300" size={24} />
-                      <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
-                        {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
-                      </p>
-                      <p className="text-[7px] text-slate-400 mt-1">
-                        Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF, MP4
-                      </p>
-                    </div>
+                      <UploadCloud size={12} />
+                      Upload Files
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEvidenceTab("spotcheck")}
+                      className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider transition-all relative ${
+                        evidenceTab === "spotcheck"
+                          ? "bg-[#1a3a32] text-white border-[#1a3a32]"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-[#1a3a32]"
+                      }`}
+                    >
+                      <FolderOpen size={12} />
+                      Spot Check
+                      {selectedSpotCheckDocIds.length > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-emerald-500 text-white text-[7px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+                          {selectedSpotCheckDocIds.length}
+                        </span>
+                      )}
+                    </button>
                   </div>
+
+                  {/* Upload tab: existing drop zone */}
+                  {evidenceTab === "upload" && (
+                    <div className="relative group">
+                      <input
+                        type="file"
+                        multiple
+                        disabled={isAccepted}
+                        onChange={handleFileChange}
+                        accept={ALLOWED_FILE_TYPES.join(",")}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
+                      />
+                      <div
+                        className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                          isAccepted
+                            ? "bg-slate-50 border-slate-200"
+                            : validationErrors.files
+                              ? "border-rose-300 bg-rose-50/30"
+                              : "border-slate-200 bg-white group-hover:border-[#c2a336]"
+                        }`}
+                      >
+                        <Upload className="mx-auto mb-2 text-slate-300" size={24} />
+                        <p className="text-[9px] font-black text-[#1a3a32] uppercase tracking-widest">
+                          {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
+                        </p>
+                        <p className="text-[7px] text-slate-400 mt-1">
+                          Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF, MP4
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Spot check tab: picker */}
+                  {evidenceTab === "spotcheck" && (
+                    <SpotCheckPicker
+                      selectedIds={selectedSpotCheckDocIds}
+                      onChange={setSelectedSpotCheckDocIds}
+                    />
+                  )}
+
+                  {/* Validation messages */}
                   {validationErrors.files && (
                     <p className="text-[8px] text-rose-500 px-1 flex items-center gap-1">
                       <AlertCircle size={10} /> {validationErrors.files}
@@ -706,7 +878,7 @@ const SubmissionModal = ({
                 </div>
               )}
 
-              {/* ── File cards ── */}
+              {/* ── Uploaded file cards ── */}
               <div className="space-y-4">
                 {fileEntries.map((entry, i) => (
                   <div
@@ -775,6 +947,43 @@ const SubmissionModal = ({
                   </div>
                 ))}
               </div>
+
+              {/* ── Picked spot-check summary ── */}
+              {selectedSpotCheckDocIds.length > 0 && (
+                <div className="bg-emerald-50/50 border border-emerald-200 rounded-xl p-3 space-y-2">
+                  <p className="text-[8px] font-black text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <FolderOpen size={10} />
+                    {selectedSpotCheckDocIds.length} spot-check document
+                    {selectedSpotCheckDocIds.length !== 1 ? "s" : ""} selected
+                  </p>
+                  <div className="space-y-1">
+                    {selectedSpotCheckDocIds.map((docId) => {
+                      const item = libraryItems.find((l) => l.documentId === docId);
+                      return (
+                        <div
+                          key={docId}
+                          className="flex items-center justify-between gap-2 text-[9px] text-emerald-800 bg-white/60 rounded px-2 py-1.5"
+                        >
+                          <span className="truncate">
+                            {item?.description?.trim() || item?.fileName || "Document"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedSpotCheckDocIds((prev) =>
+                                prev.filter((id) => id !== docId)
+                              )
+                            }
+                            className="shrink-0 text-emerald-600 hover:text-rose-600"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
