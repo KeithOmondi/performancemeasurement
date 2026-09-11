@@ -1,4 +1,8 @@
-import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import {
+  createSlice,
+  createAsyncThunk,
+  type PayloadAction,
+} from "@reduxjs/toolkit";
 import { apiPrivate } from "../../api/axios";
 import type { AxiosError } from "axios";
 
@@ -78,8 +82,27 @@ export interface ReportFilters {
   quarter?: number;
   year?: number;
   hasSubmission?: string;
-  submissionStatus?: string | string[]; // ✅ Allow array or string
+  submissionStatus?: string | string[];
 }
+
+/* ─── UI STATUS GROUPS ─────────────────────────────────────────────────────
+   These are the only indicator-status groups the UI exposes.
+   Maps 1:1 to real Postgres enum values in `indicator_status`.
+   ──────────────────────────────────────────────────────────────────────── */
+
+export type StatusGroup = "Complete" | "Partial" | "Incomplete";
+
+export const STATUS_GROUP_VALUES: Record<StatusGroup, string[]> = {
+  Complete: ["Completed"],
+  Partial: ["Partially Approved", "Awaiting Super Admin"],
+  Incomplete: [
+    "Pending",
+    "Awaiting Admin Approval",
+    "Rejected by Admin",
+    "Rejected by Super Admin",
+    "Correction Needed",
+  ],
+};
 
 /* ─── API RESPONSE SHAPES ─────────────────────────────────────────────────── */
 
@@ -121,41 +144,56 @@ const initialState: ReportState = {
   selectedPlanId: null,
 };
 
-/* ─── HELPER: extract error message ──────────────────────────────────────── */
+/* ─── HELPERS ─────────────────────────────────────────────────────────────── */
 
 function extractError(err: unknown, fallback: string): string {
   const error = err as AxiosError<{ message?: string }>;
   return error.response?.data?.message ?? fallback;
 }
 
-/* ─── HELPER: build query string ─────────────────────────────────────────── */
-
+/**
+ * Builds the query string sent to the backend.
+ *
+ * The backend understands:
+ *   ?status=Completed,Partially Approved,Awaiting Super Admin
+ *   ?hasSubmission=true|false
+ *   ?submissionStatus=Accepted,Verified,Partially Approved
+ *   ?perspective=...
+ *   ?assigneeId=...
+ *   ?quarter=1
+ *   ?year=2026
+ */
 function buildParams(filters: ReportFilters): string {
   const params = new URLSearchParams();
-  
+
   if (filters.perspective) params.append("perspective", filters.perspective);
   if (filters.status) params.append("status", filters.status);
   if (filters.assigneeId) params.append("assigneeId", filters.assigneeId);
   if (filters.quarter) params.append("quarter", String(filters.quarter));
   if (filters.year) params.append("year", String(filters.year));
   if (filters.hasSubmission) params.append("hasSubmission", filters.hasSubmission);
-  
-  // ✅ Handle submissionStatus as array or string
+
   if (filters.submissionStatus) {
-    const statuses = Array.isArray(filters.submissionStatus) 
-      ? filters.submissionStatus 
-      : filters.submissionStatus.split(',');
-    
-    // Only send valid statuses that the backend understands
-    const validStatuses = statuses.filter(s => 
-      ['Accepted', 'Verified', 'Partially Approved', 'Pending', 'Rejected'].includes(s)
+    const statuses = Array.isArray(filters.submissionStatus)
+      ? filters.submissionStatus
+      : filters.submissionStatus.split(",");
+
+    const valid = statuses.filter((s) =>
+      [
+        "Accepted",
+        "Verified",
+        "Partially Approved",
+        "Pending",
+        "Rejected",
+        "Correction Needed",
+      ].includes(s)
     );
-    
-    if (validStatuses.length > 0) {
-      params.append("submissionStatus", validStatuses.join(','));
+
+    if (valid.length > 0) {
+      params.append("submissionStatus", valid.join(","));
     }
   }
-  
+
   return params.toString();
 }
 
@@ -165,81 +203,68 @@ export const fetchTrackerReport = createAsyncThunk<
   TrackerReportResponse,
   ReportFilters,
   { rejectValue: string }
->(
-  "reports/fetchTracker",
-  async (filters = {}, { rejectWithValue }) => {
-    try {
-      const queryString = buildParams(filters);
-      const url = `/reports${queryString ? `?${queryString}` : ''}`;
-      const res = await apiPrivate.get<TrackerReportResponse>(url);
-      return res.data;
-    } catch (err) {
-      return rejectWithValue(extractError(err, "Failed to fetch tracker report."));
-    }
+>("reports/fetchTracker", async (filters = {}, { rejectWithValue }) => {
+  try {
+    const qs = buildParams(filters);
+    const url = `/reports${qs ? `?${qs}` : ""}`;
+    const res = await apiPrivate.get<TrackerReportResponse>(url);
+    return res.data;
+  } catch (err) {
+    return rejectWithValue(extractError(err, "Failed to fetch tracker report."));
   }
-);
+});
 
 export const fetchReportByPlan = createAsyncThunk<
   TrackerReportResponse,
   string,
   { rejectValue: string }
->(
-  "reports/fetchByPlan",
-  async (planId, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get<TrackerReportResponse>(`/reports/${planId}`);
-      return res.data;
-    } catch (err) {
-      return rejectWithValue(extractError(err, "Failed to fetch plan report."));
-    }
+>("reports/fetchByPlan", async (planId, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<TrackerReportResponse>(`/reports/${planId}`);
+    return res.data;
+  } catch (err) {
+    return rejectWithValue(extractError(err, "Failed to fetch plan report."));
   }
-);
+});
 
 export const fetchReportSummary = createAsyncThunk<
   SummaryResponse,
   void,
   { rejectValue: string }
->(
-  "reports/fetchSummary",
-  async (_, { rejectWithValue }) => {
-    try {
-      const res = await apiPrivate.get<SummaryResponse>("/reports/summary");
-      return res.data;
-    } catch (err) {
-      return rejectWithValue(extractError(err, "Failed to fetch report summary."));
-    }
+>("reports/fetchSummary", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<SummaryResponse>("/reports/summary");
+    return res.data;
+  } catch (err) {
+    return rejectWithValue(extractError(err, "Failed to fetch report summary."));
   }
-);
+});
 
 export const downloadTrackerPdf = createAsyncThunk<
   boolean,
   ReportFilters,
   { rejectValue: string }
->(
-  "reports/downloadPdf",
-  async (filters = {}, { rejectWithValue }) => {
-    try {
-      const queryString = buildParams(filters);
-      const url = `/reports/pdf${queryString ? `?${queryString}` : ''}`;
-      
-      const res = await apiPrivate.get<Blob>(
-        url,
-        { responseType: "blob" }
-      );
+>("reports/downloadPdf", async (filters = {}, { rejectWithValue }) => {
+  try {
+    const qs = buildParams(filters);
+    const url = `/reports/pdf${qs ? `?${qs}` : ""}`;
 
-      const urlBlob = URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
-      const link = document.createElement("a");
-      link.href = urlBlob;
-      link.download = `tracker-report-${new Date().toISOString().slice(0, 10)}.pdf`;
-      link.click();
-      URL.revokeObjectURL(urlBlob);
+    const res = await apiPrivate.get<Blob>(url, { responseType: "blob" });
 
-      return true;
-    } catch (err) {
-      return rejectWithValue(extractError(err, "Failed to download PDF."));
-    }
+    const blobUrl = URL.createObjectURL(
+      new Blob([res.data], { type: "application/pdf" })
+    );
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = `tracker-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+    link.click();
+    URL.revokeObjectURL(blobUrl);
+
+    return true;
+  } catch (err) {
+    return rejectWithValue(extractError(err, "Failed to download PDF."));
   }
-);
+});
 
 /* ─── SLICE ───────────────────────────────────────────────────────────────── */
 
@@ -259,60 +284,61 @@ const reportSlice = createSlice({
     clearReportError(state) {
       state.error = null;
     },
-    // ✅ Set filter to show only Completed and Partially Approved
-    setSubmittedFilter(state) {
+
+    /**
+     * Set (or clear) the "status group" filter.
+     *
+     * Passing `null` clears the status filter, which means "show every
+     * status". This is the ONLY place the UI translates groups to raw
+     * enum values.
+     */
+    setStatusGroupFilter(
+      state,
+      action: PayloadAction<StatusGroup | null>
+    ) {
+      if (!action.payload) {
+        const { status, ...rest } = state.filters;
+        void status;
+        state.filters = rest;
+        return;
+      }
+
       state.filters = {
         ...state.filters,
-        hasSubmission: "true",
-        submissionStatus: "Accepted,Verified,Partially Approved" // ✅ Use comma-separated string
+        status: STATUS_GROUP_VALUES[action.payload].join(","),
       };
     },
-    clearSubmissionFilters(state) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { hasSubmission, submissionStatus, ...rest } = state.filters;
-      state.filters = rest;
-    },
-    // ✅ Toggle submission filter on/off
+
+    /**
+     * Toggle the "has submission" filter.
+     *
+     * `true`  → only indicators with at least one submission whose
+     *           review_status is Accepted / Verified / Partially Approved
+     * `false` → remove the submission filter entirely
+     */
     toggleSubmissionFilter(state, action: PayloadAction<boolean>) {
       if (action.payload) {
         state.filters = {
           ...state.filters,
           hasSubmission: "true",
-          submissionStatus: "Accepted,Verified,Partially Approved"
+          submissionStatus: "Accepted,Verified,Partially Approved",
         };
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { hasSubmission, submissionStatus, ...rest } = state.filters;
+        void hasSubmission;
+        void submissionStatus;
         state.filters = rest;
       }
     },
-    // ✅ Set specific submission status filter
-    setSubmissionStatusFilter(state, action: PayloadAction<string[]>) {
-      const statuses = action.payload.filter(s => 
-        ['Accepted', 'Verified', 'Partially Approved', 'Pending', 'Rejected'].includes(s)
-      );
-      
-      if (statuses.length > 0) {
-        state.filters = {
-          ...state.filters,
-          hasSubmission: "true",
-          submissionStatus: statuses.join(',')
-        };
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { hasSubmission, submissionStatus, ...rest } = state.filters;
-        state.filters = rest;
-      }
+
+    /**
+     * Reset everything except the perspective — useful for a "Clear" button.
+     */
+    resetReportFilters(state) {
+      state.filters = {};
     },
-    // ✅ Reset to show all (including those without submissions)
-    resetToAllIndicators(state) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { hasSubmission, submissionStatus, ...rest } = state.filters;
-      state.filters = rest;
-    }
   },
   extraReducers: (builder) => {
-    /* fetchTrackerReport */
     builder
       .addCase(fetchTrackerReport.pending, (state) => {
         state.loading = true;
@@ -328,7 +354,6 @@ const reportSlice = createSlice({
         state.error = action.payload ?? "Something went wrong.";
       });
 
-    /* fetchReportByPlan */
     builder
       .addCase(fetchReportByPlan.pending, (state) => {
         state.loading = true;
@@ -344,7 +369,6 @@ const reportSlice = createSlice({
         state.error = action.payload ?? "Something went wrong.";
       });
 
-    /* fetchReportSummary */
     builder
       .addCase(fetchReportSummary.pending, (state) => {
         state.summaryLoading = true;
@@ -359,7 +383,6 @@ const reportSlice = createSlice({
         state.error = action.payload ?? "Something went wrong.";
       });
 
-    /* downloadTrackerPdf */
     builder
       .addCase(downloadTrackerPdf.pending, (state) => {
         state.pdfLoading = true;
@@ -380,11 +403,9 @@ export const {
   clearReportFilters,
   setSelectedPlan,
   clearReportError,
-  setSubmittedFilter,
-  clearSubmissionFilters,
+  setStatusGroupFilter,
   toggleSubmissionFilter,
-  setSubmissionStatusFilter,
-  resetToAllIndicators,
+  resetReportFilters,
 } = reportSlice.actions;
 
 export default reportSlice.reducer;

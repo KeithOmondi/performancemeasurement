@@ -1,22 +1,23 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useCallback } from "react";
 import {
   fetchTrackerReport,
-  fetchReportSummary,
   downloadTrackerPdf,
-  clearReportFilters,
+  setStatusGroupFilter,
+  toggleSubmissionFilter,
+  resetReportFilters,
   type IPerspective,
   type IIndicator,
   type ISubmission,
-  type ReportFilters,
+  type StatusGroup,
+  STATUS_GROUP_VALUES,
 } from "../../store/slices/reportSlice";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import ORHC from "../../assets/ORHC.jpg";
 
-/* ─── STATUS GROUPS ─────────────────────────────────────────────────
-   These are the semantic groups the UI shows. The badge uses them,
-   and the filter dropdown uses them.
+/* ─── STATUS GROUP HELPERS ─────────────────────────────────────────────
+   The UI shows three semantic buckets. The backend receives the raw
+   enum values that make up each bucket via the ?status= query param.
    ──────────────────────────────────────────────────────────────────── */
-type StatusGroup = "Complete" | "Partial" | "Incomplete";
 
 const getStatusGroup = (status: string | undefined): StatusGroup => {
   if (status === "Completed") return "Complete";
@@ -26,21 +27,8 @@ const getStatusGroup = (status: string | undefined): StatusGroup => {
   return "Incomplete";
 };
 
-/* Maps each UI group to the actual DB status values it covers. */
-const STATUS_GROUP_VALUES: Record<StatusGroup, string[]> = {
-  Complete: ["Completed"],
-  Partial: ["Partially Approved", "Awaiting Super Admin"],
-  Incomplete: [
-    "Pending",
-    "Awaiting Admin Approval",
-    "Rejected by Admin",
-    "Rejected by Super Admin",
-    "Correction Needed",
-    "Unassigned",
-  ],
-};
-
 /* ─── STATUS BADGE ──────────────────────────────────────────────────── */
+
 const StatusBadge = ({ status }: { status: string }) => {
   const group = getStatusGroup(status);
 
@@ -79,31 +67,43 @@ const StatusBadge = ({ status }: { status: string }) => {
 };
 
 /* ─── EVIDENCE CELL ────────────────────────────────────────────────── */
+
 const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   if (!submissions || submissions.length === 0) {
-    return <span className="text-slate-400 text-[10px] italic">No evidence</span>;
+    return (
+      <span className="text-slate-400 text-[10px] italic">No evidence</span>
+    );
   }
 
-  const sortedSubmissions = [...submissions].sort((a, b) => {
+  const sorted = [...submissions].sort((a, b) => {
     if (a.year !== b.year) return a.year - b.year;
     return a.quarter - b.quarter;
   });
 
-  const validSubmissions = sortedSubmissions.filter(
-    (s) => s.reviewStatus !== "Rejected" && s.reviewStatus !== "Correction Needed"
+  const valid = sorted.filter(
+    (s) =>
+      s.reviewStatus !== "Rejected" &&
+      s.reviewStatus !== "Correction Needed"
   );
 
-  if (validSubmissions.length === 0) {
-    return <span className="text-slate-400 text-[10px] italic">No valid evidence</span>;
+  if (valid.length === 0) {
+    return (
+      <span className="text-slate-400 text-[10px] italic">
+        No valid evidence
+      </span>
+    );
   }
 
   return (
     <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-      {validSubmissions.map((sub, idx) => {
-        const periodLabel = sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`;
+      {valid.map((sub, idx) => {
+        const periodLabel =
+          sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`;
         const hasNotes = sub.notes?.trim();
-        const docsWithDesc = sub.documents?.filter((d) => d.description?.trim()) || [];
-        const docsToShow = docsWithDesc.length > 0 ? docsWithDesc : sub.documents || [];
+        const docsWithDesc =
+          sub.documents?.filter((d) => d.description?.trim()) || [];
+        const docsToShow =
+          docsWithDesc.length > 0 ? docsWithDesc : sub.documents || [];
 
         if (!hasNotes && docsToShow.length === 0) return null;
 
@@ -138,10 +138,17 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
             {docsToShow.length > 0 && (
               <ul className="space-y-1 pl-2">
                 {docsToShow.map((doc, docIdx) => (
-                  <li key={docIdx} className="flex gap-2 text-[10px] text-slate-700">
-                    <span className="text-[#c2a336] mt-0.5 shrink-0">❖</span>
+                  <li
+                    key={docIdx}
+                    className="flex gap-2 text-[10px] text-slate-700"
+                  >
+                    <span className="text-[#c2a336] mt-0.5 shrink-0">
+                      ❖
+                    </span>
                     <span className="font-medium break-words">
-                      {doc.description?.trim() || doc.fileName || "Document"}
+                      {doc.description?.trim() ||
+                        doc.fileName ||
+                        "Document"}
                     </span>
                   </li>
                 ))}
@@ -154,11 +161,15 @@ const EvidenceCell = ({ submissions }: { submissions: ISubmission[] }) => {
   );
 };
 
-/* ─── SUMMARY CARDS ────────────────────────────────────────────────── */
-const SummaryCards = () => {
-  const { summary, summaryLoading } = useAppSelector((s) => s.reports);
+/* ─── SUMMARY CARDS ─────────────────────────────────────────────────
+   Computed from the `raw` array the tracker endpoint returns, so the
+   cards always agree with whatever the table is currently showing.
+   ────────────────────────────────────────────────────────────────── */
 
-  if (summaryLoading) {
+const SummaryCards = () => {
+  const { raw, loading } = useAppSelector((s) => s.reports);
+
+  if (loading && raw.length === 0) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -174,39 +185,57 @@ const SummaryCards = () => {
     );
   }
 
-  const totals = summary.reduce(
-    (acc, s) => ({
-      total: acc.total + s.totalIndicators,
-      completed: acc.completed + s.completed,
-      awaitingReview: acc.awaitingReview + s.awaitingReview,
-      overdue: acc.overdue + s.overdue,
-      hasSubmissions: acc.hasSubmissions + (s.hasSubmissions || 0),
-      submittedComplete: acc.submittedComplete + (s.submittedComplete || 0),
-    }),
-    {
-      total: 0,
-      completed: 0,
-      awaitingReview: 0,
-      overdue: 0,
-      hasSubmissions: 0,
-      submittedComplete: 0,
-    }
-  );
+  const total = raw.length;
+  const completed = raw.filter((i) => i.status === "Completed").length;
+  const partial = raw.filter(
+    (i) =>
+      i.status === "Partially Approved" ||
+      i.status === "Awaiting Super Admin"
+  ).length;
+  const incomplete = total - completed - partial;
+  const withSubmission = raw.filter(
+    (i) => i.submissions && i.submissions.length > 0
+  ).length;
 
   const submissionRate =
-    totals.total > 0 ? Math.round((totals.hasSubmissions / totals.total) * 100) : 0;
+    total > 0 ? Math.round((withSubmission / total) * 100) : 0;
 
-  const cards: { label: string; value: number; colour: string; bg: string }[] = [
-    { label: "Total Indicators", value: totals.total, colour: "text-[#1d3331]", bg: "bg-slate-50" },
-    { label: "Submitted", value: totals.hasSubmissions, colour: "text-blue-700", bg: "bg-blue-50" },
-    { label: "Complete", value: totals.completed, colour: "text-emerald-700", bg: "bg-emerald-50" },
+  const cards: {
+    label: string;
+    value: number;
+    colour: string;
+    bg: string;
+  }[] = [
+    {
+      label: "Total Indicators",
+      value: total,
+      colour: "text-[#1d3331]",
+      bg: "bg-slate-50",
+    },
+    {
+      label: "With Submissions",
+      value: withSubmission,
+      colour: "text-blue-700",
+      bg: "bg-blue-50",
+    },
+    {
+      label: "Complete",
+      value: completed,
+      colour: "text-emerald-700",
+      bg: "bg-emerald-50",
+    },
+    {
+      label: "Partial",
+      value: partial,
+      colour: "text-purple-700",
+      bg: "bg-purple-50",
+    },
     {
       label: "Incomplete",
-      value: totals.total - totals.hasSubmissions,
+      value: incomplete,
       colour: "text-amber-700",
       bg: "bg-amber-50",
     },
-    { label: "Overdue", value: totals.overdue, colour: "text-red-600", bg: "bg-red-50" },
   ];
 
   return (
@@ -220,7 +249,9 @@ const SummaryCards = () => {
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
               {c.label}
             </p>
-            <p className={`text-2xl font-black font-serif ${c.colour}`}>{c.value}</p>
+            <p className={`text-2xl font-black font-serif ${c.colour}`}>
+              {c.value}
+            </p>
           </div>
         ))}
       </div>
@@ -230,7 +261,9 @@ const SummaryCards = () => {
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">
             Submission Rate
           </span>
-          <span className="text-sm font-black text-blue-700">{submissionRate}%</span>
+          <span className="text-sm font-black text-blue-700">
+            {submissionRate}%
+          </span>
         </div>
         <div className="w-full bg-slate-200 rounded-full h-2.5">
           <div
@@ -239,24 +272,33 @@ const SummaryCards = () => {
           />
         </div>
         <p className="text-[9px] text-slate-400 mt-1.5">
-          {totals.hasSubmissions} of {totals.total} indicators have been submitted
+          {withSubmission} of {total} indicators have at least one submission
         </p>
       </div>
     </>
   );
 };
 
-/* ─── LOADING SKELETON ────────────────────────────────────────────── */
+/* ─── LOADING SKELETON ─────────────────────────────────────────────── */
+
 const TableSkeleton = () => (
   <div className="space-y-2">
     {Array.from({ length: 5 }).map((_, i) => (
-      <div key={i} className="h-12 bg-slate-200 rounded-xl animate-pulse" />
+      <div
+        key={i}
+        className="h-12 bg-slate-200 rounded-xl animate-pulse"
+      />
     ))}
   </div>
 );
 
-/* ─── TABLE PERSPECTIVE ROWS ──────────────────────────────────────── */
-const TablePerspectiveRows = ({ perspective }: { perspective: IPerspective }) => {
+/* ─── TABLE PERSPECTIVE ROWS ───────────────────────────────────────── */
+
+const TablePerspectiveRows = ({
+  perspective,
+}: {
+  perspective: IPerspective;
+}) => {
   type FlatRow = {
     objective: IPerspective["objectives"][number];
     activity: IPerspective["objectives"][number]["activities"][number];
@@ -296,17 +338,21 @@ const TablePerspectiveRows = ({ perspective }: { perspective: IPerspective }) =>
           isFirstForObjective = prevRow.objective.id !== objective.id;
         }
 
-        const indicatorLabel = objective.title?.trim() || activity.description;
-        const hasSubmissions = indicator.submissions && indicator.submissions.length > 0;
+        const indicatorLabel =
+          objective.title?.trim() || activity.description;
+        const hasSubmissions =
+          indicator.submissions && indicator.submissions.length > 0;
 
         return (
           <tr
             key={indicator.indicatorId}
             className="align-top hover:bg-slate-50/80 transition-colors"
           >
-            {/* Indicators column */}
+            {/* Indicators */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] font-bold text-[#1a2c2c]">
-              {isFirstForObjective && <div className="font-bold">{indicatorLabel}</div>}
+              {isFirstForObjective && (
+                <div className="font-bold">{indicatorLabel}</div>
+              )}
             </td>
 
             {/* Unit of Measure */}
@@ -318,54 +364,69 @@ const TablePerspectiveRows = ({ perspective }: { perspective: IPerspective }) =>
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
               {activity.description}
 
-              {indicator.submissions && indicator.submissions.length > 0 && (
-                <div className="mt-1 space-y-0.5">
-                  {[...indicator.submissions]
-                    .sort((a, b) => {
-                      if (a.year !== b.year) return a.year - b.year;
-                      return a.quarter - b.quarter;
-                    })
-                    .filter(
-                      (s) =>
-                        s.reviewStatus !== "Rejected" &&
-                        s.reviewStatus !== "Correction Needed"
-                    )
-                    .map((sub, idx) => {
-                      const periodLabel = sub.quarter === 0 ? "Annual" : `Q${sub.quarter}`;
-                      return (
-                        <div key={idx} className="text-[9px] text-slate-500">
-                          <span className="font-medium">
-                            {periodLabel} {sub.year}:
-                          </span>
-                          <span
-                            className={`ml-1 ${
-                              sub.reviewStatus === "Accepted"
-                                ? "text-emerald-600"
-                                : sub.reviewStatus === "Verified"
-                                ? "text-blue-600"
-                                : sub.reviewStatus === "Partially Approved"
-                                ? "text-purple-600"
-                                : "text-amber-600"
-                            }`}
+              {indicator.submissions &&
+                indicator.submissions.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {[...indicator.submissions]
+                      .sort((a, b) => {
+                        if (a.year !== b.year)
+                          return a.year - b.year;
+                        return a.quarter - b.quarter;
+                      })
+                      .filter(
+                        (s) =>
+                          s.reviewStatus !== "Rejected" &&
+                          s.reviewStatus !== "Correction Needed"
+                      )
+                      .map((sub, idx) => {
+                        const periodLabel =
+                          sub.quarter === 0
+                            ? "Annual"
+                            : `Q${sub.quarter}`;
+                        return (
+                          <div
+                            key={idx}
+                            className="text-[9px] text-slate-500"
                           >
-                            {sub.reviewStatus}
-                          </span>
-                          {sub.documents && sub.documents.length > 0 && (
-                            <span className="ml-1 text-slate-400">
-                              ({sub.documents.length} doc{sub.documents.length !== 1 ? "s" : ""})
+                            <span className="font-medium">
+                              {periodLabel} {sub.year}:
                             </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
+                            <span
+                              className={`ml-1 ${
+                                sub.reviewStatus === "Accepted"
+                                  ? "text-emerald-600"
+                                  : sub.reviewStatus === "Verified"
+                                  ? "text-blue-600"
+                                  : sub.reviewStatus ===
+                                    "Partially Approved"
+                                  ? "text-purple-600"
+                                  : "text-amber-600"
+                              }`}
+                            >
+                              {sub.reviewStatus}
+                            </span>
+                            {sub.documents &&
+                              sub.documents.length > 0 && (
+                                <span className="ml-1 text-slate-400">
+                                  ({sub.documents.length} doc
+                                  {sub.documents.length !== 1
+                                    ? "s"
+                                    : ""}
+                                  )
+                                </span>
+                              )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
 
               {indicator.instructions && (
                 <p className="mt-1 text-[10px] text-slate-400 italic font-medium">
                   {indicator.instructions}
                 </p>
               )}
+
               {!hasSubmissions && (
                 <p className="mt-1 text-[9px] font-bold text-amber-500 uppercase tracking-wider">
                   No Submission
@@ -375,7 +436,10 @@ const TablePerspectiveRows = ({ perspective }: { perspective: IPerspective }) =>
 
             {/* Responsibility */}
             <td className="border border-slate-200 px-4 py-3 text-[11px] text-slate-700">
-              <div className="font-semibold" title={indicator.assigneeDisplayName || undefined}>
+              <div
+                className="font-semibold"
+                title={indicator.assigneeDisplayName || undefined}
+              >
                 {indicator.assigneeDisplayName || "Unassigned"}
               </div>
             </td>
@@ -397,86 +461,75 @@ const TablePerspectiveRows = ({ perspective }: { perspective: IPerspective }) =>
 };
 
 /* ─── MAIN COMPONENT ───────────────────────────────────────────────── */
+
 const UserReports = () => {
   const dispatch = useAppDispatch();
-  const { data, loading, error, filters, pdfLoading } = useAppSelector((s) => s.reports);
+  const { data, loading, error, filters, pdfLoading } = useAppSelector(
+    (s) => s.reports
+  );
 
-  const [statusFilter, setStatusFilter] = useState<StatusGroup | "all">("all");
-  const [viewMode, setViewMode] = useState<"all" | "submitted">("all");
+  /* ── Derive UI-level view-mode & status-group from Redux filters ── */
 
-  /* Send the group to the API as a comma-separated list of real statuses.
-     If the backend doesn't support that, we also filter client-side below —
-     so it works either way. */
-  const buildFilters = useCallback((): ReportFilters => {
-    const apiFilters: ReportFilters = {};
+  const statusFilter: StatusGroup | "all" = (() => {
+    if (!filters.status) return "all";
 
-    if (viewMode === "submitted") {
-      apiFilters.hasSubmission = "true";
-      apiFilters.submissionStatus = "Accepted,Verified,Partially Approved";
+    const values = filters.status.split(",").map((s) => s.trim());
+
+    if (values.length === 1 && values[0] === "Completed") {
+      return "Complete";
     }
 
-    if (statusFilter !== "all") {
-      apiFilters.status = STATUS_GROUP_VALUES[statusFilter].join(",");
+    const partial = new Set(STATUS_GROUP_VALUES.Partial);
+    if (
+      values.length > 0 &&
+      values.every((v) => partial.has(v))
+    ) {
+      return "Partial";
     }
 
-    return apiFilters;
-  }, [statusFilter, viewMode]);
+    const incomplete = new Set(STATUS_GROUP_VALUES.Incomplete);
+    if (
+      values.length > 0 &&
+      values.every((v) => incomplete.has(v))
+    ) {
+      return "Incomplete";
+    }
 
+    return "all";
+  })();
+
+  const viewMode: "all" | "submitted" =
+    filters.hasSubmission === "true" ? "submitted" : "all";
+
+  /* ── Refetch the tracker whenever filters change ── */
   useEffect(() => {
-    dispatch(fetchReportSummary());
-  }, [dispatch]);
+    dispatch(fetchTrackerReport(filters));
+  }, [dispatch, filters]);
 
-  useEffect(() => {
-    dispatch(fetchTrackerReport(buildFilters()));
-  }, [dispatch, buildFilters]);
+  /* ── Handlers that mutate Redux instead of local state ── */
 
-  /* Client-side safety net: even if the backend ignores the comma-separated
-     status list, we filter the returned data by the same group. This is
-     cheap and guarantees the dropdown behaves correctly. */
-  const visibleData: IPerspective[] = useMemo(() => {
-    if (statusFilter === "all") return data;
+  const handleSetViewMode = (mode: "all" | "submitted") => {
+    dispatch(toggleSubmissionFilter(mode === "submitted"));
+  };
 
-    return data
-      .map((perspective) => {
-        const objectives = perspective.objectives
-          .map((objective) => {
-            const activities = objective.activities
-              .map((activity) => ({
-                ...activity,
-                indicators: activity.indicators.filter(
-                  (i) => getStatusGroup(i.status) === statusFilter
-                ),
-              }))
-              .filter((a) => a.indicators.length > 0);
-            return { ...objective, activities };
-          })
-          .filter((o) => o.activities.length > 0);
-        return { ...perspective, objectives };
-      })
-      .filter((p) => p.objectives.length > 0);
-  }, [data, statusFilter]);
-
-  const handleDownloadPdf = () => {
-    const pdfFilters: ReportFilters = { ...filters };
-    if (viewMode === "submitted") {
-      pdfFilters.hasSubmission = "true";
-      pdfFilters.submissionStatus = "Accepted,Verified,Partially Approved";
-    }
-    if (statusFilter !== "all") {
-      pdfFilters.status = STATUS_GROUP_VALUES[statusFilter].join(",");
-    }
-    dispatch(downloadTrackerPdf(pdfFilters));
+  const handleSetStatusGroup = (group: StatusGroup | "all") => {
+    dispatch(setStatusGroupFilter(group === "all" ? null : group));
   };
 
   const handleClearFilters = () => {
-    setStatusFilter("all");
-    setViewMode("all");
-    dispatch(clearReportFilters());
+    dispatch(resetReportFilters());
   };
 
   const handleRefresh = useCallback(() => {
-    dispatch(fetchTrackerReport(buildFilters()));
-  }, [dispatch, buildFilters]);
+    dispatch(fetchTrackerReport(filters));
+  }, [dispatch, filters]);
+
+  const handleDownloadPdf = () => {
+    dispatch(downloadTrackerPdf(filters));
+  };
+
+  const hasActiveFilter =
+    statusFilter !== "all" || viewMode !== "all";
 
   return (
     <div className="min-h-screen bg-[#fcfcf7] p-4 md:p-8 font-sans text-[#1a2c2c]">
@@ -484,7 +537,11 @@ const UserReports = () => {
       <div className="mb-8 text-center">
         <div className="flex items-center justify-center mb-4">
           <div className="w-32 h-20 rounded-lg overflow-hidden flex items-center justify-center bg-white shadow-sm border border-slate-200">
-            <img src={ORHC} alt="ORHC logo" className="w-full h-full object-contain p-2" />
+            <img
+              src={ORHC}
+              alt="ORHC logo"
+              className="w-full h-full object-contain p-2"
+            />
           </div>
         </div>
         <h1 className="text-xl font-black font-serif text-[#1d3331] tracking-tight uppercase">
@@ -502,17 +559,17 @@ const UserReports = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex rounded-xl border border-slate-200 overflow-hidden">
             <button
-              onClick={() => setViewMode("submitted")}
+              onClick={() => handleSetViewMode("submitted")}
               className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
                 viewMode === "submitted"
                   ? "bg-emerald-600 text-white"
                   : "bg-white text-slate-500 hover:bg-slate-50"
               }`}
             >
-              Submitted Only
+              Has Approved Submission
             </button>
             <button
-              onClick={() => setViewMode("all")}
+              onClick={() => handleSetViewMode("all")}
               className={`px-4 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all ${
                 viewMode === "all"
                   ? "bg-[#1d3331] text-white"
@@ -525,7 +582,11 @@ const UserReports = () => {
 
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusGroup | "all")}
+            onChange={(e) =>
+              handleSetStatusGroup(
+                e.target.value as StatusGroup | "all"
+              )
+            }
             className="text-[9px] font-black uppercase tracking-wider border border-slate-200 rounded-xl px-4 py-2.5 bg-white text-slate-600
                        focus:outline-none focus:ring-2 focus:ring-[#1d3331]/20 focus:border-[#1d3331] transition-all"
           >
@@ -535,7 +596,7 @@ const UserReports = () => {
             <option value="Incomplete">Incomplete</option>
           </select>
 
-          {(statusFilter !== "all" || viewMode !== "all") && (
+          {hasActiveFilter && (
             <button
               onClick={handleClearFilters}
               className="text-[9px] font-black uppercase tracking-wider text-slate-500 hover:text-red-600 border border-slate-200
@@ -568,7 +629,7 @@ const UserReports = () => {
         {viewMode === "submitted" && (
           <div className="flex items-center gap-2 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
             <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full animate-pulse" />
-            Showing Completed & Partially Approved
+            Only indicators with an approved submission
           </div>
         )}
       </div>
@@ -608,7 +669,7 @@ const UserReports = () => {
             </thead>
 
             <tbody>
-              {visibleData.length === 0 ? (
+              {data.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -618,7 +679,7 @@ const UserReports = () => {
                   </td>
                 </tr>
               ) : (
-                visibleData.map((perspective) => (
+                data.map((perspective) => (
                   <TablePerspectiveRows
                     key={perspective.perspective}
                     perspective={perspective}
@@ -632,7 +693,7 @@ const UserReports = () => {
 
       <div className="mt-6 text-center">
         <p className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-300">
-          RHC PMMU Tracker · FY 2024/2025 · Generated{" "}
+          RHC PMMU Tracker · FY 2025/2026 · Generated{" "}
           {new Date().toLocaleDateString("en-KE", {
             day: "numeric",
             month: "long",
