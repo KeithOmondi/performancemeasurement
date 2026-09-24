@@ -37,6 +37,16 @@ type FilterType = "all" | "quarterly" | "annual" | "resubmitted" | "sentback" | 
 const flattenSubmissions = (submissions: ISubmissionsByPeriod | undefined) =>
   Object.values(submissions ?? {}).flat();
 
+/**
+ * ✅ CRITICAL FIX: Check if an indicator actually has a submission
+ * that is still awaiting review. If all submissions are Accepted/Rejected,
+ * it should NOT be in the queue.
+ */
+const hasPendingSubmission = (indicator: IAdminIndicator): boolean => {
+  const submissions = flattenSubmissions(indicator.submissions);
+  return submissions.some((s) => s.reviewStatus === "Pending");
+};
+
 const hasResubmission = (indicator: IAdminIndicator): boolean =>
   flattenSubmissions(indicator.submissions).some(
     (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
@@ -54,8 +64,7 @@ const getLatestPendingSubmission = (indicator: IAdminIndicator) => {
 };
 
 /**
- * Count documents only from Pending submissions — those are what the admin
- * is actually reviewing right now. Rejected/Verified rows may carry old docs.
+ * Count documents only from Pending submissions.
  */
 const getDocumentCount = (indicator: IAdminIndicator): number => {
   const submissions = flattenSubmissions(indicator.submissions);
@@ -69,17 +78,6 @@ const getDocumentNames = (indicator: IAdminIndicator): string[] => {
   return submissions
     .filter((s) => s.reviewStatus === "Pending")
     .flatMap((sub) => (sub.documents ?? []).map((doc) => doc.fileName));
-};
-
-/**
- * An indicator qualifies for the audit queue only when at least one
- * of its Pending submissions has one or more attached documents.
- */
-const hasPendingDocuments = (indicator: IAdminIndicator): boolean => {
-  const submissions = flattenSubmissions(indicator.submissions);
-  return submissions
-    .filter((s) => s.reviewStatus === "Pending")
-    .some((s) => (s.documents?.length ?? 0) > 0);
 };
 
 /**
@@ -99,6 +97,33 @@ const formatSubmissionDate = (dateString?: string): string => {
   });
 };
 
+/**
+ * Safely determines what to display in the "Cycle Type" column.
+ */
+const getDisplayCycle = (indicator: IAdminIndicator): { label: string; isAnnual: boolean } => {
+  if (indicator.reportingCycle === "Annual") {
+    return { label: "Annual Cycle", isAnnual: true };
+  }
+
+  const latestPending = getLatestPendingSubmission(indicator);
+  let quarterLabel = "Quarterly";
+
+  const pendingWithPeriod = latestPending as (typeof latestPending & { period?: string });
+
+  if (pendingWithPeriod?.period) {
+    const match = String(pendingWithPeriod.period).match(/Q[1-4]/i);
+    if (match) {
+      quarterLabel = `Quarter ${match[0].replace(/Q/i, "")}`;
+    } else {
+      quarterLabel = String(pendingWithPeriod.period);
+    }
+  } else if (indicator.activeQuarter) {
+    quarterLabel = `Quarter ${indicator.activeQuarter}`;
+  }
+
+  return { label: quarterLabel, isAnnual: false };
+};
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const AdminPendingReviews = () => {
@@ -115,7 +140,6 @@ const AdminPendingReviews = () => {
     isLoading 
   } = useAppSelector((state) => state.adminIndicators);
 
-  // ✅ Initial fetch - load all indicators and sent back/returned lists
   useEffect(() => {
     dispatch(fetchAllAdminIndicators({ status: "Awaiting Admin Approval" }));
     dispatch(fetchSentBackIndicators());
@@ -130,35 +154,26 @@ const AdminPendingReviews = () => {
     [navigate]
   );
 
-  /**
-   * Base pool: only indicators that have at least one document on a Pending
-   * submission. Indicators with 0 documents are intentionally excluded.
-   */
-  const withDocuments = useMemo(
-    () => pendingAdminReview.filter(hasPendingDocuments),
-    [pendingAdminReview]
-  );
-
-  // ✅ Combine all indicator sources for the main view
+  // ✅ FIXED: Strictly filter out any indicator that does not have a Pending submission.
+  // This removes items that are 100% complete, Accepted, or Rejected.
   const allIndicators = useMemo(() => {
-    const combined = [...withDocuments];
+    const combined = [...pendingAdminReview];
     
-    // Add sent back indicators if not already in the list
     sentBackIndicators.forEach((ind) => {
       if (!combined.some((i) => i.id === ind.id)) {
         combined.push(ind);
       }
     });
     
-    // Add returned indicators if not already in the list
     returnedIndicators.forEach((ind) => {
       if (!combined.some((i) => i.id === ind.id)) {
         combined.push(ind);
       }
     });
     
-    return combined;
-  }, [withDocuments, sentBackIndicators, returnedIndicators]);
+    // 🚨 THE FIX: Only keep indicators that actually have a Pending submission
+    return combined.filter(hasPendingSubmission);
+  }, [pendingAdminReview, sentBackIndicators, returnedIndicators]);
 
   // Counts derived from the combined pool
   const counts = useMemo(
@@ -174,7 +189,6 @@ const AdminPendingReviews = () => {
   );
 
   const filteredRecords = useMemo(() => {
-    // ✅ Check if indicator is in sent back or returned lists
     const isSentBack = (id: string) => sentBackIndicators.some((i) => i.id === id);
     const isReturned = (id: string) => returnedIndicators.some((i) => i.id === id);
 
@@ -188,7 +202,6 @@ const AdminPendingReviews = () => {
 
       if (!matchesSearch) return false;
 
-      // ✅ Apply filters including new ones
       if (activeFilter === "quarterly") return ind.reportingCycle === "Quarterly";
       if (activeFilter === "annual") return ind.reportingCycle === "Annual";
       if (activeFilter === "resubmitted") return hasResubmission(ind);
@@ -239,14 +252,12 @@ const AdminPendingReviews = () => {
               <span className="w-2 h-2 bg-emerald-400 rounded-full mr-2 animate-pulse" />
               {filteredRecords.length} PENDING
             </div>
-            {/* ✅ Show sent back count badge */}
             {counts.sentback > 0 && (
               <div className="flex items-center bg-amber-500 text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
                 <ArrowLeft size={10} className="mr-1.5" />
                 {counts.sentback} Sent Back
               </div>
             )}
-            {/* ✅ Show returned count badge */}
             {counts.returned > 0 && (
               <div className="flex items-center bg-rose-500 text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
                 <AlertCircle size={10} className="mr-1.5" />
@@ -331,7 +342,6 @@ const AdminPendingReviews = () => {
             Resubmitted ({counts.resubmitted})
           </button>
 
-          {/* ✅ NEW: Sent Back filter button */}
           <button
             onClick={() => setActiveFilter("sentback")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
@@ -344,7 +354,6 @@ const AdminPendingReviews = () => {
             Sent Back ({counts.sentback})
           </button>
 
-          {/* ✅ NEW: Returned filter button */}
           <button
             onClick={() => setActiveFilter("returned")}
             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
@@ -456,7 +465,6 @@ const AdminPendingReviews = () => {
               ) : (
                 filteredRecords.map((indicator) => {
                   const isResub = hasResubmission(indicator);
-                  const isAnnual = indicator.reportingCycle === "Annual";
                   const isOpening = openingId === indicator.id;
                   const latestPending = getLatestPendingSubmission(indicator);
                   const submittedDate = latestPending?.submittedAt;
@@ -465,10 +473,10 @@ const AdminPendingReviews = () => {
                   const documentNames = getDocumentNames(indicator);
                   const latestDocuments = latestPending?.documents ?? [];
                   
-                  // ✅ Check if this indicator was sent back
                   const isSentBack = sentBackIndicators.some((i) => i.id === indicator.id);
-                  // ✅ Check if this indicator was returned
                   const isReturned = returnedIndicators.some((i) => i.id === indicator.id);
+                  
+                  const cycleDisplay = getDisplayCycle(indicator);
 
                   return (
                     <tr
@@ -484,14 +492,12 @@ const AdminPendingReviews = () => {
                             <span className="w-fit text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200">
                               {indicator.perspective}
                             </span>
-                            {/* ✅ Show sent back badge */}
                             {isSentBack && (
                               <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-amber-100 text-amber-700 border border-amber-200">
                                 <ArrowLeft size={8} />
                                 Sent Back
                               </span>
                             )}
-                            {/* ✅ Show returned badge */}
                             {isReturned && (
                               <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-rose-100 text-rose-700 border border-rose-200">
                                 <AlertCircle size={8} />
@@ -523,13 +529,13 @@ const AdminPendingReviews = () => {
                       {/* Cycle Type */}
                       <td className="px-6 py-6 text-center">
                         <div className="flex flex-col items-center justify-center">
-                          {isAnnual ? (
+                          {cycleDisplay.isAnnual ? (
                             <div className="flex flex-col items-center gap-1.5">
                               <div className="p-1.5 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
                                 <CalendarDays size={14} />
                               </div>
                               <span className="text-[9px] font-black text-amber-800 uppercase tracking-tighter">
-                                Annual Cycle
+                                {cycleDisplay.label}
                               </span>
                             </div>
                           ) : (
@@ -538,7 +544,7 @@ const AdminPendingReviews = () => {
                                 <Layers size={14} />
                               </div>
                               <span className="text-[9px] font-black text-blue-800 uppercase tracking-tighter">
-                                Quarter {indicator.activeQuarter}
+                                {cycleDisplay.label}
                               </span>
                             </div>
                           )}
