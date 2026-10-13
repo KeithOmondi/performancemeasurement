@@ -2,7 +2,7 @@ import { X, Loader2, AlertCircle } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
-import { revokeBlobUrl, streamFile } from "../store/slices/streamSlice";
+import { getFileExt, revokeBlobUrl, streamFile } from "../store/slices/streamSlice";
 
 interface PreviewModalProps {
   url: string | undefined;
@@ -14,19 +14,20 @@ const FilePreviewModal = ({ url, fileName, onClose }: PreviewModalProps) => {
   const dispatch = useAppDispatch();
   const { blobUrl, loading, error } = useAppSelector((state) => state.streamFile);
 
-  const safeUrl = url || "";
-  const fileExt = safeUrl ? safeUrl.split(/[#?]/)[0].split(".").pop()?.toLowerCase() : "";
+  const urlExt = getFileExt(url);
+  // Some host URLs carry no extension — fall back to the original file name
+  const fileExt = urlExt && urlExt.length <= 5 && !urlExt.includes("/") ? urlExt : getFileExt(fileName);
   const isImage = ["jpg", "jpeg", "png", "webp", "gif", "svg"].includes(fileExt || "");
   const isPDF = fileExt === "pdf";
 
   useEffect(() => {
     if (url) {
-      dispatch(streamFile(url));
+      dispatch(streamFile({ url, fileName }));
     }
     return () => {
       dispatch(revokeBlobUrl());
     };
-  }, [url, dispatch]);
+  }, [url, fileName, dispatch]);
 
   const handleClose = () => {
     dispatch(revokeBlobUrl());
@@ -66,7 +67,7 @@ const FilePreviewModal = ({ url, fileName, onClose }: PreviewModalProps) => {
             <div className="flex flex-col items-center gap-3">
               <AlertCircle size={32} className="text-rose-400" />
               <p className="text-xs font-semibold text-slate-500">
-                Failed to load preview.
+                {error || "Failed to load preview."}
               </p>
             </div>
           )}
