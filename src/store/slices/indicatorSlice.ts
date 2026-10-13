@@ -245,9 +245,11 @@ const isRejected = (indicator: IIndicator): boolean =>
 
 export const fetchIndicators = createAsyncThunk(
   "indicators/fetchAll",
-  async (_, { rejectWithValue }) => {
+  async (opts: { includeHistory?: boolean } | void, { rejectWithValue }) => {
     try {
-      const res = await apiPrivate.get("/indicators");
+      const res = await apiPrivate.get("/indicators", {
+        params: opts?.includeHistory ? { include: "history" } : undefined,
+      });
       return res.data.data as IIndicator[];
     } catch (err) {
       return rejectWithValue(extractError(err));

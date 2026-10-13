@@ -254,16 +254,12 @@ const SuperAdminDashboard = () => {
     }
 
     const total = indicators.length;
-    const now = new Date();
 
     const assigned = indicators.filter((ind) => ind.assignee && ind.assignee.trim() !== "").length;
     const unassigned = total - assigned;
 
-    const overdue = indicators.filter((ind) => {
-      if (!ind.deadline) return false;
-      const isTerminal = ["Completed", "Rejected by Admin", "Rejected by Super Admin"].includes(ind.status);
-      return new Date(ind.deadline) < now && !isTerminal;
-    }).length;
+    // ✅ Server decides overdue: deadline passed AND nothing submitted for the active period
+    const overdue = indicators.filter((ind) => ind.isOverdue).length;
 
     const pendingReview = indicators.filter((ind) =>
       ["Awaiting Admin Approval", "Awaiting Super Admin"].includes(ind.status)
@@ -271,7 +267,7 @@ const SuperAdminDashboard = () => {
 
     const approved = indicators.filter((ind) => ind.status === "Completed").length;
     const returnedForCorrection = indicators.filter((ind) =>
-      ["Rejected by Admin", "Rejected by Super Admin"].includes(ind.status)
+      ["Correction Needed", "Rejected by Admin", "Rejected by Super Admin"].includes(ind.status)
     ).length;
 
     // On track = assigned - overdue - pendingReview - returnedForCorrection - approved

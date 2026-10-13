@@ -60,7 +60,7 @@ const SuperAdminApprovals = () => {
   const { indicators, loading } = useAppSelector((state) => state.indicators);
 
   useEffect(() => {
-    dispatch(fetchIndicators());
+    dispatch(fetchIndicators({ includeHistory: true }));
   }, [dispatch]);
 
   const approvalsList = useMemo<EnhancedIndicator[]>(() => {
@@ -153,7 +153,7 @@ const SuperAdminApprovals = () => {
   const handleCloseModal = () => {
     setSelectedIndicatorId(null);
     // Refresh the list after modal closes
-    dispatch(fetchIndicators());
+    dispatch(fetchIndicators({ includeHistory: true }));
   };
 
   if (loading && indicators.length === 0) {
