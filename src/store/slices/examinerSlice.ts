@@ -208,6 +208,7 @@ const examinerSlice = createSlice({
       })
       .addCase(fetchExaminers.rejected,  setError)
 
+
       /* assignExaminer */
       .addCase(assignExaminer.pending,   setActionLoad)
       .addCase(assignExaminer.fulfilled, stopActionLoad)

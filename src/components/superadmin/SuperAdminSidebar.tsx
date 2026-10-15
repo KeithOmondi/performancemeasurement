@@ -10,6 +10,7 @@ import {
   Settings,
   X,
   Book,
+  BookOpen,
   Folder,
   CheckCircle2,
   Sheet,
@@ -126,6 +127,12 @@ const SuperAdminSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
       name: "Examiner Management",
       path: "/superadmin/management",
       icon: <Sheet size={18} />,
+    },
+    {
+      type: "link",
+      name: "PMMU Reference",
+      path: "/superadmin/pmmu",
+      icon: <BookOpen size={18} />,
     },
     {
       type: "link",

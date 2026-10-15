@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAppSelector } from "../store/hooks";
 
-type AllowedRole = "user" | "admin" | "superadmin" | "examiner";
+type AllowedRole = "user" | "admin" | "superadmin" | "examiner" | "supervisor";
 
 interface Props {
   allowedRoles?: AllowedRole[];
@@ -23,6 +23,7 @@ const ProtectedRoute = ({ allowedRoles }: Props) => {
   superadmin: "/superadmin/dashboard",
   admin:      "/admin/dashboard",
   examiner:   "/examiner/dashboard",  // ✅ fix
+  supervisor:   "/supervisor/assign",
   user:       "/user/dashboard",
 };
     return <Navigate to={homeRoutes[user.role] || "/login"} replace />;

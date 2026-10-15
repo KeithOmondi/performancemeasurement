@@ -7,7 +7,7 @@ export interface User {
   name: string;
   email: string;
   pjNumber: string;
-  role: "user" | "admin" | "superadmin" | "examiner";
+  role: "user" | "admin" | "superadmin" | "examiner" | "supervisor";
 }
 
 export interface AuthResponse {

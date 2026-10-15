@@ -10,6 +10,7 @@ const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
   admin: "/admin/dashboard",
   examiner: "/examiner/dashboard",
+  supervisor: "/supervisor/assign",
   user: "/user/dashboard",
 };
 

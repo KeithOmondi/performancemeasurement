@@ -3,6 +3,8 @@ import { useEffect } from "react";
 import {
   LayoutDashboard,
   ClipboardCheck,
+  BookOpen,
+  Users,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -46,7 +48,32 @@ const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
         .toUpperCase()
     : "EX";
 
-  const menuItems: MenuItem[] = [
+  const isSupervisor = user?.role === "supervisor";
+  const roleLabel  = isSupervisor ? "Supervisor" : "Examiner";
+
+  const menuItems: MenuItem[] = isSupervisor
+    ? [
+        { type: "label", title: "NAVIGATION" },
+        {
+          type: "link",
+          name: "Assign Examiners",
+          path: "/supervisor/assign",
+          icon: <Users size={18} />,
+        },
+        {
+          type: "link",
+          name: "Folder Contents",
+          path: "/supervisor/folders",
+          icon: <ClipboardCheck size={18} />,
+        },
+        {
+          type: "link",
+          name: "PMMU Reference",
+          path: "/supervisor/pmmu",
+          icon: <BookOpen size={18} />,
+        },
+      ]
+    : [
     { type: "label", title: "NAVIGATION" },
     {
       type: "link",
@@ -59,6 +86,12 @@ const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
       name: "ORHC Registry",
       path: "/examiner/assigned",
       icon: <ClipboardCheck size={18} />,
+    },
+    {
+      type: "link",
+      name: "PMMU Reference",
+      path: "/examiner/pmmu",
+      icon: <BookOpen size={18} />,
     },
     
 
@@ -111,7 +144,7 @@ const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
             </h1>
             {/* Examiner role badge */}
             <span className="mt-2 inline-block text-[8px] font-black uppercase tracking-widest bg-yellow-400/10 text-yellow-400 border border-yellow-400/20 px-2 py-0.5 rounded-full">
-              Examiner Portal
+              {roleLabel} Portal
             </span>
           </div>
         </div>
@@ -177,10 +210,10 @@ const ExaminerSidebar = ({ isOpen, setIsOpen }: SidebarProps) => {
             </div>
             <div className="overflow-hidden">
               <p className="text-[11px] font-bold text-white truncate">
-                {user?.name || "Examiner"}
+                {user?.name || roleLabel}
               </p>
               <p className="text-[9px] opacity-60 uppercase tracking-tighter">
-                Examiner
+                {roleLabel}
               </p>
             </div>
           </div>

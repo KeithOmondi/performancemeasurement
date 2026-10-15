@@ -8,7 +8,7 @@ export interface User {
   id: string;    // raw PG field
   name: string;
   email: string;
-  role: "user" | "admin" | "superadmin" | "examiner";
+  role: "user" | "admin" | "superadmin" | "examiner" | "supervisor";
   pjNumber: string;
   title: string;
   isActive: boolean;

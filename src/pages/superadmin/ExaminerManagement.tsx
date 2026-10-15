@@ -11,6 +11,7 @@ import {
   unassignExaminer,
   type IFolderAssignment,
 } from "../../store/slices/examinerSlice";
+import DownloadFolderButton from "../../components/examiner/DownloadFolderButton";
 import toast from "react-hot-toast";
 
 /* ─── ASSIGN MODAL ───────────────────────────────────────────────────────── */
@@ -108,7 +109,13 @@ const AssignModal = ({ folder, onClose }: AssignModalProps) => {
 
 /* ─── MAIN PAGE ──────────────────────────────────────────────────────────── */
 
-const ExaminerManagement = () => {
+interface ExaminerManagementProps {
+  /** "supervisor" = read-only folders; the only action is assigning examiners */
+  mode?: "superadmin" | "supervisor";
+}
+
+const ExaminerManagement = ({ mode = "superadmin" }: ExaminerManagementProps) => {
+  const isSuperAdmin = mode === "superadmin";
   const dispatch = useAppDispatch();
   const { assignments, loading, actionLoading } = useAppSelector((s) => s.examiner);
 
@@ -170,7 +177,7 @@ const ExaminerManagement = () => {
             <Users className="text-[#c2a336]" size={20} />
           </div>
           <h1 className="text-2xl font-black font-serif text-[#1d3331] uppercase tracking-tight">
-            Examiner Management
+            {isSuperAdmin ? "Examiner Management" : "Assign Examiners"}
           </h1>
         </div>
         <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] ml-12">
@@ -320,6 +327,11 @@ const ExaminerManagement = () => {
                           Remove
                         </button>
                       )}
+                      <DownloadFolderButton
+                        objectiveId={folder.objectiveId}
+                        objectiveTitle={folder.objectiveTitle}
+                        variant="icon"
+                      />
                     </div>
                   </td>
                 </tr>

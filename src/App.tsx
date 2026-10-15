@@ -51,6 +51,7 @@ import ExaminerLayout from "./components/examiner/ExaminerLayout";
 import ExaminerDashboard from "./pages/examiner/ExaminerDashboard";
 import ExaminerManagement from "./pages/superadmin/ExaminerManagement";
 import ExaminerAssignments from "./pages/examiner/ExaminerAssignments";
+import PmmuReference from "./pages/PmmuReference";
 import SuperAdminArchives from "./pages/superadmin/SuperAdminArchives";
 import SuperAdminApproved from "./pages/superadmin/SuperAdminApproved";
 import SuperAdminApprovalPage from "./pages/superadmin/SuperAdminApprovalPage";
@@ -62,6 +63,7 @@ const HOME_ROUTES: Record<string, string> = {
   superadmin: "/superadmin/dashboard",
   admin:      "/admin/dashboard",
   examiner:   "/examiner/dashboard",  // ✅ was pointing to /admin/dashboard
+  supervisor:   "/supervisor/assign",
   user:       "/user/dashboard",
 };
 const App = () => {
@@ -143,6 +145,7 @@ const App = () => {
             <Route path="/superadmin/approvals" element={<SuperAdminApprovals />} />
             <Route path="/super-admin/approvals/:id" element={<SuperAdminApprovalPage />} />
             <Route path="/superadmin/management" element={<ExaminerManagement />} />
+            <Route path="/superadmin/pmmu" element={<PmmuReference />} />
             <Route path="/superadmin/archives" element={<SuperAdminArchives />} />
             <Route path="/superadmin/approved" element={<SuperAdminApproved />} />
           </Route>
@@ -183,6 +186,16 @@ const App = () => {
           <Route element={<ExaminerLayout />}>
             <Route path="/examiner/dashboard" element={<ExaminerDashboard />} />
             <Route path="/examiner/assigned" element={<ExaminerAssignments />} />
+            <Route path="/examiner/pmmu" element={<PmmuReference />} />
+          </Route>
+        </Route>
+
+        {/* ── Supervisor ────────────────────────────────────────────────────── */}
+        <Route element={<ProtectedRoute allowedRoles={["supervisor"]} />}>
+          <Route element={<ExaminerLayout />}>
+            <Route path="/supervisor/assign" element={<ExaminerManagement mode="supervisor" />} />
+            <Route path="/supervisor/folders" element={<ExaminerAssignments />} />
+            <Route path="/supervisor/pmmu" element={<PmmuReference />} />
           </Route>
         </Route>
 

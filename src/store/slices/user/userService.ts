@@ -7,7 +7,7 @@ export interface RawUser {
   id: string;
   name: string;
   email: string;
-  role: "user" | "admin" | "superadmin" | "examiner";
+  role: "user" | "admin" | "superadmin" | "examiner" | "supervisor";
   pjNumber: string;
   title: string;
   is_active?: boolean; 

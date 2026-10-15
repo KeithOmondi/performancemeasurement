@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { fetchMyFolders } from "../../store/slices/examinerSlice";
 import type { IMyFolder, ICompletedIndicator, ISubmission, IDocument } from "../../store/slices/examinerSlice";
 import FilePreviewModal from "../PreviewModal";
+import DownloadFolderButton from "../../components/examiner/DownloadFolderButton";
 
 /* ─── HELPERS ─────────────────────────────────────────────────────────────── */
 
@@ -83,6 +84,8 @@ interface FolderCardProps {
 
 const FolderCard = ({ folder, expanded, onToggle, onPreview }: FolderCardProps) => {
   const total = folder.completedIndicators.length;
+  // Examiners only receive completed indicators; supervisors receive all of them
+  const completed = folder.completedIndicators.filter((i) => i.status === "Completed").length;
 
   return (
     <div className={`bg-white rounded-2xl border transition-all duration-200 overflow-hidden ${
@@ -108,18 +111,24 @@ const FolderCard = ({ folder, expanded, onToggle, onPreview }: FolderCardProps) 
             {/* Removed: assignedAt date */}
             <div className="flex items-center gap-3 mt-2">
               <span className="text-[8px] font-black uppercase tracking-widest px-3 py-1 rounded-full bg-amber-50 text-amber-600 border border-amber-100">
-                {total} / {total} Task{total !== 1 ? "s" : ""} Completed
+                {completed} / {total} Task{total !== 1 ? "s" : ""} Completed
               </span>
             </div>
           </div>
         </div>
 
-        <ChevronDown
-          size={20}
-          className={`text-slate-400 transition-transform duration-300 flex-shrink-0 ${
-            expanded ? "rotate-180" : ""
-          }`}
-        />
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <DownloadFolderButton
+            objectiveId={folder.objectiveId}
+            objectiveTitle={folder.objectiveTitle}
+          />
+          <ChevronDown
+            size={20}
+            className={`text-slate-400 transition-transform duration-300 flex-shrink-0 ${
+              expanded ? "rotate-180" : ""
+            }`}
+          />
+        </div>
       </div>
 
       {/* Expanded content */}
