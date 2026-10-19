@@ -37,6 +37,11 @@ import { toast } from "react-hot-toast";
 
 interface Props {
   indicatorId: string;
+  /** Optional — when the queue knows which quarter is pending, pass it
+   *  through so we review the correct period instead of `active_quarter`. */
+  quarter?: number;
+  /** Optional — same rationale as `quarter`. */
+  year?: number;
   onClose: () => void;
 }
 
@@ -49,13 +54,6 @@ interface PreviewDoc {
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
 
-/**
- * Safely coerces any value into an array.
- * Handles arrays, object maps (returns Object.values), null/undefined (returns []).
- * Prevents crashes from API responses where nested collections
- * (submissions, reviewHistory, documents, partialApprovals) come back
- * as objects or primitives instead of arrays.
- */
 const asArray = <T,>(value: unknown): T[] => {
   if (Array.isArray(value)) return value as T[];
   if (value && typeof value === "object") return Object.values(value) as T[];
@@ -63,8 +61,10 @@ const asArray = <T,>(value: unknown): T[] => {
 };
 
 const DocIcon = ({ fileType }: { fileType?: string }) => {
-  if (fileType === "image") return <ImageIcon size={14} className="text-blue-400" />;
-  if (fileType === "video") return <Video size={14} className="text-purple-400" />;
+  if (fileType === "image")
+    return <ImageIcon size={14} className="text-blue-400" />;
+  if (fileType === "video")
+    return <Video size={14} className="text-purple-400" />;
   return <File size={14} className="text-slate-400" />;
 };
 
@@ -87,7 +87,12 @@ const formatDateTime = (d?: string) => {
 
 /* ─── COMPONENT ──────────────────────────────────────────────────────────── */
 
-const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
+const ApprovalIdModalPage = ({
+  indicatorId,
+  quarter,
+  year,
+  onClose,
+}: Props) => {
   const dispatch = useAppDispatch();
   const { selectedIndicator, detailLoading, actionLoading, partialApprovals } =
     useAppSelector((state) => state.indicators);
@@ -135,6 +140,14 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
   const isFullyComplete = currentProgress >= target;
   const hasPartialApprovals = partialApprovalsArray.length > 0;
 
+  /**
+   * The submission that this modal is opening for.
+   * - If `quarter`/`year` props were supplied (queue-driven path), pick that
+   *   exact submission so the review payload targets the right period.
+   * - Otherwise fall back to the newest submission (legacy behaviour).
+   * This is a **fix** for the case where the indicator's `active_quarter`
+   * was ahead of the quarter actually awaiting review.
+   */
   const allSubmissions = useMemo(
     () =>
       [...submissionsArray].sort(
@@ -144,7 +157,14 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
     [submissionsArray]
   );
 
-  const latestSubmission = allSubmissions[0];
+  const pinnedSubmission = useMemo(() => {
+    if (quarter === undefined || year === undefined) return undefined;
+    return allSubmissions.find(
+      (s) => s.quarter === quarter && s.year === year
+    );
+  }, [allSubmissions, quarter, year]);
+
+  const latestSubmission = pinnedSubmission ?? allSubmissions[0];
 
   const approvalByQuarterYear = useMemo(
     () =>
@@ -229,9 +249,6 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
 
     if (hasError) return;
 
-    // ✅ Guard: we cannot review without a submission to target. Previously
-    // the payload used `latestSubmission?.quarter` which became `undefined`
-    // and the backend defaulted to Q1, producing a confusing 404.
     if (!latestSubmission) {
       toast.error("No submission available to review for this indicator.");
       return;
@@ -244,6 +261,16 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
       !isFullyComplete &&
       parsed < remainingNeeded;
 
+    /**
+     * Determine the review target period.
+     * Priority:
+     *   1. `quarter` / `year` props (queue-driven path) — always correct.
+     *   2. The pinned (or latest) submission's own quarter/year.
+     *   3. Omit so the backend falls back to `active_quarter`.
+     */
+    const targetQuarter = quarter ?? latestSubmission?.quarter;
+    const targetYear = year ?? latestSubmission?.year;
+
     try {
       await dispatch(
         superAdminReview({
@@ -253,9 +280,10 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
             reason: comment.trim() || undefined,
             progressOverride: decision === "approve" ? parsed : 0,
             isPartialApproval: isPartial,
-            // ✅ Use the real quarter/year from the submission we're reviewing.
-            year: latestSubmission.year,
-            quarter: latestSubmission.quarter,
+            ...(targetQuarter !== undefined
+              ? { quarter: targetQuarter }
+              : {}),
+            ...(targetYear !== undefined ? { year: targetYear } : {}),
             ...(needsNextDeadline && nextDeadline ? { nextDeadline } : {}),
           },
         })
@@ -355,6 +383,12 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                       </>
                     )}
                   </p>
+                  {quarter !== undefined && year !== undefined && (
+                    <p className="text-[8px] text-emerald-600 font-bold uppercase tracking-wider mt-1">
+                      Reviewing {quarter === 0 ? "Annual" : `Q${quarter}`}{" "}
+                      {year}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -486,14 +520,15 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                   </p>
 
                   {allSubmissions.map((sub, idx) => {
-                    const isLatest = idx === 0;
+                    const isLatest =
+                      pinnedSubmission?.id === sub.id ||
+                      (!pinnedSubmission && idx === 0);
                     const quarterLabel = sub.quarter
                       ? `Q${sub.quarter}`
                       : "Annual";
                     const periodKey = `${sub.quarter}-${sub.year}`;
                     const matchedApproval = approvalByQuarterYear[periodKey];
 
-                    // ✅ Normalize documents per submission
                     const documents = asArray<IDocument>(sub.documents);
 
                     const statusChip: Record<
@@ -645,12 +680,10 @@ const ApprovalIdModalPage = ({ indicatorId, onClose }: Props) => {
                                   onClick={() => openPreview(doc, di)}
                                   className="flex items-start gap-3 p-2.5 rounded-lg border border-slate-100 hover:border-[#2c5f2e]/30 hover:bg-[#f0f7f0] transition-all group text-left bg-white w-full"
                                 >
-                                  {/* File icon */}
                                   <div className="w-8 h-8 rounded-md bg-slate-100 group-hover:bg-white flex items-center justify-center shrink-0 transition-colors mt-0.5">
                                     <DocIcon fileType={doc.fileType} />
                                   </div>
 
-                                  {/* File info */}
                                   <div className="min-w-0 flex-1">
                                     <p className="text-[10px] font-semibold text-slate-700 truncate leading-tight">
                                       {doc.fileName || `Document ${di + 1}`}

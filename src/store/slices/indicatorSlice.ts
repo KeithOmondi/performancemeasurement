@@ -11,9 +11,10 @@
      GET    /counts                    getIndicatorCounts
      GET    /rejected-by-admin         getRejectedByAdmin
      GET    /approved-by-superadmin    getSuperAdminApprovedIndicators
-     GET    /submissions/queue         getAllSubmissions  (queue)
+     GET    /submissions/queue         getAllSubmissions        (queue)
+     GET    /pending-final-approval    getPendingFinalApprovals (NEW)
      DELETE /submissions/:id           deleteSubmission
-     DELETE /documents/:id             deleteSingleDocument   // NEW
+     DELETE /documents/:id             deleteSingleDocument
      GET    /:id                       getIndicatorById
      PATCH  /:id                       updateIndicator
      DELETE /:id                       deleteIndicator
@@ -79,10 +80,41 @@ export type {
   Quarter,
 } from "../../types/Indicatortypes";
 
-// ─── DELETE SINGLE DOCUMENT PAYLOAD ──────────────────────────────────────
+// ─── LOCAL PAYLOAD TYPES ─────────────────────────────────────────────────
 
 interface IDeleteDocumentPayload {
   documentId: string;
+}
+
+/**
+ * One row in the super-admin final-approval queue.
+ * Shape mirrors the response from GET /indicators/pending-final-approval:
+ * indicator fields at the top level (from INDICATOR_SELECT) plus a flat
+ * set of submission fields (submissionId, quarter, year, …).
+ */
+export interface IPendingFinalItem {
+  id: string; // indicator id
+  submissionId: string;
+  quarter: number; // 0 = annual
+  year: number;
+  reviewStatus: "Verified" | "Partially Approved";
+  achievedValue: number;
+  adminComment?: string | null;
+  submittedAt: string;
+  submittedByName?: string | null;
+  resubmissionCount: number;
+  approvedAmount?: number | null;
+  documentsCount: number;
+  remaining: number;
+  // indicator fields from INDICATOR_SELECT
+  reportingCycle: "Quarterly" | "Annual";
+  activityDescription?: string;
+  objectiveTitle?: string;
+  perspective?: string;
+  assigneeDisplayName?: string;
+  target: number;
+  unit?: string;
+  currentTotalAchieved?: number;
 }
 
 // ─── STATE ────────────────────────────────────────────────────────────────
@@ -104,6 +136,8 @@ interface IndicatorState {
   superAdminApprovedIndicators: IIndicator[];
   /** Submissions queue */
   queue: IQueueItem[];
+  /** ✅ NEW: super-admin final-approval queue (one row per pending quarter) */
+  pendingFinal: IPendingFinalItem[];
   /** Partial approval history for the selected indicator */
   partialApprovals: IPartialApproval[];
   /** Server-side counts */
@@ -112,6 +146,7 @@ interface IndicatorState {
   loading: boolean;
   detailLoading: boolean;
   actionLoading: boolean;
+  pendingFinalLoading: boolean;   // ✅ NEW
   error: string | null;
 }
 
@@ -124,11 +159,13 @@ const initialState: IndicatorState = {
   rejectedByAdmin: [],
   superAdminApprovedIndicators: [],
   queue: [],
+  pendingFinal: [],               // ✅ NEW
   partialApprovals: [],
   counts: null,
   loading: false,
   detailLoading: false,
   actionLoading: false,
+  pendingFinalLoading: false,     // ✅ NEW
   error: null,
 };
 
@@ -160,8 +197,8 @@ const deriveCategories = (indicators: IIndicator[]) => {
       unassigned.push(ind);
     }
 
-    // ✅ Fix: Ensure submissions is an array before using .some()
-    const hasPendingSubmission = Array.isArray(ind.submissions) && 
+    const hasPendingSubmission =
+      Array.isArray(ind.submissions) &&
       ind.submissions.some((s) => s.reviewStatus === "Pending");
 
     if (
@@ -199,13 +236,12 @@ const upsertOne = (state: IndicatorState, updated: IIndicator) => {
   replaceIn(state.superAdminApprovedIndicators);
 
   if (state.selectedIndicator?.id === updated.id) {
-    // ✅ Ensure submissions and reviewHistory are always arrays
     state.selectedIndicator = {
-      submissions: Array.isArray(state.selectedIndicator.submissions) 
-        ? state.selectedIndicator.submissions 
+      submissions: Array.isArray(state.selectedIndicator.submissions)
+        ? state.selectedIndicator.submissions
         : [],
-      reviewHistory: Array.isArray(state.selectedIndicator.reviewHistory) 
-        ? state.selectedIndicator.reviewHistory 
+      reviewHistory: Array.isArray(state.selectedIndicator.reviewHistory)
+        ? state.selectedIndicator.reviewHistory
         : [],
       ...updated,
     };
@@ -222,15 +258,14 @@ const removeOne = (state: IndicatorState, id: string) => {
 
   state.indicators = without(state.indicators);
   state.rejectedByAdmin = without(state.rejectedByAdmin);
-  state.superAdminApprovedIndicators = without(state.superAdminApprovedIndicators);
+  state.superAdminApprovedIndicators = without(
+    state.superAdminApprovedIndicators
+  );
   state.assignedIndicators = without(state.assignedIndicators);
   state.unassignedIndicators = without(state.unassignedIndicators);
   state.reviewIndicators = without(state.reviewIndicators);
   state.queue = state.queue.filter((q) => q.indicatorId !== id);
-
-  if (state.selectedIndicator?.id === id) {
-    state.selectedIndicator = null;
-  }
+  state.pendingFinal = state.pendingFinal.filter((p) => p.id !== id);
 };
 
 /** Whether an indicator belongs in the rejection registry */
@@ -238,6 +273,24 @@ const isRejected = (indicator: IIndicator): boolean =>
   indicator.status === "Rejected by Admin" ||
   indicator.status === "Rejected by Super Admin" ||
   indicator.status === "Correction Needed";
+
+/**
+ * ✅ NEW: After a super-admin decision, drop the submission's row from the
+ * final-approval queue. A "Partially Approved" verdict that still leaves
+ * remaining target is re-added on the next `fetchPendingFinalApprovals()`
+ * — which the thunks already dispatch after every decision.
+ */
+const dropFromPendingFinal = (
+  state: IndicatorState,
+  indicatorId: string,
+  submissionId?: string
+) => {
+  state.pendingFinal = state.pendingFinal.filter((p) => {
+    if (p.id !== indicatorId) return true;
+    if (!submissionId) return false;
+    return p.submissionId !== submissionId;
+  });
+};
 
 /* ─── THUNKS ─────────────────────────────────────────────────────────────── */
 
@@ -330,6 +383,21 @@ export const fetchIndicatorCounts = createAsyncThunk(
     }
   }
 );
+
+// ── ✅ NEW: pending final approvals (super-admin queue) ────────────────────
+
+export const fetchPendingFinalApprovals = createAsyncThunk<
+  IPendingFinalItem[],
+  void,
+  { rejectValue: string }
+>("indicators/fetchPendingFinal", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get("/indicators/pending-final-approval");
+    return (res.data.data ?? []) as IPendingFinalItem[];
+  } catch (err) {
+    return rejectWithValue(extractError(err));
+  }
+});
 
 // ── Single indicator ───────────────────────────────────────────────────────
 
@@ -464,9 +532,10 @@ export const removeUsersFromIndicator = createAsyncThunk(
   "indicators/removeUsers",
   async (arg: IRemoveUsersPayload, { rejectWithValue, dispatch }) => {
     try {
-      const res = await apiPrivate.delete(`/indicators/${arg.id}/remove-users`, {
-        data: { userIds: arg.userIds },
-      });
+      const res = await apiPrivate.delete(
+        `/indicators/${arg.id}/remove-users`,
+        { data: { userIds: arg.userIds } }
+      );
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
       if (arg.refetchAfter !== false) {
@@ -483,18 +552,17 @@ export const removeUsersFromIndicator = createAsyncThunk(
 
 export const sendBackToAdmin = createAsyncThunk(
   "indicators/sendBackToAdmin",
-  async (
-    arg: ISendBackToAdminPayload,
-    { rejectWithValue, dispatch }
-  ) => {
+  async (arg: ISendBackToAdminPayload, { rejectWithValue, dispatch }) => {
     try {
-      const res = await apiPrivate.patch(`/indicators/${arg.id}/send-back-to-admin`, {
-        reason: arg.reason,
-      });
+      const res = await apiPrivate.patch(
+        `/indicators/${arg.id}/send-back-to-admin`,
+        { reason: arg.reason }
+      );
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
-      // Also refresh the super admin approved list
       dispatch(fetchSuperAdminApprovedIndicators(false));
+      // ✅ NEW: refresh the final-approval queue after sending back
+      dispatch(fetchPendingFinalApprovals());
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -518,6 +586,8 @@ export const superAdminReview = createAsyncThunk(
       dispatch(fetchPartialApprovalsHistory(arg.id));
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
+      // ✅ NEW: refresh the final-approval queue after every decision
+      dispatch(fetchPendingFinalApprovals());
       return res.data.data as IIndicator;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -577,15 +647,14 @@ export const deleteSubmission = createAsyncThunk(
 // ─── DELETE SINGLE DOCUMENT ──────────────────────────────────────────────
 
 export const deleteSingleDocument = createAsyncThunk<
-  string, // Return type
-  IDeleteDocumentPayload, // Argument type
+  string,
+  IDeleteDocumentPayload,
   { rejectValue: string }
 >(
   "indicators/deleteSingleDocument",
-  async (arg: IDeleteDocumentPayload, { rejectWithValue, dispatch }) => {
+  async (arg, { rejectWithValue, dispatch }) => {
     try {
       await apiPrivate.delete(`/indicators/documents/${arg.documentId}`);
-      // Refresh indicators to update the UI
       dispatch(fetchIndicators());
       return arg.documentId;
     } catch (err) {
@@ -625,14 +694,13 @@ const indicatorSlice = createSlice({
     clearPartialApprovals(state) {
       state.partialApprovals = [];
     },
+    clearPendingFinal(state) {
+      state.pendingFinal = [];
+    },
     refreshCategorizedLists(state) {
       applyCategories(state);
     },
 
-    /**
-     * Optimistically mark an indicator as assigned in the UI before the
-     * server round-trip completes. Roll back automatically if the thunk rejects.
-     */
     optimisticAssign(
       state,
       action: PayloadAction<{
@@ -654,10 +722,6 @@ const indicatorSlice = createSlice({
       applyCategories(state);
     },
 
-    /**
-     * Optimistically clear an indicator's assignee before the server
-     * round-trip completes.
-     */
     optimisticUnassign(state, action: PayloadAction<{ id: string }>) {
       const indicator = state.indicators.find(
         (i) => i.id === action.payload.id
@@ -673,9 +737,6 @@ const indicatorSlice = createSlice({
       applyCategories(state);
     },
 
-    /**
-     * NEW: Optimistically add users to an indicator in the UI.
-     */
     optimisticAddUsers(
       state,
       action: PayloadAction<{
@@ -687,9 +748,7 @@ const indicatorSlice = createSlice({
       const indicator = state.indicators.find((i) => i.id === id);
       if (indicator) {
         indicator.isMultiAssignee = true;
-        if (!indicator.allAssignees) {
-          indicator.allAssignees = [];
-        }
+        if (!indicator.allAssignees) indicator.allAssignees = [];
         for (const user of users) {
           if (!indicator.allAssignees.some((a) => a.userId === user.userId)) {
             indicator.allAssignees.push({
@@ -707,7 +766,11 @@ const indicatorSlice = createSlice({
           state.selectedIndicator.allAssignees = [];
         }
         for (const user of users) {
-          if (!state.selectedIndicator.allAssignees.some((a) => a.userId === user.userId)) {
+          if (
+            !state.selectedIndicator.allAssignees.some(
+              (a) => a.userId === user.userId
+            )
+          ) {
             state.selectedIndicator.allAssignees.push({
               userId: user.userId,
               isPrimary: false,
@@ -719,15 +782,9 @@ const indicatorSlice = createSlice({
       }
     },
 
-    /**
-     * NEW: Optimistically remove users from an indicator in the UI.
-     */
     optimisticRemoveUsers(
       state,
-      action: PayloadAction<{
-        id: string;
-        userIds: string[];
-      }>
+      action: PayloadAction<{ id: string; userIds: string[] }>
     ) {
       const { id, userIds } = action.payload;
       const indicator = state.indicators.find((i) => i.id === id);
@@ -739,10 +796,14 @@ const indicatorSlice = createSlice({
           indicator.isMultiAssignee = false;
         }
       }
-      if (state.selectedIndicator?.id === id && state.selectedIndicator.allAssignees) {
-        state.selectedIndicator.allAssignees = state.selectedIndicator.allAssignees.filter(
-          (a) => !userIds.includes(a.userId)
-        );
+      if (
+        state.selectedIndicator?.id === id &&
+        state.selectedIndicator.allAssignees
+      ) {
+        state.selectedIndicator.allAssignees =
+          state.selectedIndicator.allAssignees.filter(
+            (a) => !userIds.includes(a.userId)
+          );
         if (state.selectedIndicator.allAssignees.length <= 1) {
           state.selectedIndicator.isMultiAssignee = false;
         }
@@ -768,9 +829,12 @@ const indicatorSlice = createSlice({
       });
 
     /* ── fetchAssignedIndicators ── */
-    builder.addCase(fetchAssignedIndicators.fulfilled, (state, { payload }) => {
-      state.assignedIndicators = payload;
-    });
+    builder.addCase(
+      fetchAssignedIndicators.fulfilled,
+      (state, { payload }) => {
+        state.assignedIndicators = payload;
+      }
+    );
 
     /* ── fetchUnassignedIndicators ── */
     builder.addCase(
@@ -818,6 +882,21 @@ const indicatorSlice = createSlice({
       })
       .addCase(fetchIndicatorCounts.rejected, (_, { payload }) => {
         console.error("[indicators] Failed to fetch counts:", payload);
+      });
+
+    /* ── ✅ NEW: fetchPendingFinalApprovals ── */
+    builder
+      .addCase(fetchPendingFinalApprovals.pending, (state) => {
+        state.pendingFinalLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchPendingFinalApprovals.fulfilled, (state, { payload }) => {
+        state.pendingFinalLoading = false;
+        state.pendingFinal = payload;
+      })
+      .addCase(fetchPendingFinalApprovals.rejected, (state, { payload }) => {
+        state.pendingFinalLoading = false;
+        state.error = payload as string;
       });
 
     /* ── fetchIndicatorById ── */
@@ -971,14 +1050,18 @@ const indicatorSlice = createSlice({
       .addCase(sendBackToAdmin.fulfilled, (state, { payload }) => {
         state.actionLoading = false;
         upsertOne(state, payload);
-        // Remove from super admin approved list if it was there
-        state.superAdminApprovedIndicators = state.superAdminApprovedIndicators.filter(
-          (ind) => ind.id !== payload.id
-        );
-        // Remove from review indicators if it was there
+
+        state.superAdminApprovedIndicators =
+          state.superAdminApprovedIndicators.filter(
+            (ind) => ind.id !== payload.id
+          );
         state.reviewIndicators = state.reviewIndicators.filter(
           (ind) => ind.id !== payload.id
         );
+
+        // ✅ Drop every pendingFinal row for this indicator — it just went
+        // back to the admin, so nothing is pending super-admin signature.
+        dropFromPendingFinal(state, payload.id);
       })
       .addCase(sendBackToAdmin.rejected, (state, { payload }) => {
         state.actionLoading = false;
@@ -999,9 +1082,7 @@ const indicatorSlice = createSlice({
           payload.status === "Completed" ||
           payload.status === "Rejected by Super Admin"
         ) {
-          state.queue = state.queue.filter(
-            (q) => q.indicatorId !== payload.id
-          );
+          state.queue = state.queue.filter((q) => q.indicatorId !== payload.id);
         }
 
         if (isRejected(payload)) {
@@ -1013,6 +1094,11 @@ const indicatorSlice = createSlice({
             (r) => r.id !== payload.id
           );
         }
+
+        // ✅ Optimistically drop the row from pendingFinal. If a partial
+        // approval leaves remaining target, the thunk's follow-up
+        // fetchPendingFinalApprovals() will re-add it with fresh values.
+        dropFromPendingFinal(state, payload.id);
       })
       .addCase(superAdminReview.rejected, (state, { payload }) => {
         state.actionLoading = false;
@@ -1053,6 +1139,7 @@ const indicatorSlice = createSlice({
         const { submissionId, indicatorId } = payload;
 
         state.queue = state.queue.filter((q) => q.id !== submissionId);
+        dropFromPendingFinal(state, indicatorId, submissionId);
 
         if (state.selectedIndicator?.id === indicatorId) {
           state.selectedIndicator = {
@@ -1087,8 +1174,6 @@ const indicatorSlice = createSlice({
       })
       .addCase(deleteSingleDocument.fulfilled, (state) => {
         state.actionLoading = false;
-        // The document is deleted, refresh indicators to update UI
-        // fetchIndicators is already dispatched in the thunk
       })
       .addCase(deleteSingleDocument.rejected, (state, { payload }) => {
         state.actionLoading = false;
@@ -1097,21 +1182,15 @@ const indicatorSlice = createSlice({
 
     /* ── fetchPartialApprovalsHistory ── */
     builder
-      .addCase(
-        fetchPartialApprovalsHistory.fulfilled,
-        (state, { payload }) => {
-          state.partialApprovals = payload;
-        }
-      )
-      .addCase(
-        fetchPartialApprovalsHistory.rejected,
-        (_state, { payload }) => {
-          console.error(
-            "[indicators] Failed to fetch partial approvals:",
-            payload
-          );
-        }
-      );
+      .addCase(fetchPartialApprovalsHistory.fulfilled, (state, { payload }) => {
+        state.partialApprovals = payload;
+      })
+      .addCase(fetchPartialApprovalsHistory.rejected, (_state, { payload }) => {
+        console.error(
+          "[indicators] Failed to fetch partial approvals:",
+          payload
+        );
+      });
   },
 });
 
@@ -1121,6 +1200,7 @@ export const {
   clearIndicatorError,
   clearSelectedIndicator,
   clearPartialApprovals,
+  clearPendingFinal,
   refreshCategorizedLists,
   optimisticAssign,
   optimisticUnassign,

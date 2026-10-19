@@ -1,4 +1,4 @@
-// AdminPendingReviews.tsx (updated)
+// AdminPendingReviews.tsx (rewritten with queue-based slice updates)
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -21,11 +21,10 @@ import {
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
-  fetchAllAdminIndicators,
+  fetchPendingQueue,
   fetchSentBackIndicators,
   fetchReturnedIndicators,
-  type IAdminIndicator,
-  type ISubmissionsByPeriod,
+  type IQueueItem,
 } from "../../store/slices/adminIndicatorSlice";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -34,51 +33,8 @@ type FilterType = "all" | "quarterly" | "annual" | "resubmitted" | "sentback" | 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const flattenSubmissions = (submissions: ISubmissionsByPeriod | undefined) =>
-  Object.values(submissions ?? {}).flat();
-
-/**
- * ✅ CRITICAL FIX: Check if an indicator actually has a submission
- * that is still awaiting review. If all submissions are Accepted/Rejected,
- * it should NOT be in the queue.
- */
-const hasPendingSubmission = (indicator: IAdminIndicator): boolean => {
-  const submissions = flattenSubmissions(indicator.submissions);
-  return submissions.some((s) => s.reviewStatus === "Pending");
-};
-
-const hasResubmission = (indicator: IAdminIndicator): boolean =>
-  flattenSubmissions(indicator.submissions).some(
-    (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
-  );
-
-/**
- * Returns the latest pending submission (by submittedAt date).
- * If none, returns null.
- */
-const getLatestPendingSubmission = (indicator: IAdminIndicator) => {
-  const submissions = flattenSubmissions(indicator.submissions)
-    .filter((s) => s.reviewStatus === "Pending")
-    .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-  return submissions.length > 0 ? submissions[0] : null;
-};
-
-/**
- * Count documents only from Pending submissions.
- */
-const getDocumentCount = (indicator: IAdminIndicator): number => {
-  const submissions = flattenSubmissions(indicator.submissions);
-  return submissions
-    .filter((s) => s.reviewStatus === "Pending")
-    .reduce((total, sub) => total + (sub.documents?.length ?? 0), 0);
-};
-
-const getDocumentNames = (indicator: IAdminIndicator): string[] => {
-  const submissions = flattenSubmissions(indicator.submissions);
-  return submissions
-    .filter((s) => s.reviewStatus === "Pending")
-    .flatMap((sub) => (sub.documents ?? []).map((doc) => doc.fileName));
-};
+const hasResubmission = (item: IQueueItem): boolean =>
+  item.submission.resubmissionCount > 0;
 
 /**
  * Format submission date: "DD MMM YYYY, HH:mm"
@@ -98,31 +54,15 @@ const formatSubmissionDate = (dateString?: string): string => {
 };
 
 /**
- * Safely determines what to display in the "Cycle Type" column.
+ * Cycle display now derives from the pending submission's quarter,
+ * so OJO Q3 and Q4 render as separate rows.
  */
-const getDisplayCycle = (indicator: IAdminIndicator): { label: string; isAnnual: boolean } => {
-  if (indicator.reportingCycle === "Annual") {
-    return { label: "Annual Cycle", isAnnual: true };
-  }
-
-  const latestPending = getLatestPendingSubmission(indicator);
-  let quarterLabel = "Quarterly";
-
-  const pendingWithPeriod = latestPending as (typeof latestPending & { period?: string });
-
-  if (pendingWithPeriod?.period) {
-    const match = String(pendingWithPeriod.period).match(/Q[1-4]/i);
-    if (match) {
-      quarterLabel = `Quarter ${match[0].replace(/Q/i, "")}`;
-    } else {
-      quarterLabel = String(pendingWithPeriod.period);
-    }
-  } else if (indicator.activeQuarter) {
-    quarterLabel = `Quarter ${indicator.activeQuarter}`;
-  }
-
-  return { label: quarterLabel, isAnnual: false };
-};
+const getDisplayCycle = (
+  item: IQueueItem
+): { label: string; isAnnual: boolean } =>
+  item.reportingCycle === "Annual" || item.submission.quarter === 0
+    ? { label: "Annual Cycle", isAnnual: true }
+    : { label: `Quarter ${item.submission.quarter}`, isAnnual: false };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -133,84 +73,64 @@ const AdminPendingReviews = () => {
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
 
-  const { 
-    pendingAdminReview, 
-    sentBackIndicators,
-    returnedIndicators,
-    isLoading 
-  } = useAppSelector((state) => state.adminIndicators);
+  const { pendingQueue, sentBackIndicators, returnedIndicators, isLoading } =
+    useAppSelector((state) => state.adminIndicators);
 
   useEffect(() => {
-    dispatch(fetchAllAdminIndicators({ status: "Awaiting Admin Approval" }));
+    dispatch(fetchPendingQueue());
     dispatch(fetchSentBackIndicators());
     dispatch(fetchReturnedIndicators());
   }, [dispatch]);
 
   const handleOpenDossier = useCallback(
-    (id: string) => {
-      setOpeningId(id);
-      navigate(`/admin/review/${id}`);
+    (indicatorId: string, submissionId: string) => {
+      setOpeningId(submissionId);
+      navigate(`/admin/review/${indicatorId}?submission=${submissionId}`);
     },
     [navigate]
   );
 
-  // ✅ FIXED: Strictly filter out any indicator that does not have a Pending submission.
-  // This removes items that are 100% complete, Accepted, or Rejected.
-  const allIndicators = useMemo(() => {
-    const combined = [...pendingAdminReview];
-    
-    sentBackIndicators.forEach((ind) => {
-      if (!combined.some((i) => i.id === ind.id)) {
-        combined.push(ind);
-      }
-    });
-    
-    returnedIndicators.forEach((ind) => {
-      if (!combined.some((i) => i.id === ind.id)) {
-        combined.push(ind);
-      }
-    });
-    
-    // 🚨 THE FIX: Only keep indicators that actually have a Pending submission
-    return combined.filter(hasPendingSubmission);
-  }, [pendingAdminReview, sentBackIndicators, returnedIndicators]);
+  const sentBackIds = useMemo(
+    () => new Set(sentBackIndicators.map((i) => i.id)),
+    [sentBackIndicators]
+  );
+  const returnedIds = useMemo(
+    () => new Set(returnedIndicators.map((i) => i.id)),
+    [returnedIndicators]
+  );
 
-  // Counts derived from the combined pool
+  // Badges and filter counts now describe rows that are actually in the table.
   const counts = useMemo(
     () => ({
-      all: allIndicators.length,
-      quarterly: allIndicators.filter((ind) => ind.reportingCycle === "Quarterly").length,
-      annual: allIndicators.filter((ind) => ind.reportingCycle === "Annual").length,
-      resubmitted: allIndicators.filter(hasResubmission).length,
-      sentback: sentBackIndicators.length,
-      returned: returnedIndicators.length,
+      all: pendingQueue.length,
+      quarterly: pendingQueue.filter((i) => i.reportingCycle === "Quarterly").length,
+      annual: pendingQueue.filter((i) => i.reportingCycle === "Annual").length,
+      resubmitted: pendingQueue.filter(hasResubmission).length,
+      sentback: pendingQueue.filter((i) => sentBackIds.has(i.id)).length,
+      returned: pendingQueue.filter((i) => returnedIds.has(i.id)).length,
     }),
-    [allIndicators, sentBackIndicators, returnedIndicators]
+    [pendingQueue, sentBackIds, returnedIds]
   );
 
   const filteredRecords = useMemo(() => {
-    const isSentBack = (id: string) => sentBackIndicators.some((i) => i.id === id);
-    const isReturned = (id: string) => returnedIndicators.some((i) => i.id === id);
-
-    return allIndicators.filter((ind) => {
+    const term = searchTerm.toLowerCase();
+    return pendingQueue.filter((item) => {
       const matchesSearch =
-        !searchTerm ||
-        ind.objective?.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.assigneeName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.perspective?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        ind.activity?.description?.toLowerCase().includes(searchTerm.toLowerCase());
-
+        !term ||
+        item.objective?.title?.toLowerCase().includes(term) ||
+        item.assigneeName?.toLowerCase().includes(term) ||
+        item.perspective?.toLowerCase().includes(term) ||
+        item.activity?.description?.toLowerCase().includes(term);
       if (!matchesSearch) return false;
 
-      if (activeFilter === "quarterly") return ind.reportingCycle === "Quarterly";
-      if (activeFilter === "annual") return ind.reportingCycle === "Annual";
-      if (activeFilter === "resubmitted") return hasResubmission(ind);
-      if (activeFilter === "sentback") return isSentBack(ind.id);
-      if (activeFilter === "returned") return isReturned(ind.id);
-
+      if (activeFilter === "quarterly") return item.reportingCycle === "Quarterly";
+      if (activeFilter === "annual") return item.reportingCycle === "Annual";
+      if (activeFilter === "resubmitted") return hasResubmission(item);
+      if (activeFilter === "sentback") return sentBackIds.has(item.id);
+      if (activeFilter === "returned") return returnedIds.has(item.id);
       return true;
     });
-  }, [allIndicators, searchTerm, activeFilter, sentBackIndicators, returnedIndicators]);
+  }, [pendingQueue, searchTerm, activeFilter, sentBackIds, returnedIds]);
 
   const clearFilters = () => {
     setSearchTerm("");
@@ -219,7 +139,7 @@ const AdminPendingReviews = () => {
 
   // ── Loading ─────────────────────────────────────────────────────────────
 
-  if (isLoading && pendingAdminReview.length === 0 && sentBackIndicators.length === 0) {
+  if (isLoading && pendingQueue.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] bg-[#fdfcfc]">
         <div className="relative mb-4">
@@ -463,24 +383,26 @@ const AdminPendingReviews = () => {
                   </td>
                 </tr>
               ) : (
-                filteredRecords.map((indicator) => {
-                  const isResub = hasResubmission(indicator);
-                  const isOpening = openingId === indicator.id;
-                  const latestPending = getLatestPendingSubmission(indicator);
-                  const submittedDate = latestPending?.submittedAt;
+                filteredRecords.map((item) => {
+                  const indicator = item;
+                  const latestPending = item.submission;
+                  const documents = latestPending.documents ?? [];
+
+                  const isResub = hasResubmission(item);
+                  const isOpening = openingId === latestPending.id;
+                  const submittedDate = latestPending.submittedAt;
                   const formattedDate = formatSubmissionDate(submittedDate);
-                  const documentCount = getDocumentCount(indicator);
-                  const documentNames = getDocumentNames(indicator);
-                  const latestDocuments = latestPending?.documents ?? [];
-                  
-                  const isSentBack = sentBackIndicators.some((i) => i.id === indicator.id);
-                  const isReturned = returnedIndicators.some((i) => i.id === indicator.id);
-                  
-                  const cycleDisplay = getDisplayCycle(indicator);
+                  const documentCount = documents.length;
+                  const documentNames = documents.map((d) => d.fileName);
+                  const latestDocuments = documents;
+
+                  const isSentBack = sentBackIds.has(item.id);
+                  const isReturned = returnedIds.has(item.id);
+                  const cycleDisplay = getDisplayCycle(item);
 
                   return (
                     <tr
-                      key={indicator.id}
+                      key={latestPending.id}
                       className={`group hover:bg-slate-50/80 transition-all ${
                         isSentBack ? "bg-amber-50/30" : ""
                       } ${isReturned ? "bg-rose-50/30" : ""}`}
@@ -565,7 +487,7 @@ const AdminPendingReviews = () => {
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
                               className={`h-full transition-all duration-1000 ${
-                                isResub ? "bg-amber-500" : 
+                                isResub ? "bg-amber-500" :
                                 isSentBack ? "bg-amber-400" :
                                 isReturned ? "bg-rose-400" :
                                 "bg-[#1a3a32]"
@@ -690,7 +612,9 @@ const AdminPendingReviews = () => {
                       {/* Action */}
                       <td className="px-8 py-6 text-right">
                         <button
-                          onClick={() => handleOpenDossier(indicator.id)}
+                          onClick={() =>
+                            handleOpenDossier(indicator.id, latestPending.id)
+                          }
                           disabled={isOpening}
                           className={`group/btn relative inline-flex items-center gap-3 px-6 py-3 rounded-[0.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${
                             isSentBack

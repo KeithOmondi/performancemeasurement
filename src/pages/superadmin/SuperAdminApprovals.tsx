@@ -10,153 +10,85 @@ import {
   CheckCircle,
   MessageSquare,
   Hash,
-  AlertCircle,
-  Award,
+  AlertTriangle,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
-  fetchIndicators,
-  type IIndicator,
+  fetchPendingFinalApprovals,
+  type IPendingFinalItem,
 } from "../../store/slices/indicatorSlice";
 import ApprovalIdModalPage from "./ApprovalIdModalPage";
 
-interface EnhancedIndicator extends IIndicator {
-  isCertified: boolean;
-  verifiedByAdmin?: string;
-  verifiedAt?: string;
-  adminComment?: string;
-  submittedValue?: number;
-  submissionId?: string;
-  approvedAt?: string;
-  approvedValue?: number;
-}
-
 /**
- * Safely coerces an unknown value into an array.
- * Handles: arrays, objects (returns Object.values), null/undefined (returns []).
- * This guards against API responses where `submissions` or `reviewHistory`
- * may come back as an object map or a count instead of an array.
+ * Final Approvals: shows ONLY what is waiting for the super admin.
+ * One row per quarter (or annual period), driven by the submission's status
+ * on the server, not by the indicator's status.
  */
-const asArray = <T,>(value: unknown): T[] => {
-  if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === "object") return Object.values(value) as T[];
-  return [];
-};
 
-// Convenience aliases for the nested types inside IIndicator
-type Submission = NonNullable<IIndicator["submissions"]>[number];
-type ReviewEvent = NonNullable<IIndicator["reviewHistory"]>[number];
+const periodLabel = (item: IPendingFinalItem) =>
+  item.quarter === 0 ? `Annual ${item.year}` : `Q${item.quarter} ${item.year}`;
+
+const formatDateTime = (dateStr?: string) => {
+  if (!dateStr) return "N/A";
+  const date = new Date(dateStr);
+  return isNaN(date.getTime())
+    ? "N/A"
+    : date.toLocaleDateString() +
+        " " +
+        date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
 
 const SuperAdminApprovals = () => {
   const dispatch = useAppDispatch();
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterCycle, setFilterCycle] = useState<
-    "all" | "quarterly" | "annual"
-  >("all");
-  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(
-    null
+  const [filterCycle, setFilterCycle] = useState<"all" | "quarterly" | "annual">(
+    "all"
+  );
+  const [selected, setSelected] = useState<IPendingFinalItem | null>(null);
+
+  const { pendingFinal, pendingFinalLoading } = useAppSelector(
+    (state) => state.indicators
   );
 
-  const { indicators, loading } = useAppSelector((state) => state.indicators);
-
   useEffect(() => {
-    dispatch(fetchIndicators({ includeHistory: true }));
+    dispatch(fetchPendingFinalApprovals());
   }, [dispatch]);
 
-  const approvalsList = useMemo<EnhancedIndicator[]>(() => {
-    const result: EnhancedIndicator[] = [];
-
-    indicators.forEach((ind) => {
-      // ✅ Normalize submissions & reviewHistory to arrays
-      const submissions = asArray<Submission>(ind.submissions);
-      const reviewHistory = asArray<ReviewEvent>(ind.reviewHistory);
-
-      const superApproval = reviewHistory.find(
-        (h) => h.action === "Approved" && h.reviewerRole === "superadmin"
-      );
-      const isCertified = !!superApproval;
-
-      const isAwaiting = ind.status === "Awaiting Super Admin";
-      if (!isAwaiting && !isCertified) return;
-
-      const adminReviewEvent = reviewHistory.find(
-        (h) => h.action === "Verified" && h.reviewerRole === "admin"
-      );
-
-      const verifiedSubmission = submissions.find(
-        (s) => s.reviewStatus === "Verified" && s.isReviewed === true
-      );
-
-      const approvedSubmission = submissions.find(
-        (s) => s.reviewStatus === "Accepted"
-      );
-
-      result.push({
-        ...ind,
-        isCertified,
-        verifiedByAdmin:
-          adminReviewEvent?.reviewedByName ||
-          (verifiedSubmission?.adminComment ? "Admin" : undefined),
-        verifiedAt: adminReviewEvent?.at || verifiedSubmission?.submittedAt,
-        adminComment: verifiedSubmission?.adminComment,
-        submittedValue: verifiedSubmission?.achievedValue,
-        submissionId: verifiedSubmission?.id,
-        approvedAt: superApproval?.at,
-        approvedValue: approvedSubmission?.achievedValue,
-      });
-    });
-
-    return result.sort((a, b) => {
-      if (a.isCertified !== b.isCertified) return a.isCertified ? 1 : -1;
-      return (
-        new Date(b.verifiedAt || "").getTime() -
-        new Date(a.verifiedAt || "").getTime()
-      );
-    });
-  }, [indicators]);
+  const counts = useMemo(
+    () => ({
+      all: pendingFinal.length,
+      quarterly: pendingFinal.filter((i) => i.reportingCycle === "Quarterly")
+        .length,
+      annual: pendingFinal.filter((i) => i.reportingCycle === "Annual").length,
+      noEvidence: pendingFinal.filter((i) => i.documentsCount === 0).length,
+    }),
+    [pendingFinal]
+  );
 
   const filteredList = useMemo(() => {
-    const searchLower = searchTerm.toLowerCase();
-
-    return approvalsList.filter((ind) => {
-      if (filterCycle === "quarterly" && ind.reportingCycle !== "Quarterly")
+    const term = searchTerm.toLowerCase();
+    return pendingFinal.filter((item) => {
+      if (filterCycle === "quarterly" && item.reportingCycle !== "Quarterly")
         return false;
-      if (filterCycle === "annual" && ind.reportingCycle !== "Annual")
+      if (filterCycle === "annual" && item.reportingCycle !== "Annual")
         return false;
-      if (!searchTerm) return true;
-
+      if (!term) return true;
       return (
-        ind.activityDescription?.toLowerCase().includes(searchLower) ||
-        ind.objectiveTitle?.toLowerCase().includes(searchLower) ||
-        ind.assigneeDisplayName?.toLowerCase().includes(searchLower)
+        item.activityDescription?.toLowerCase().includes(term) ||
+        item.objectiveTitle?.toLowerCase().includes(term) ||
+        item.assigneeDisplayName?.toLowerCase().includes(term)
       );
     });
-  }, [approvalsList, searchTerm, filterCycle]);
-
-  const formatDateTime = (dateStr?: string) => {
-    if (!dateStr) return "N/A";
-    const date = new Date(dateStr);
-    return isNaN(date.getTime())
-      ? "N/A"
-      : date.toLocaleDateString() +
-          " " +
-          date.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          });
-  };
-
-  const handleViewDetails = (indicatorId: string) => {
-    setSelectedIndicatorId(indicatorId);
-  };
+  }, [pendingFinal, searchTerm, filterCycle]);
 
   const handleCloseModal = () => {
-    setSelectedIndicatorId(null);
-    // Refresh the list after modal closes
-    dispatch(fetchIndicators({ includeHistory: true }));
+    setSelected(null);
+    // The thunks that call superAdminReview already refresh the queue, but
+    // a manual refresh here guarantees the modal's last action is reflected.
+    dispatch(fetchPendingFinalApprovals());
   };
 
-  if (loading && indicators.length === 0) {
+  if (pendingFinalLoading && pendingFinal.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#fdfcfc]">
         <Loader2 className="animate-spin text-emerald-600 mb-4" size={40} />
@@ -167,9 +99,6 @@ const SuperAdminApprovals = () => {
     );
   }
 
-  const pendingCount = approvalsList.filter((i) => !i.isCertified).length;
-  const certifiedCount = approvalsList.filter((i) => i.isCertified).length;
-
   return (
     <>
       <div className="p-6 md:p-10 bg-[#fdfcfc] min-h-screen font-sans">
@@ -177,14 +106,15 @@ const SuperAdminApprovals = () => {
         <div className="mb-10">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
-              <h1 className="text-2xl font-serif font-black text-[#1d3331] tracking-tighter uppercase flex items-center gap-3">
+              <h1 className="text-2xl font-serif font-black text-[#1d3331] tracking-tighter uppercase flex items-center gap-3 flex-wrap">
                 FINAL APPROVALS
                 <span className="bg-emerald-600 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest">
-                  {pendingCount} Pending
+                  {counts.all} Pending
                 </span>
-                {certifiedCount > 0 && (
-                  <span className="bg-slate-200 text-slate-600 text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest">
-                    {certifiedCount} Certified
+                {counts.noEvidence > 0 && (
+                  <span className="bg-rose-500 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest flex items-center gap-1.5">
+                    <AlertTriangle size={11} />
+                    {counts.noEvidence} No Evidence
                   </span>
                 )}
               </h1>
@@ -208,7 +138,7 @@ const SuperAdminApprovals = () => {
             </div>
           </div>
 
-          {/* Cycle Filter Tabs */}
+          {/* Cycle filter */}
           <div className="flex flex-wrap items-center gap-3 mt-6">
             <button
               onClick={() => setFilterCycle("all")}
@@ -218,7 +148,7 @@ const SuperAdminApprovals = () => {
                   : "bg-white text-slate-500 hover:bg-slate-50 border border-slate-200"
               }`}
             >
-              All ({approvalsList.length})
+              All ({counts.all})
             </button>
             <button
               onClick={() => setFilterCycle("quarterly")}
@@ -229,9 +159,7 @@ const SuperAdminApprovals = () => {
               }`}
             >
               <Layers size={12} />
-              Quarterly (
-              {approvalsList.filter((i) => i.reportingCycle === "Quarterly").length}
-              )
+              Quarterly ({counts.quarterly})
             </button>
             <button
               onClick={() => setFilterCycle("annual")}
@@ -242,8 +170,7 @@ const SuperAdminApprovals = () => {
               }`}
             >
               <CalendarDays size={12} />
-              Annual (
-              {approvalsList.filter((i) => i.reportingCycle === "Annual").length})
+              Annual ({counts.annual})
             </button>
           </div>
         </div>
@@ -271,239 +198,163 @@ const SuperAdminApprovals = () => {
                   size={48}
                 />
                 <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest">
-                  No Records Found
+                  Nothing waiting for final approval
                 </h2>
-                <p className="text-[10px] text-slate-400 mt-2">
-                  No pending or certified submissions available
-                </p>
               </>
             )}
           </div>
         ) : (
           <div className="grid gap-4">
-            {filteredList.map((indicator) => {
-              const isAnnual = indicator.reportingCycle === "Annual";
-
-              // ✅ Normalize submissions before use in render
-              const submissions = asArray<Submission>(indicator.submissions);
-              const latestSubmission = submissions.find(
-                (s) => s.reviewStatus === "Verified"
-              );
-
-              const resubmissionCount = latestSubmission?.resubmissionCount ?? 0;
-              const achievedValue = indicator.isCertified
-                ? indicator.approvedValue ?? indicator.submittedValue ?? 0
-                : indicator.submittedValue ??
-                  latestSubmission?.achievedValue ??
-                  0;
-
-              const isFinalQuarter =
-                !isAnnual && indicator.activeQuarter === 4;
-              const willComplete = isAnnual || isFinalQuarter;
+            {filteredList.map((item) => {
+              const isAnnual = item.reportingCycle === "Annual";
+              const target = Number(item.target) || 0;
+              const awarded = Number(item.currentTotalAchieved) || 0;
+              const awardedPct =
+                target > 0
+                  ? Math.min(Math.round((awarded / target) * 100), 100)
+                  : 0;
 
               return (
                 <div
-                  key={indicator.id}
-                  className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden hover:shadow-lg ${
-                    indicator.isCertified
-                      ? "border-emerald-200 bg-emerald-50/10"
-                      : "border-emerald-100"
-                  }`}
+                  key={item.submissionId}
+                  className="bg-white rounded-2xl border border-emerald-100 overflow-hidden hover:shadow-lg transition-all duration-300"
                 >
-                  <div className="p-6">
-                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                      {/* Left Section */}
-                      <div className="flex-1">
-                        {/* Badges */}
-                        <div className="flex items-center gap-2 mb-3 flex-wrap">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${
-                              isAnnual
-                                ? "bg-amber-100 text-amber-700 border border-amber-200"
-                                : "bg-blue-100 text-blue-700 border border-blue-200"
-                            }`}
-                          >
-                            {isAnnual ? (
-                              <CalendarDays size={10} />
-                            ) : (
-                              <Layers size={10} />
-                            )}
-                            {indicator.reportingCycle}
-                          </span>
-
-                          {indicator.isCertified ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">
-                              <Award size={10} />
-                              Final Certified
-                            </span>
+                  <div className="p-6 flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                    <div className="flex-1">
+                      {/* Badges */}
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${
+                            isAnnual
+                              ? "bg-amber-100 text-amber-700 border border-amber-200"
+                              : "bg-blue-100 text-blue-700 border border-blue-200"
+                          }`}
+                        >
+                          {isAnnual ? (
+                            <CalendarDays size={10} />
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
-                              <CheckCircle size={10} />
-                              Verified by Admin
-                            </span>
+                            <Layers size={10} />
                           )}
+                          {periodLabel(item)}
+                        </span>
 
-                          {resubmissionCount > 0 && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
-                              <Clock size={10} />
-                              Resubmission #{resubmissionCount}
-                            </span>
-                          )}
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
+                          <CheckCircle size={10} />
+                          {item.reviewStatus === "Partially Approved"
+                            ? "Partially Approved"
+                            : "Verified by Admin"}
+                        </span>
 
-                          {!indicator.isCertified &&
-                            !willComplete &&
-                            indicator.reportingCycle === "Quarterly" && (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-purple-100 text-purple-700 border border-purple-200">
-                                <AlertCircle size={10} />
-                                Q{indicator.activeQuarter} of 4
-                              </span>
-                            )}
-
-                          {!indicator.isCertified && willComplete && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
-                              <CheckCircle size={10} />
-                              Final Quarter
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Title */}
-                        <h3 className="text-base font-bold text-[#1d3331] leading-tight mb-2">
-                          {indicator.activityDescription ||
-                            indicator.objectiveTitle ||
-                            "Untitled Activity"}
-                        </h3>
-
-                        {/* Performance */}
-                        <div className="flex flex-wrap items-center gap-6 mb-3">
-                          <div>
-                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                              {indicator.isCertified
-                                ? "Certified Value"
-                                : "Submitted Value"}
-                            </p>
-                            <p className="text-lg font-bold text-emerald-600">
-                              {achievedValue}
-                              <span className="text-xs font-normal text-slate-400 ml-1">
-                                {indicator.unit || "%"}
-                              </span>
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                              Annual Target
-                            </p>
-                            <p className="text-sm font-bold text-[#1d3331]">
-                              {indicator.target} {indicator.unit || "%"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                              Overall Progress
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-emerald-500 rounded-full"
-                                  style={{
-                                    width: `${indicator.progress || 0}%`,
-                                  }}
-                                />
-                              </div>
-                              <span className="text-[10px] font-bold text-slate-600">
-                                {indicator.progress || 0}%
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Quarter Info for Quarterly Reports */}
-                        {!isAnnual && (
-                          <div className="mb-3 p-2 bg-blue-50 rounded-lg inline-block">
-                            <p className="text-[9px] font-bold text-blue-700 uppercase tracking-wider">
-                              Reporting Period: Q{indicator.activeQuarter} •{" "}
-                              {new Date().getFullYear()}
-                            </p>
-                          </div>
+                        {item.resubmissionCount > 0 && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
+                            <Clock size={10} />
+                            Resubmission #{item.resubmissionCount}
+                          </span>
                         )}
 
-                        {/* Admin Verification Info */}
-                        <div className="flex flex-wrap items-center gap-4 text-[10px] mb-3">
-                          <div className="flex items-center gap-1.5">
-                            <User size={12} className="text-slate-400" />
-                            <span className="font-bold text-slate-700">
-                              Assignee:{" "}
-                              {indicator.assigneeDisplayName || "Unassigned"}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle
-                              size={12}
-                              className="text-emerald-500"
-                            />
-                            <span className="text-slate-500">
-                              Verified by: {indicator.verifiedByAdmin || "Admin"}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <Clock size={12} className="text-slate-400" />
-                            <span className="text-slate-500">
-                              Verified on: {formatDateTime(indicator.verifiedAt)}
-                            </span>
-                          </div>
-                          {indicator.isCertified && indicator.approvedAt && (
-                            <div className="flex items-center gap-1.5">
-                              <Award size={12} className="text-emerald-500" />
-                              <span className="text-slate-500">
-                                Certified on:{" "}
-                                {formatDateTime(indicator.approvedAt)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Admin Comment */}
-                        {indicator.adminComment && (
-                          <div className="mt-3 p-3 bg-slate-50 rounded-xl border-l-4 border-emerald-400">
-                            <p className="text-[9px] font-bold uppercase tracking-wider mb-1 text-slate-500 flex items-center gap-1">
-                              <MessageSquare size={10} /> Admin Verification
-                              Note:
-                            </p>
-                            <p className="text-[11px] font-medium text-slate-700">
-                              "{indicator.adminComment}"
-                            </p>
-                          </div>
+                        {item.documentsCount === 0 && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-200">
+                            <AlertTriangle size={10} />
+                            No evidence on file
+                          </span>
                         )}
+                      </div>
 
-                        {/* Submission ID */}
-                        <div className="mt-3 flex items-center gap-1 text-[9px] font-mono text-slate-400">
-                          <Hash size={9} />
-                          Submission ID:{" "}
-                          {indicator.submissionId?.slice(-12).toUpperCase() ||
-                            "N/A"}
+                      <h3 className="text-base font-bold text-[#1d3331] leading-tight mb-2">
+                        {item.activityDescription ||
+                          item.objectiveTitle ||
+                          "Untitled Activity"}
+                      </h3>
+
+                      {/* Numbers */}
+                      <div className="flex flex-wrap items-center gap-6 mb-3">
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                            Submitted Value
+                          </p>
+                          <p className="text-lg font-bold text-emerald-600">
+                            {item.achievedValue ?? 0}
+                            <span className="text-xs font-normal text-slate-400 ml-1">
+                              {item.unit || "%"}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                            Annual Target
+                          </p>
+                          <p className="text-sm font-bold text-[#1d3331]">
+                            {target} {item.unit || "%"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                            Certified So Far
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-500 rounded-full"
+                                style={{ width: `${awardedPct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-600">
+                              {awardedPct}% · {item.remaining}{" "}
+                              {item.unit || "%"} left
+                            </span>
+                          </div>
                         </div>
                       </div>
 
-                      {/* Right Section - Actions */}
-                      <div className="flex flex-row lg:flex-col items-center gap-3 min-w-[160px]">
-                        <button
-                          onClick={() => handleViewDetails(indicator.id)}
-                          className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-[#1d3331] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-sm"
-                        >
-                          <Eye size={14} /> Review Details
-                        </button>
-
-                        {!indicator.isCertified ? (
-                          <>
-                            <div className="w-full text-center px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
-                              Pending Review
-                            </div>
-                          </>
-                        ) : (
-                          <div className="w-full text-center px-5 py-2.5 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
-                            Already Certified
+                      {/* People / dates */}
+                      <div className="flex flex-wrap items-center gap-4 text-[10px] mb-3">
+                        <div className="flex items-center gap-1.5">
+                          <User size={12} className="text-slate-400" />
+                          <span className="font-bold text-slate-700">
+                            Assignee: {item.assigneeDisplayName || "Unassigned"}
+                          </span>
+                        </div>
+                        {item.submittedByName && (
+                          <div className="flex items-center gap-1.5 text-slate-500">
+                            Submitted by: {item.submittedByName}
                           </div>
                         )}
+                        <div className="flex items-center gap-1.5">
+                          <Clock size={12} className="text-slate-400" />
+                          <span className="text-slate-500">
+                            Submitted: {formatDateTime(item.submittedAt)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {item.adminComment && (
+                        <div className="mt-3 p-3 bg-slate-50 rounded-xl border-l-4 border-emerald-400">
+                          <p className="text-[9px] font-bold uppercase tracking-wider mb-1 text-slate-500 flex items-center gap-1">
+                            <MessageSquare size={10} /> Admin Note:
+                          </p>
+                          <p className="text-[11px] font-medium text-slate-700">
+                            "{item.adminComment}"
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex items-center gap-1 text-[9px] font-mono text-slate-400">
+                        <Hash size={9} />
+                        Submission ID:{" "}
+                        {item.submissionId.slice(-12).toUpperCase()}
+                      </div>
+                    </div>
+
+                    {/* Action */}
+                    <div className="flex flex-row lg:flex-col items-center gap-3 min-w-[160px]">
+                      <button
+                        onClick={() => setSelected(item)}
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-[#1d3331] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-sm"
+                      >
+                        <Eye size={14} /> Review Details
+                      </button>
+                      <div className="w-full text-center px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
+                        Pending Review
                       </div>
                     </div>
                   </div>
@@ -514,10 +365,15 @@ const SuperAdminApprovals = () => {
         )}
       </div>
 
-      {/* Modal - Review Details */}
-      {selectedIndicatorId && (
+      {/* The modal must review THIS quarter. Add optional `quarter` and
+          `year` props to ApprovalIdModalPage and send them in the review
+          payload (the server otherwise defaults to the indicator's
+          active_quarter, which is often the wrong one). */}
+      {selected && (
         <ApprovalIdModalPage
-          indicatorId={selectedIndicatorId}
+          indicatorId={selected.id}
+          quarter={selected.quarter}
+          year={selected.year}
           onClose={handleCloseModal}
         />
       )}

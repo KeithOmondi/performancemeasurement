@@ -1,3 +1,7 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  FILE: adminIndicatorSlice.ts
+//  Queue-based admin review — one row per PENDING submission (IQueueItem).
+// ─────────────────────────────────────────────────────────────────────────────
 import {
   createSlice,
   createAsyncThunk,
@@ -140,15 +144,25 @@ export interface IAdminIndicator {
   instructions?: string;
 }
 
+/**
+ * A single row in the admin review queue.
+ * Every item represents ONE pending submission (one quarter), so a single
+ * indicator with OJO Q3 and Q4 pending will appear as TWO queue items.
+ */
+export type IQueueItem = Omit<IAdminIndicator, "submissions"> & {
+  submission: ISubmission;
+};
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
-  pendingAdminReview: IAdminIndicator[];
+  pendingQueue: IQueueItem[];               // ✅ NEW — flat review queue
+  pendingAdminReview: IAdminIndicator[];    // legacy (kept for other screens)
   resubmittedWork: IAdminIndicator[];
   approvedIndicators: IAdminIndicator[];
-  sentBackIndicators: IAdminIndicator[];    // ✅ NEW
-  returnedIndicators: IAdminIndicator[];    // ✅ NEW
+  sentBackIndicators: IAdminIndicator[];
+  returnedIndicators: IAdminIndicator[];
   selectedIndicator: IAdminIndicator | null;
   quarterStatuses: IQuarterStatus[];
   isLoading: boolean;
@@ -159,11 +173,12 @@ interface IAdminIndicatorState {
 
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
+  pendingQueue: [],                         // ✅ NEW
   pendingAdminReview: [],
   resubmittedWork: [],
   approvedIndicators: [],
-  sentBackIndicators: [],     // ✅ NEW
-  returnedIndicators: [],     // ✅ NEW
+  sentBackIndicators: [],
+  returnedIndicators: [],
   selectedIndicator: null,
   quarterStatuses: [],
   isLoading: false,
@@ -176,6 +191,59 @@ const initialState: IAdminIndicatorState = {
 
 const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
   Object.values(indicator.submissions ?? {}).flat();
+
+/**
+ * Rebuilds the queue-derived views (pendingAdminReview / resubmittedWork)
+ * from `allAssignments`. `pendingQueue` is intentionally NOT derived here —
+ * it is populated directly by `fetchPendingQueue`.
+ */
+const refreshQueues = (state: IAdminIndicatorState) => {
+  state.pendingAdminReview = state.allAssignments.filter(
+    (ind) =>
+      ind.status === "Awaiting Admin Approval" ||
+      ind.status === "Correction Needed" ||
+      ind.status === "Partially Approved"
+  );
+
+  state.resubmittedWork = state.allAssignments.filter((ind) =>
+    Object.values(ind.submissions ?? {}).some((periodRows) =>
+      periodRows.some(
+        (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
+      )
+    )
+  );
+};
+
+/**
+ * After any review action, the queue may be stale. We patch the row in place
+ * when possible (e.g. a comment was added) and otherwise drop it so the next
+ * `fetchPendingQueue()` re-adds only genuinely-pending rows.
+ */
+const syncQueueAfterUpdate = (
+  state: IAdminIndicatorState,
+  updated: IAdminIndicator
+) => {
+  const stillPending = flattenSubmissions(updated).some(
+    (s) => s.reviewStatus === "Pending"
+  );
+
+  if (!stillPending) {
+    // No pending submissions left for this indicator → drop all its rows.
+    state.pendingQueue = state.pendingQueue.filter(
+      (q) => q.id !== updated.id
+    );
+    return;
+  }
+
+  // Otherwise patch every queue row belonging to this indicator.
+  state.pendingQueue = state.pendingQueue.map((q) => {
+    if (q.id !== updated.id) return q;
+    const fresh = flattenSubmissions(updated).find(
+      (s) => s.id === q.submission.id
+    );
+    return fresh ? { ...q, submission: fresh } : q;
+  });
+};
 
 // ─── Exported Helpers ───────────────────────────────────────────────────────
 
@@ -280,25 +348,6 @@ export const getQuarterStatusSummary = (
   });
 };
 
-// ─── Queue Refresh ───────────────────────────────────────────────────────────
-
-const refreshQueues = (state: IAdminIndicatorState) => {
-  state.pendingAdminReview = state.allAssignments.filter(
-    (ind) =>
-      ind.status === "Awaiting Admin Approval" ||
-      ind.status === "Correction Needed" ||
-      ind.status === "Partially Approved"
-  );
-
-  state.resubmittedWork = state.allAssignments.filter((ind) =>
-    Object.values(ind.submissions ?? {}).some((periodRows) =>
-      periodRows.some(
-        (s) => s.resubmissionCount > 0 && s.reviewStatus === "Pending"
-      )
-    )
-  );
-};
-
 // ─── Upsert Helpers ───────────────────────────────────────────────────────────
 
 const upsertIntoAssignments = (
@@ -321,6 +370,7 @@ const upsertAndRefresh = (
   if (state.selectedIndicator?.id === updated.id) {
     state.selectedIndicator = updated;
   }
+  syncQueueAfterUpdate(state, updated);
   refreshQueues(state);
 };
 
@@ -337,6 +387,25 @@ const extractError = (error: unknown, fallback: string): string => {
 };
 
 // ─── Thunks ───────────────────────────────────────────────────────────────────
+
+/**
+ * ✅ The primary source of truth for the AdminPendingReviews table.
+ * Returns one IQueueItem per PENDING submission (one row per quarter).
+ */
+export const fetchPendingQueue = createAsyncThunk<
+  IQueueItem[],
+  void,
+  { rejectValue: string }
+>("adminIndicators/fetchPendingQueue", async (_, { rejectWithValue }) => {
+  try {
+    const res = await apiPrivate.get<{ data: IQueueItem[] }>(
+      "/admin/pending-queue"
+    );
+    return res.data?.data ?? [];
+  } catch (error) {
+    return rejectWithValue(extractError(error, "Failed to load review queue"));
+  }
+});
 
 export const fetchAllAdminIndicators = createAsyncThunk<
   IAdminIndicator[],
@@ -372,7 +441,6 @@ export const fetchResubmittedIndicators = createAsyncThunk<
   }
 });
 
-// ✅ NEW: Fetch indicators sent back by super admin
 export const fetchSentBackIndicators = createAsyncThunk<
   IAdminIndicator[],
   void,
@@ -388,7 +456,6 @@ export const fetchSentBackIndicators = createAsyncThunk<
   }
 });
 
-// ✅ NEW: Fetch returned/rejected indicators
 export const fetchReturnedIndicators = createAsyncThunk<
   IAdminIndicator[],
   void,
@@ -621,6 +688,14 @@ const adminIndicatorSlice = createSlice({
       };
 
     builder
+      // ✅ fetchPendingQueue
+      .addCase(fetchPendingQueue.pending, setPending("isLoading"))
+      .addCase(fetchPendingQueue.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.pendingQueue = action.payload;
+      })
+      .addCase(fetchPendingQueue.rejected, setRejected("isLoading"))
+
       // fetchAllAdminIndicators
       .addCase(fetchAllAdminIndicators.pending, setPending("isLoading"))
       .addCase(fetchAllAdminIndicators.fulfilled, (state, action) => {
@@ -639,33 +714,27 @@ const adminIndicatorSlice = createSlice({
       })
       .addCase(fetchResubmittedIndicators.rejected, setRejected("isLoading"))
 
-      // ✅ NEW: fetchSentBackIndicators
+      // fetchSentBackIndicators
       .addCase(fetchSentBackIndicators.pending, setPending("isLoading"))
       .addCase(fetchSentBackIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
         state.sentBackIndicators = action.payload;
-        // Also add to allAssignments if not already there
         action.payload.forEach((updated) => {
           const exists = state.allAssignments.some((i) => i.id === updated.id);
-          if (!exists) {
-            state.allAssignments.push(updated);
-          }
+          if (!exists) state.allAssignments.push(updated);
         });
         refreshQueues(state);
       })
       .addCase(fetchSentBackIndicators.rejected, setRejected("isLoading"))
 
-      // ✅ NEW: fetchReturnedIndicators
+      // fetchReturnedIndicators
       .addCase(fetchReturnedIndicators.pending, setPending("isLoading"))
       .addCase(fetchReturnedIndicators.fulfilled, (state, action) => {
         state.isLoading = false;
         state.returnedIndicators = action.payload;
-        // Also add to allAssignments if not already there
         action.payload.forEach((updated) => {
           const exists = state.allAssignments.some((i) => i.id === updated.id);
-          if (!exists) {
-            state.allAssignments.push(updated);
-          }
+          if (!exists) state.allAssignments.push(updated);
         });
         refreshQueues(state);
       })
@@ -771,9 +840,9 @@ const adminIndicatorSlice = createSlice({
   },
 });
 
-export const { 
-  setSelectedIndicator, 
-  clearAdminError, 
+export const {
+  setSelectedIndicator,
+  clearAdminError,
   resetAdminState,
   clearQuarterStatuses,
 } = adminIndicatorSlice.actions;
