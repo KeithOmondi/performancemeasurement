@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import {
   FileText,
@@ -21,6 +21,8 @@ import {
   Check,
   ThumbsUp,
   ThumbsDown,
+  ShieldCheck,
+  Hourglass,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import {
@@ -66,19 +68,47 @@ function getSafeDocuments(sub: ISubmission): IDocument[] {
   return sub.documents && Array.isArray(sub.documents) ? sub.documents : [];
 }
 
+/**
+ * Under the patched backend, only these review statuses are still actionable
+ * by the admin. `Verified` and `Partially Approved` mean the admin is done
+ * and the super admin owns the next step.
+ */
+function isAdminActionable(status: ISubmission["reviewStatus"]): boolean {
+  return status === "Pending" || status === "Correction Needed";
+}
+
+/** Only Pending or Rejected submissions can be deleted. */
+function isDeletableSubmission(status: ISubmission["reviewStatus"]): boolean {
+  return status === "Pending" || status === "Rejected";
+}
+
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
 function reviewStatusBadgeClass(status: ISubmission["reviewStatus"]): string {
   switch (status) {
     case "Verified":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
     case "Accepted":
       return "bg-emerald-50 text-emerald-600 border-emerald-100";
+    case "Partially Approved":
+      return "bg-blue-50 text-blue-700 border-blue-200";
     case "Rejected":
       return "bg-rose-50 text-rose-600 border-rose-100";
     case "Correction Needed":
       return "bg-amber-50 text-amber-600 border-amber-200";
     default:
       return "bg-orange-50 text-orange-600 border-orange-100";
+  }
+}
+
+function reviewStatusBadgeLabel(status: ISubmission["reviewStatus"]): string {
+  switch (status) {
+    case "Verified":
+      return "Verified by Admin";
+    case "Partially Approved":
+      return "Partially Certified";
+    default:
+      return status || "Pending";
   }
 }
 
@@ -98,12 +128,26 @@ function documentStatusBadge(doc: IDocument): { color: string; label: string } {
   }
 }
 
-function quarterStatusBadge(status: IQuarterStatus): { color: string; label: string; icon: React.ReactNode } {
+function quarterStatusBadge(status: IQuarterStatus): {
+  color: string;
+  label: string;
+  icon: React.ReactNode;
+} {
+  // `Verified` and `Partially Approved` are terminal from the admin's side —
+  // the super admin owns the next step. Highlight both as "Complete" so the
+  // admin doesn't think there is something left to do.
   if (status.isComplete) {
     return {
       color: "bg-emerald-100 text-emerald-700 border-emerald-200",
-      label: "Complete",
+      label: "Verified",
       icon: <CheckCircle2 size={12} />,
+    };
+  }
+  if (status.isPartial) {
+    return {
+      color: "bg-blue-100 text-blue-700 border-blue-200",
+      label: "Partially Certified",
+      icon: <Hourglass size={12} />,
     };
   }
   if (status.isRejected) {
@@ -120,18 +164,23 @@ function quarterStatusBadge(status: IQuarterStatus): { color: string; label: str
       icon: <Clock size={12} />,
     };
   }
-  if (status.isPartial) {
-    return {
-      color: "bg-blue-100 text-blue-700 border-blue-200",
-      label: "Partial",
-      icon: <AlertOctagon size={12} />,
-    };
-  }
   return {
     color: "bg-gray-100 text-gray-600 border-gray-200",
     label: "Not Started",
     icon: <AlertOctagon size={12} />,
   };
+}
+
+/**
+ * A quarter is actionable only when nothing has been certified yet AND it's
+ * still in the admin's court. `Partially Approved` and `Verified` quarters
+ * are owned by the super admin and must not be re-approved or rejected here.
+ */
+function isQuarterActionable(status: IQuarterStatus): boolean {
+  if (status.isComplete) return false;
+  if (status.isPartial) return false;
+  if (status.isRejected) return false;
+  return status.isPending;
 }
 
 // ─── Delete Document Modal ──────────────────────────────────────────────────
@@ -256,9 +305,16 @@ const DocumentActionModal = ({
             <X size={20} className="text-slate-500" />
           </button>
         </div>
-        <p className="text-sm text-slate-600 mb-4">
+        <p className="text-sm text-slate-600 mb-2">
           You are about to <strong>{action}</strong> document: <strong>"{doc.fileName}"</strong>
         </p>
+        {action === "approve" && (
+          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2 mb-4">
+            Approving individual documents does <strong>not</strong> verify the
+            quarter. Use <em>Approve Quarter</em> or <em>Approve Submission</em>{" "}
+            when you are ready to forward it to the super admin.
+          </p>
+        )}
         {action === "reject" && (
           <form onSubmit={handleSubmit}>
             <div className="mb-4">
@@ -350,7 +406,7 @@ const QuarterActionModal = ({
       >
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-bold text-slate-800">
-            {action === "approve" ? `Approve ${quarterLabel}` : `Reject ${quarterLabel}`}
+            {action === "approve" ? `Verify ${quarterLabel}` : `Reject ${quarterLabel}`}
           </h3>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
             <X size={20} className="text-slate-500" />
@@ -359,12 +415,16 @@ const QuarterActionModal = ({
         <p className="text-sm text-slate-600 mb-4">
           You are about to <strong>{action}</strong> {quarterLabel} {quarter.year}.
           {action === "approve" ? (
-            <span className="block mt-2 text-emerald-600 text-xs">
-              This will mark the quarter as complete and update the overall progress.
+            <span className="block mt-2 text-emerald-700 text-xs bg-emerald-50 border border-emerald-100 rounded-lg p-2">
+              Verifying marks this quarter as <strong>complete from the admin
+              side</strong>. It will be forwarded to the super admin for final
+              certification. Certification is a super-admin action and cannot
+              be undone here.
             </span>
           ) : (
-            <span className="block mt-2 text-rose-600 text-xs">
-              This will flag the quarter for correction and notify the user.
+            <span className="block mt-2 text-rose-700 text-xs bg-rose-50 border border-rose-100 rounded-lg p-2">
+              Rejecting sends this quarter back to the assignee with your
+              reason. You can re-review it after they resubmit.
             </span>
           )}
         </p>
@@ -413,7 +473,7 @@ const QuarterActionModal = ({
               onClick={() => onConfirm(quarter.submissionId)}
               className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
             >
-              Approve
+              Verify Quarter
             </button>
           </div>
         )}
@@ -427,6 +487,8 @@ const QuarterActionModal = ({
 
 const AdminIndicatorReview: React.FC = () => {
   const { indicatorId } = useParams<{ indicatorId: string }>();
+  const [searchParams] = useSearchParams();
+  const focusSubmissionId = searchParams.get("submission");
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
 
@@ -487,15 +549,24 @@ const AdminIndicatorReview: React.FC = () => {
     return Object.values(indicator.submissions).flat();
   }, [indicator]);
 
-  const pendingSubmissions = useMemo(
-    () =>
-      allSubmissions.filter(
-        (s) =>
-          s.reviewStatus === "Pending" ||
-          s.reviewStatus === "Correction Needed",
-      ),
-    [allSubmissions],
-  );
+  /**
+   * Only Pending / Correction Needed submissions are actionable by the admin.
+   * Verified and Partially Approved rows are owned by the super admin.
+   *
+   * If the URL carries `?submission=<id>`, that submission is pinned to the
+   * top of the list so the admin lands directly on the row they clicked in
+   * the queue — important now that one indicator can have several pending
+   * quarters at once.
+   */
+  const pendingSubmissions = useMemo(() => {
+    const actionable = allSubmissions.filter((s) => isAdminActionable(s.reviewStatus));
+    if (!focusSubmissionId) return actionable;
+    return [...actionable].sort((a, b) => {
+      if (a.id === focusSubmissionId) return -1;
+      if (b.id === focusSubmissionId) return 1;
+      return 0;
+    });
+  }, [allSubmissions, focusSubmissionId]);
 
   // ── One card per period: keep only the most recent submission ─────────────
   const submissionsByPeriod = useMemo(() => {
@@ -615,7 +686,7 @@ const AdminIndicatorReview: React.FC = () => {
             payload: { documentId, submissionId, adminComment: "Approved by admin." }
           })
         ).unwrap();
-        showToast("success", "Document approved successfully.");
+        showToast("success", "Document approved. Quarter is still Pending — use Approve Quarter to forward it.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
         dispatch(fetchQuarterStatuses(indicator.id));
         setDocActionModal(null);
@@ -636,7 +707,7 @@ const AdminIndicatorReview: React.FC = () => {
             payload: { documentId, submissionId, reason }
           })
         ).unwrap();
-        showToast("success", "Document rejected successfully.");
+        showToast("success", "Document rejected. The quarter is flagged for correction.");
         dispatch(getIndicatorByIdAdmin(indicator.id));
         dispatch(fetchQuarterStatuses(indicator.id));
         setDocActionModal(null);
@@ -671,15 +742,18 @@ const AdminIndicatorReview: React.FC = () => {
         await dispatch(
           approveQuarter({
             id: indicator.id,
-            payload: { submissionId, adminComment: "Quarter approved by admin." }
+            payload: { submissionId, adminComment: "Quarter verified by admin." }
           })
         ).unwrap();
-        showToast("success", "Quarter approved successfully.");
+        showToast(
+          "success",
+          "Quarter verified and forwarded to the super admin for certification.",
+        );
         dispatch(getIndicatorByIdAdmin(indicator.id));
         dispatch(fetchQuarterStatuses(indicator.id));
         setQuarterActionModal(null);
       } catch (error) {
-        showToast("error", (error as string) || "Quarter approval failed.");
+        showToast("error", (error as string) || "Quarter verification failed.");
       }
     },
     [dispatch, indicator, showToast],
@@ -726,12 +800,16 @@ const AdminIndicatorReview: React.FC = () => {
   const handleApprove = useCallback(async () => {
     if (!indicator) return;
 
+    // Backend now rejects a zero-value submission without a comment, and
+    // requires at least one successfully-verified submission. Send a
+    // per-row comment only when the admin typed one; otherwise leave it
+    // undefined so the backend uses its default.
     const submissionUpdates = pendingSubmissions.map((s) => ({
       submissionId: s.id,
       adminComment:
         individualComments[s.id]?.trim() ||
         overallComment.trim() ||
-        "Approved.",
+        undefined,
     }));
 
     const result = await dispatch(
@@ -745,14 +823,18 @@ const AdminIndicatorReview: React.FC = () => {
     );
 
     if (approveSubmission.fulfilled.match(result)) {
-      showToast("success", "Submission approved and forwarded to Super Admin.");
+      showToast(
+        "success",
+        "Submission verified and forwarded to the super admin.",
+      );
       dispatch(getIndicatorByIdAdmin(indicator.id));
       dispatch(fetchQuarterStatuses(indicator.id));
       resetReviewState();
     } else if (approveSubmission.rejected.match(result)) {
       showToast(
         "error",
-        (result.payload as string) || "Approval failed. Please try again.",
+        (result.payload as string) ||
+          "Verification failed. Zero-value submissions need a comment.",
       );
     }
   }, [
@@ -844,6 +926,9 @@ const AdminIndicatorReview: React.FC = () => {
 
   const hasPending = pendingSubmissions.length > 0;
   const isPartialCorrection = indicator.status === "Correction Needed";
+  const fullyCertified =
+    Number(indicator.target) > 0 &&
+    Number(indicator.currentTotalAchieved ?? 0) >= Number(indicator.target);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#fcfdfb]">
@@ -896,7 +981,7 @@ const AdminIndicatorReview: React.FC = () => {
               ) : overallRejectionMode ? (
                 <XCircle size={14} />
               ) : (
-                <CheckCircle2 size={14} />
+                <ShieldCheck size={14} />
               )}
               {isReviewing
                 ? "Processing..."
@@ -904,7 +989,7 @@ const AdminIndicatorReview: React.FC = () => {
                   ? isPartialCorrection
                     ? "Submit Correction Request"
                     : "Confirm Rejection"
-                  : "Approve Submission"}
+                  : "Verify & Forward"}
             </button>
           </div>
         )}
@@ -916,7 +1001,7 @@ const AdminIndicatorReview: React.FC = () => {
           {/* Summary Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3 bg-white p-10 border border-slate-200/60 shadow-sm rounded-[2.5rem]">
-              <div className="flex items-center gap-3 mb-6">
+              <div className="flex items-center gap-3 mb-6 flex-wrap">
                 <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-1.5 uppercase tracking-widest rounded-lg">
                   {indicator.perspective || "General"}
                 </span>
@@ -932,6 +1017,12 @@ const AdminIndicatorReview: React.FC = () => {
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-amber-50 text-amber-700 border border-amber-200">
                     <AlertOctagon size={12} />
                     Correction Needed
+                  </div>
+                )}
+                {fullyCertified && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <ShieldCheck size={12} />
+                    Fully Certified
                   </div>
                 )}
                 {indicator.progress !== undefined && (
@@ -972,7 +1063,7 @@ const AdminIndicatorReview: React.FC = () => {
                 {quarterStatuses.map((quarter) => {
                   const badge = quarterStatusBadge(quarter);
                   const quarterLabel = quarter.quarter === 0 ? "Annual" : `Q${quarter.quarter}`;
-                  const isActionable = !quarter.isComplete && !quarter.isRejected;
+                  const actionable = isQuarterActionable(quarter);
 
                   return (
                     <div
@@ -980,6 +1071,8 @@ const AdminIndicatorReview: React.FC = () => {
                       className={`p-4 rounded-xl border ${
                         quarter.isComplete
                           ? "bg-emerald-50 border-emerald-200"
+                          : quarter.isPartial
+                          ? "bg-blue-50 border-blue-200"
                           : quarter.isRejected
                           ? "bg-rose-50 border-rose-200"
                           : quarter.isPending
@@ -1002,14 +1095,14 @@ const AdminIndicatorReview: React.FC = () => {
                       <p className="text-[8px] text-slate-400 mt-1">
                         Status: {quarter.reviewStatus}
                       </p>
-                      {isActionable && (
+                      {actionable && (
                         <div className="mt-3 flex items-center gap-2">
                           <button
                             onClick={() => openQuarterActionModal(quarter, "approve")}
                             className="flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[8px] font-black uppercase transition-colors"
                           >
                             <ThumbsUp size={10} />
-                            Approve
+                            Verify
                           </button>
                           <button
                             onClick={() => openQuarterActionModal(quarter, "reject")}
@@ -1019,6 +1112,12 @@ const AdminIndicatorReview: React.FC = () => {
                             Reject
                           </button>
                         </div>
+                      )}
+                      {quarter.isPartial && (
+                        <p className="mt-2 text-[8px] text-blue-700 bg-blue-100 rounded px-2 py-1 border border-blue-200">
+                          Super admin certified part of this target. Remaining
+                          certification is not an admin action.
+                        </p>
                       )}
                     </div>
                   );
@@ -1101,23 +1200,29 @@ const AdminIndicatorReview: React.FC = () => {
                                 )[0]?.adminComment)
                         : null;
 
-                      const isActionable =
-                        sub.reviewStatus === "Pending" ||
-                        sub.reviewStatus === "Correction Needed";
-
-                      const canDeleteSubmission =
-                        sub.reviewStatus === "Rejected" ||
-                        sub.reviewStatus === "Pending";
+                      const isActionable = isAdminActionable(sub.reviewStatus);
+                      const canDeleteSubmission = isDeletableSubmission(
+                        sub.reviewStatus,
+                      );
+                      const isPartial = sub.reviewStatus === "Partially Approved";
+                      const isVerified = sub.reviewStatus === "Verified";
+                      const isFocused = focusSubmissionId === sub.id;
 
                       return (
                         <div
                           key={sub.id}
                           className={`bg-white border rounded-[2rem] p-8 shadow-sm ${
-                            sub.reviewStatus === "Correction Needed"
+                            isFocused
+                              ? "ring-2 ring-emerald-400 border-emerald-300"
+                              : sub.reviewStatus === "Correction Needed"
                               ? "border-amber-200/80"
                               : isResubmission
-                                ? "border-amber-200/60"
-                                : "border-slate-200/60"
+                              ? "border-amber-200/60"
+                              : isVerified
+                              ? "border-emerald-200/70"
+                              : isPartial
+                              ? "border-blue-200/70"
+                              : "border-slate-200/60"
                           }`}
                         >
                           <div className="flex flex-col md:flex-row justify-between gap-8">
@@ -1134,6 +1239,21 @@ const AdminIndicatorReview: React.FC = () => {
                                       {indicator.unit || "%"}
                                     </p>
                                   </div>
+                                  {typeof sub.approvedAmount === "number" &&
+                                    sub.approvedAmount > 0 && (
+                                      <>
+                                        <div className="w-px h-8 bg-slate-100" />
+                                        <div>
+                                          <p className="text-[10px] font-black text-blue-500 uppercase tracking-tighter">
+                                            Certified
+                                          </p>
+                                          <p className="text-lg font-black text-blue-700">
+                                            {sub.approvedAmount}{" "}
+                                            {indicator.unit || "%"}
+                                          </p>
+                                        </div>
+                                      </>
+                                    )}
                                   <div className="w-px h-8 bg-slate-100" />
                                   <div>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">
@@ -1173,7 +1293,7 @@ const AdminIndicatorReview: React.FC = () => {
                                       sub.reviewStatus,
                                     )}`}
                                   >
-                                    {sub.reviewStatus || "Pending"}
+                                    {reviewStatusBadgeLabel(sub.reviewStatus)}
                                   </span>
 
                                   {/* ── Delete submission button ── */}
@@ -1383,7 +1503,10 @@ const AdminIndicatorReview: React.FC = () => {
                                               </button>
                                             )}
 
-                                            {/* ── Document Action Buttons ── */}
+                                            {/* ── Document Action Buttons ──
+                                                Hidden entirely for Verified /
+                                                Partially Approved submissions:
+                                                the admin's review is closed. */}
                                             {!isDeleted && !isApproved && isActionable && (
                                               <>
                                                 {(isPending || isResubmitted || serverRejected) && (
@@ -1398,7 +1521,7 @@ const AdminIndicatorReview: React.FC = () => {
                                                     <CheckCircle size={14} />
                                                   </button>
                                                 )}
-                                                
+
                                                 {(isPending || isResubmitted) && !serverRejected && (
                                                   <button
                                                     type="button"
@@ -1414,7 +1537,7 @@ const AdminIndicatorReview: React.FC = () => {
                                               </>
                                             )}
 
-                                            {!isDeleted && (
+                                            {!isDeleted && isActionable && (
                                               <button
                                                 type="button"
                                                 onClick={() =>

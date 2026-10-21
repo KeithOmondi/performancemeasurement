@@ -23,6 +23,14 @@ import ApprovalIdModalPage from "./ApprovalIdModalPage";
  * Final Approvals: shows ONLY what is waiting for the super admin.
  * One row per quarter (or annual period), driven by the submission's status
  * on the server, not by the indicator's status.
+ *
+ * Because the backend now only queues a row when its latest submission is
+ * `Verified` or `Partially Approved` AND the indicator still has target left
+ * to award, every row here needs either an initial award or more certified
+ * units. The two are visually distinct:
+ *
+ *   - Verified           → green, "Verified by Admin", needs the first award.
+ *   - Partially Approved → amber, "Partially Certified", needs the remainder.
  */
 
 const periodLabel = (item: IPendingFinalItem) =>
@@ -61,6 +69,9 @@ const SuperAdminApprovals = () => {
         .length,
       annual: pendingFinal.filter((i) => i.reportingCycle === "Annual").length,
       noEvidence: pendingFinal.filter((i) => i.documentsCount === 0).length,
+      partiallyCertified: pendingFinal.filter(
+        (i) => i.reviewStatus === "Partially Approved"
+      ).length,
     }),
     [pendingFinal]
   );
@@ -111,8 +122,14 @@ const SuperAdminApprovals = () => {
                 <span className="bg-emerald-600 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest">
                   {counts.all} Pending
                 </span>
+                {counts.partiallyCertified > 0 && (
+                  <span className="bg-amber-500 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest flex items-center gap-1.5">
+                    <Clock size={11} />
+                    {counts.partiallyCertified} Partially Certified
+                  </span>
+                )}
                 {counts.noEvidence > 0 && (
-                  <span className="bg-rose-500 text-white text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest flex items-center gap-1.5">
+                  <span className="bg-amber-100 text-amber-800 border border-amber-200 text-[10px] px-3 py-1 rounded-md font-bold uppercase tracking-widest flex items-center gap-1.5">
                     <AlertTriangle size={11} />
                     {counts.noEvidence} No Evidence
                   </span>
@@ -213,6 +230,7 @@ const SuperAdminApprovals = () => {
                 target > 0
                   ? Math.min(Math.round((awarded / target) * 100), 100)
                   : 0;
+              const isPartial = item.reviewStatus === "Partially Approved";
 
               return (
                 <div
@@ -238,12 +256,20 @@ const SuperAdminApprovals = () => {
                           {periodLabel(item)}
                         </span>
 
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
-                          <CheckCircle size={10} />
-                          {item.reviewStatus === "Partially Approved"
-                            ? "Partially Approved"
-                            : "Verified by Admin"}
-                        </span>
+                        {/* Verification / certification badge.
+                            Verified           → green (first award pending)
+                            Partially Approved → amber (remainder pending) */}
+                        {isPartial ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
+                            <Clock size={10} />
+                            Partially Certified
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">
+                            <CheckCircle size={10} />
+                            Verified by Admin
+                          </span>
+                        )}
 
                         {item.resubmissionCount > 0 && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200">
@@ -253,7 +279,7 @@ const SuperAdminApprovals = () => {
                         )}
 
                         {item.documentsCount === 0 && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-200">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
                             <AlertTriangle size={10} />
                             No evidence on file
                           </span>
@@ -281,7 +307,7 @@ const SuperAdminApprovals = () => {
                         </div>
                         <div>
                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-wider">
-                            Annual Target
+                            {isAnnual ? "Annual Target" : "Target"}
                           </p>
                           <p className="text-sm font-bold text-[#1d3331]">
                             {target} {item.unit || "%"}
@@ -299,8 +325,13 @@ const SuperAdminApprovals = () => {
                               />
                             </div>
                             <span className="text-[10px] font-bold text-slate-600">
-                              {awardedPct}% · {item.remaining}{" "}
-                              {item.unit || "%"} left
+                              {awardedPct > 0
+                                ? `${awardedPct}% · ${item.remaining} ${
+                                    item.unit || "%"
+                                  } left to certify`
+                                : `Not yet certified · ${item.remaining} ${
+                                    item.unit || "%"
+                                  } to award`}
                             </span>
                           </div>
                         </div>
@@ -353,8 +384,14 @@ const SuperAdminApprovals = () => {
                       >
                         <Eye size={14} /> Review Details
                       </button>
-                      <div className="w-full text-center px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest">
-                        Pending Review
+                      <div
+                        className={`w-full text-center px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+                          isPartial
+                            ? "bg-amber-50 text-amber-600"
+                            : "bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
+                        {isPartial ? "Awaiting Remainder" : "Awaiting First Award"}
                       </div>
                     </div>
                   </div>
@@ -365,10 +402,12 @@ const SuperAdminApprovals = () => {
         )}
       </div>
 
-      {/* The modal must review THIS quarter. Add optional `quarter` and
-          `year` props to ApprovalIdModalPage and send them in the review
-          payload (the server otherwise defaults to the indicator's
-          active_quarter, which is often the wrong one). */}
+      {/* The modal MUST send `quarter` and `year` in its review payload —
+          the rewritten controller selects the submission by
+          (indicator_id, quarter, year) and 404s if it can't find it.
+          The props below are enough if ApprovalIdModalPage forwards them;
+          if it doesn't, patch the modal's `superAdminReview` payload to
+          include `{ quarter, year }`. */}
       {selected && (
         <ApprovalIdModalPage
           indicatorId={selected.id}

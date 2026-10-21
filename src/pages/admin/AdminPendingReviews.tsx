@@ -29,7 +29,13 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type FilterType = "all" | "quarterly" | "annual" | "resubmitted" | "sentback" | "returned";
+type FilterType =
+  | "all"
+  | "quarterly"
+  | "annual"
+  | "resubmitted"
+  | "sentback"
+  | "returned";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -54,15 +60,31 @@ const formatSubmissionDate = (dateString?: string): string => {
 };
 
 /**
- * Cycle display now derives from the pending submission's quarter,
- * so OJO Q3 and Q4 render as separate rows.
+ * Cycle display derives from the pending submission's quarter, so OJO Q3
+ * and Q4 render as separate rows.
+ *
+ * `partiallyApproved` indicates a legacy quarter that was certified by the
+ * super admin before the admin re-verified it. Under the patched controller
+ * those rows no longer appear in the admin pending queue, but if any legacy
+ * data slips through it is labelled distinctly.
  */
 const getDisplayCycle = (
   item: IQueueItem
-): { label: string; isAnnual: boolean } =>
-  item.reportingCycle === "Annual" || item.submission.quarter === 0
+): { label: string; isAnnual: boolean } => {
+  const isAnnual =
+    item.reportingCycle === "Annual" || item.submission.quarter === 0;
+  return isAnnual
     ? { label: "Annual Cycle", isAnnual: true }
     : { label: `Quarter ${item.submission.quarter}`, isAnnual: false };
+};
+
+/**
+ * True when the submission is a legacy row that has already been certified
+ * by the super admin. After the patch these don't reach the queue, but the
+ * UI still guards against them so a stale row reads correctly.
+ */
+const isPartiallyCertified = (item: IQueueItem): boolean =>
+  item.submission.reviewStatus === "Partially Approved";
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -103,11 +125,13 @@ const AdminPendingReviews = () => {
   const counts = useMemo(
     () => ({
       all: pendingQueue.length,
-      quarterly: pendingQueue.filter((i) => i.reportingCycle === "Quarterly").length,
+      quarterly: pendingQueue.filter((i) => i.reportingCycle === "Quarterly")
+        .length,
       annual: pendingQueue.filter((i) => i.reportingCycle === "Annual").length,
       resubmitted: pendingQueue.filter(hasResubmission).length,
       sentback: pendingQueue.filter((i) => sentBackIds.has(i.id)).length,
       returned: pendingQueue.filter((i) => returnedIds.has(i.id)).length,
+      partiallyCertified: pendingQueue.filter(isPartiallyCertified).length,
     }),
     [pendingQueue, sentBackIds, returnedIds]
   );
@@ -160,7 +184,6 @@ const AdminPendingReviews = () => {
 
   return (
     <div className="p-4 md:p-8 bg-[#fdfcfc] min-h-screen font-sans">
-
       {/* HEADER */}
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div>
@@ -182,6 +205,12 @@ const AdminPendingReviews = () => {
               <div className="flex items-center bg-rose-500 text-white text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
                 <AlertCircle size={10} className="mr-1.5" />
                 {counts.returned} Returned
+              </div>
+            )}
+            {counts.partiallyCertified > 0 && (
+              <div className="flex items-center bg-amber-100 text-amber-800 border border-amber-200 text-[9px] px-3 py-1.5 rounded-full font-black shadow-lg">
+                <Hourglass size={10} className="mr-1.5" />
+                {counts.partiallyCertified} Partially Certified
               </div>
             )}
           </div>
@@ -399,6 +428,7 @@ const AdminPendingReviews = () => {
                   const isSentBack = sentBackIds.has(item.id);
                   const isReturned = returnedIds.has(item.id);
                   const cycleDisplay = getDisplayCycle(item);
+                  const isPartial = isPartiallyCertified(item);
 
                   return (
                     <tr
@@ -424,6 +454,12 @@ const AdminPendingReviews = () => {
                               <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-rose-100 text-rose-700 border border-rose-200">
                                 <AlertCircle size={8} />
                                 Returned
+                              </span>
+                            )}
+                            {isPartial && (
+                              <span className="flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-lg bg-amber-100 text-amber-700 border border-amber-200">
+                                <Hourglass size={8} />
+                                Partially Certified
                               </span>
                             )}
                           </div>
@@ -487,10 +523,13 @@ const AdminPendingReviews = () => {
                           <div className="w-28 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
                             <div
                               className={`h-full transition-all duration-1000 ${
-                                isResub ? "bg-amber-500" :
-                                isSentBack ? "bg-amber-400" :
-                                isReturned ? "bg-rose-400" :
-                                "bg-[#1a3a32]"
+                                isResub
+                                  ? "bg-amber-500"
+                                  : isSentBack
+                                  ? "bg-amber-400"
+                                  : isReturned
+                                  ? "bg-rose-400"
+                                  : "bg-[#1a3a32]"
                               }`}
                               style={{ width: `${indicator.progress}%` }}
                             />
@@ -498,7 +537,8 @@ const AdminPendingReviews = () => {
                           {latestPending && (
                             <div className="mt-2 pt-2 border-t border-slate-100">
                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                Reported: {latestPending.achievedValue} {indicator.unit}
+                                Reported: {latestPending.achievedValue}{" "}
+                                {indicator.unit}
                               </p>
                             </div>
                           )}
@@ -537,7 +577,8 @@ const AdminPendingReviews = () => {
                           <div className="flex items-center gap-1.5">
                             <FileText size={12} className="text-slate-400" />
                             <span className="text-[10px] font-black text-slate-600">
-                              {documentCount} document{documentCount !== 1 ? "s" : ""}
+                              {documentCount} document
+                              {documentCount !== 1 ? "s" : ""}
                             </span>
                           </div>
                           {documentNames.length > 0 && (
@@ -592,6 +633,13 @@ const AdminPendingReviews = () => {
                               Returned
                             </span>
                           </div>
+                        ) : isPartial ? (
+                          <div className="flex items-center gap-2 text-amber-700 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
+                            <Hourglass size={12} />
+                            <span className="text-[9px] font-black uppercase tracking-widest">
+                              Partially Certified
+                            </span>
+                          </div>
                         ) : isResub ? (
                           <div className="flex items-center gap-2 text-amber-600 bg-amber-50 w-fit px-3 py-1 rounded-xl border border-amber-100">
                             <History size={12} className="animate-pulse" />
@@ -621,6 +669,8 @@ const AdminPendingReviews = () => {
                               ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200"
                               : isReturned
                               ? "bg-rose-600 text-white hover:bg-rose-700 shadow-lg shadow-rose-200"
+                              : isPartial
+                              ? "bg-amber-600 text-white hover:bg-amber-700 shadow-lg shadow-amber-200"
                               : isResub
                               ? "bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-200"
                               : "bg-[#1a3a32] text-white hover:bg-black shadow-lg shadow-emerald-900/10"

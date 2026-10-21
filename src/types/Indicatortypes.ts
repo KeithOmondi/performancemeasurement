@@ -14,7 +14,7 @@ export type IndicatorStatus =
   | "Rejected by Super Admin"
   | "Completed"
   | "Unassigned"
-  | "Sent Back to Admin"; // ✅ Add this new status
+  | "Sent Back to Admin";
 
 export type ReviewAction =
   | "Submitted"
@@ -27,10 +27,15 @@ export type ReviewAction =
   | "Reopened"
   | "Submission Deleted"
   | "Document Description Updated"
+  | "Document Approved"
+  | "Document Rejected"
+  | "Document Deleted"
+  | "Quarter Approved"
+  | "Quarter Rejected"
   | "Reassigned"
   | "Users Added"
   | "Users Removed"
-  | "Sent Back to Admin"; // ✅ Add this new review action
+  | "Sent Back to Admin";
 
 export type ReviewerRole = "user" | "admin" | "superadmin";
 
@@ -46,11 +51,12 @@ export type SubmissionReviewStatus =
   | "Accepted"
   | "Rejected"
   | "Correction Needed"
-  | "Partially Approved";
+  | "Partially Approved"
+  | "Sent Back to Admin";
 
 export type Quarter = 0 | 1 | 2 | 3 | 4;
 
-/* ─── ASSIGNEE (NEW) ──────────────────────────────────────────────────────── */
+/* ─── ASSIGNEE ───────────────────────────────────────────────────────────── */
 
 export interface IAssignee {
   userId: string;
@@ -73,6 +79,8 @@ export interface IDocument {
   status?: DocumentStatus;
   rejectionReason?: string;
   uploadedAt?: string;
+  /** 'own' for a document the submitter uploaded, 'spot-check' for one linked from the library. */
+  source?: "own" | "spot-check";
 }
 
 /* ─── SUBMISSION ─────────────────────────────────────────────────────────── */
@@ -103,6 +111,7 @@ export interface ISubmission {
 export interface IReviewHistory {
   id?: string;
   indicatorId?: string;
+  submissionId?: string;
   action: ReviewAction;
   reason: string;
   reviewerRole: ReviewerRole;
@@ -170,7 +179,7 @@ export interface IIndicator {
   isOverdue?: boolean;
   completionPercentage?: number;
   adminOverallComments?: string;
-  /* Multi-assignee fields (NEW) */
+  /* Multi-assignee fields */
   isMultiAssignee?: boolean;
   allAssignees?: IAssignee[];
 }
@@ -224,7 +233,7 @@ export interface IAssignPayload {
   assigneeModel?: AssignmentType;
 }
 
-/* ─── NEW: Multi-Assignee Payloads ──────────────────────────────────────── */
+/* ─── Multi-Assignee Payloads ───────────────────────────────────────────── */
 
 export interface IReassignPayload {
   id: string;
@@ -261,7 +270,7 @@ export interface ICreateIndicatorPayload {
   deadline?: string;
   instructions?: string;
   activeQuarter?: number;
-  /** Array of additional user IDs for multi-assignee (NEW) */
+  /** Array of additional user IDs for multi-assignee */
   additionalAssignees?: string[];
 }
 
@@ -273,9 +282,23 @@ export interface IUpdateIndicatorPayload {
   reportingCycle?: ReportingCycle;
 }
 
-/* ─── NEW: Send Back to Admin Payload ───────────────────────────────────── */
+/* ─── Send Back to Admin Payload ────────────────────────────────────────── */
 
+/**
+ * Used by PATCH /indicators/:id/send-back-to-admin.
+ *
+ * The backend now selects exactly one submission to send back:
+ *
+ *   const { reason, submissionId } = req.body;
+ *   SELECT id, quarter, year, is_reviewed
+ *     FROM submissions
+ *    WHERE id = $1 AND indicator_id = $2 FOR UPDATE
+ *
+ * It returns 400 "A submission ID is required." if `submissionId` is
+ * missing, so it is required here too.
+ */
 export interface ISendBackToAdminPayload {
   id: string;
   reason?: string;
+  submissionId: string;
 }

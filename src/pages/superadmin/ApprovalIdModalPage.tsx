@@ -37,10 +37,7 @@ import { toast } from "react-hot-toast";
 
 interface Props {
   indicatorId: string;
-  /** Optional — when the queue knows which quarter is pending, pass it
-   *  through so we review the correct period instead of `active_quarter`. */
   quarter?: number;
-  /** Optional — same rationale as `quarter`. */
   year?: number;
   onClose: () => void;
 }
@@ -129,25 +126,8 @@ const ApprovalIdModalPage = ({
   );
 
   const isAnnual = indicator?.reportingCycle === "Annual";
-  const isCompleted = indicator?.status === "Completed";
-  const canReview =
-    !isCompleted && indicator?.status === "Awaiting Super Admin";
 
-  const currentProgress = indicator?.progress ?? 0;
-  const target = indicator?.target ?? 100;
-  const unit = indicator?.unit ?? "%";
-  const remainingNeeded = Math.max(0, target - currentProgress);
-  const isFullyComplete = currentProgress >= target;
-  const hasPartialApprovals = partialApprovalsArray.length > 0;
-
-  /**
-   * The submission that this modal is opening for.
-   * - If `quarter`/`year` props were supplied (queue-driven path), pick that
-   *   exact submission so the review payload targets the right period.
-   * - Otherwise fall back to the newest submission (legacy behaviour).
-   * This is a **fix** for the case where the indicator's `active_quarter`
-   * was ahead of the quarter actually awaiting review.
-   */
+  // Find the submission we are actually reviewing based on the quarter/year props
   const allSubmissions = useMemo(
     () =>
       [...submissionsArray].sort(
@@ -165,6 +145,24 @@ const ApprovalIdModalPage = ({
   }, [allSubmissions, quarter, year]);
 
   const latestSubmission = pinnedSubmission ?? allSubmissions[0];
+
+  const isCompleted = indicator?.status === "Completed";
+  const submissionStatus = latestSubmission?.reviewStatus;
+  
+  // ✅ FIX: Allow review if the submission is Verified/Partially Approved, 
+  // OR if the indicator is globally Awaiting Super Admin.
+  const canReview = !isCompleted && (
+    submissionStatus === "Verified" || 
+    submissionStatus === "Partially Approved" || 
+    indicator?.status === "Awaiting Super Admin"
+  );
+
+  const currentProgress = indicator?.progress ?? 0;
+  const target = indicator?.target ?? 100;
+  const unit = indicator?.unit ?? "%";
+  const remainingNeeded = Math.max(0, target - currentProgress);
+  const isFullyComplete = currentProgress >= target;
+  const hasPartialApprovals = partialApprovalsArray.length > 0;
 
   const approvalByQuarterYear = useMemo(
     () =>
@@ -261,13 +259,6 @@ const ApprovalIdModalPage = ({
       !isFullyComplete &&
       parsed < remainingNeeded;
 
-    /**
-     * Determine the review target period.
-     * Priority:
-     *   1. `quarter` / `year` props (queue-driven path) — always correct.
-     *   2. The pinned (or latest) submission's own quarter/year.
-     *   3. Omit so the backend falls back to `active_quarter`.
-     */
     const targetQuarter = quarter ?? latestSubmission?.quarter;
     const targetYear = year ?? latestSubmission?.year;
 
@@ -332,6 +323,7 @@ const ApprovalIdModalPage = ({
     "Awaiting Super Admin": "bg-amber-50 border-amber-200 text-amber-700",
     Completed: "bg-emerald-50 border-emerald-200 text-emerald-700",
     "Rejected by Super Admin": "bg-rose-50 border-rose-200 text-rose-700",
+    "Correction Needed": "bg-rose-50 border-rose-200 text-rose-700",
   };
   const statusColor =
     statusColors[indicator.status ?? ""] ??
@@ -339,14 +331,13 @@ const ApprovalIdModalPage = ({
 
   const StatusIcon = isCompleted
     ? CheckCircle2
-    : indicator.status === "Rejected by Super Admin"
+    : indicator.status === "Rejected by Super Admin" || indicator.status === "Correction Needed"
     ? XCircle
     : Clock;
 
   /* ── Render ── */
   return createPortal(
     <>
-      {/* ── Main modal ──────────────────────────────────────────────────── */}
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3"
         onClick={(e) => {
@@ -613,7 +604,12 @@ const ApprovalIdModalPage = ({
                             <p className="text-[8px] text-slate-400 uppercase tracking-wider font-bold mb-0.5">
                               {isLatest ? "Approved" : "Was Approved"}
                             </p>
-                            {matchedApproval ? (
+                            {/* ✅ FIX: If the indicator is completed, show the full target. Otherwise show matched approval. */}
+                            {indicator?.status === "Completed" ? (
+                              <p className="text-[11px] font-bold text-emerald-600">
+                                +{target} {unit} (Full Target)
+                              </p>
+                            ) : matchedApproval ? (
                               <p className="text-[11px] font-bold text-emerald-600">
                                 +{matchedApproval.approvedAmount} {unit}
                               </p>
@@ -779,27 +775,14 @@ const ApprovalIdModalPage = ({
                 </div>
               )}
 
-              {indicator.status === "Rejected by Super Admin" && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 p-4 text-center">
-                  <XCircle size={24} className="text-rose-400 mx-auto mb-2" />
-                  <p className="text-[10px] font-black text-rose-600 uppercase tracking-wider">
-                    Rejected
-                  </p>
-                  <p className="text-[9px] text-slate-500 mt-1">
-                    Awaiting resubmission from assignee.
-                  </p>
-                </div>
-              )}
-
-              {!canReview &&
-                !isCompleted &&
-                indicator.status !== "Rejected by Super Admin" && (
+              {/* THE FIX: Only show "No action required" if the specific submission is not reviewable */}
+              {!canReview && !isCompleted && (
                   <div className="rounded-xl bg-slate-100 p-4 text-center">
                     <p className="text-[9px] text-slate-500">
-                      No action required at this stage.
+                      This specific submission is not awaiting review.
                     </p>
                   </div>
-                )}
+              )}
 
               {/* Active review panel */}
               {canReview && (

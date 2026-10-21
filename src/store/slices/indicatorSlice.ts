@@ -12,7 +12,7 @@
      GET    /rejected-by-admin         getRejectedByAdmin
      GET    /approved-by-superadmin    getSuperAdminApprovedIndicators
      GET    /submissions/queue         getAllSubmissions        (queue)
-     GET    /pending-final-approval    getPendingFinalApprovals (NEW)
+     GET    /pending-final-approval    getPendingFinalApprovals
      DELETE /submissions/:id           deleteSubmission
      DELETE /documents/:id             deleteSingleDocument
      GET    /:id                       getIndicatorById
@@ -26,7 +26,7 @@
      POST   /:id/add-users             addUsersToIndicator
      DELETE /:id/remove-users          removeUsersFromIndicator
      GET    /:id/partial-approvals     getPartialApprovalsHistory
-     PATCH  /:id/send-back-to-admin    sendBackToAdmin
+     PATCH  /:id/send-back-to-admin    sendBackToAdmin   (needs submissionId)
 ───────────────────────────────────────────────────────────────────────────── */
 
 import {
@@ -50,6 +50,7 @@ import type {
   IAddUsersPayload,
   IRemoveUsersPayload,
   ISendBackToAdminPayload,
+  IndicatorStatus,
 } from "../../types/Indicatortypes";
 
 /* ─── RE-EXPORT TYPES (so existing imports don't break) ─────────────────── */
@@ -136,7 +137,7 @@ interface IndicatorState {
   superAdminApprovedIndicators: IIndicator[];
   /** Submissions queue */
   queue: IQueueItem[];
-  /** ✅ NEW: super-admin final-approval queue (one row per pending quarter) */
+  /** Super-admin final-approval queue (one row per pending quarter) */
   pendingFinal: IPendingFinalItem[];
   /** Partial approval history for the selected indicator */
   partialApprovals: IPartialApproval[];
@@ -146,7 +147,7 @@ interface IndicatorState {
   loading: boolean;
   detailLoading: boolean;
   actionLoading: boolean;
-  pendingFinalLoading: boolean;   // ✅ NEW
+  pendingFinalLoading: boolean;
   error: string | null;
 }
 
@@ -159,13 +160,13 @@ const initialState: IndicatorState = {
   rejectedByAdmin: [],
   superAdminApprovedIndicators: [],
   queue: [],
-  pendingFinal: [],               // ✅ NEW
+  pendingFinal: [],
   partialApprovals: [],
   counts: null,
   loading: false,
   detailLoading: false,
   actionLoading: false,
-  pendingFinalLoading: false,     // ✅ NEW
+  pendingFinalLoading: false,
   error: null,
 };
 
@@ -275,7 +276,7 @@ const isRejected = (indicator: IIndicator): boolean =>
   indicator.status === "Correction Needed";
 
 /**
- * ✅ NEW: After a super-admin decision, drop the submission's row from the
+ * After a super-admin decision, drop the submission's row from the
  * final-approval queue. A "Partially Approved" verdict that still leaves
  * remaining target is re-added on the next `fetchPendingFinalApprovals()`
  * — which the thunks already dispatch after every decision.
@@ -290,6 +291,24 @@ const dropFromPendingFinal = (
     if (!submissionId) return false;
     return p.submissionId !== submissionId;
   });
+};
+
+/**
+ * The backend preserves status when an indicator already has certified
+ * progress (`current_total_achieved > 0`). Optimistic reducers must follow
+ * the same rule so the UI doesn't briefly disagree with the server after
+ * an assign/reassign.
+ *
+ * Returns `IndicatorStatus` (not `string`) so it can be assigned directly
+ * to `IIndicator.status` without widening.
+ */
+const derivePendingStatus = (
+  indicator: IIndicator | undefined
+): IndicatorStatus => {
+  if (!indicator) return "Pending";
+  return Number(indicator.currentTotalAchieved ?? 0) > 0
+    ? indicator.status
+    : "Pending";
 };
 
 /* ─── THUNKS ─────────────────────────────────────────────────────────────── */
@@ -384,7 +403,7 @@ export const fetchIndicatorCounts = createAsyncThunk(
   }
 );
 
-// ── ✅ NEW: pending final approvals (super-admin queue) ────────────────────
+// ── Pending final approvals (super-admin queue) ───────────────────────────
 
 export const fetchPendingFinalApprovals = createAsyncThunk<
   IPendingFinalItem[],
@@ -550,18 +569,26 @@ export const removeUsersFromIndicator = createAsyncThunk(
 
 // ── Send Back to Admin ──────────────────────────────────────────────────────
 
+/**
+ * The backend selects exactly one submission by `submissionId` and refuses
+ * the call with a 400 if it is missing or does not belong to the indicator.
+ * Every call site must pass the submission being returned.
+ */
 export const sendBackToAdmin = createAsyncThunk(
   "indicators/sendBackToAdmin",
   async (arg: ISendBackToAdminPayload, { rejectWithValue, dispatch }) => {
     try {
       const res = await apiPrivate.patch(
         `/indicators/${arg.id}/send-back-to-admin`,
-        { reason: arg.reason }
+        {
+          reason: arg.reason,
+          submissionId: arg.submissionId,
+        }
       );
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
       dispatch(fetchSuperAdminApprovedIndicators(false));
-      // ✅ NEW: refresh the final-approval queue after sending back
+      // Refresh the final-approval queue after sending back.
       dispatch(fetchPendingFinalApprovals());
       return res.data.data as IIndicator;
     } catch (err) {
@@ -586,7 +613,7 @@ export const superAdminReview = createAsyncThunk(
       dispatch(fetchPartialApprovalsHistory(arg.id));
       dispatch(fetchIndicatorCounts());
       dispatch(fetchIndicators());
-      // ✅ NEW: refresh the final-approval queue after every decision
+      // Refresh the final-approval queue after every decision.
       dispatch(fetchPendingFinalApprovals());
       return res.data.data as IIndicator;
     } catch (err) {
@@ -637,6 +664,8 @@ export const deleteSubmission = createAsyncThunk(
     try {
       await apiPrivate.delete(`/indicators/submissions/${arg.submissionId}`);
       dispatch(fetchIndicatorById(arg.indicatorId));
+      // A deletion can drop a row from the final-approval queue.
+      dispatch(fetchPendingFinalApprovals());
       return arg;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -656,6 +685,9 @@ export const deleteSingleDocument = createAsyncThunk<
     try {
       await apiPrivate.delete(`/indicators/documents/${arg.documentId}`);
       dispatch(fetchIndicators());
+      // Deleting the last approved document of a submission can pull it out
+      // of the final-approval queue. Refresh to stay consistent.
+      dispatch(fetchPendingFinalApprovals());
       return arg.documentId;
     } catch (err) {
       return rejectWithValue(extractError(err));
@@ -701,6 +733,10 @@ const indicatorSlice = createSlice({
       applyCategories(state);
     },
 
+    /**
+     * Preserve status when the indicator has certified progress, matching
+     * the backend's assign/reassign rule.
+     */
     optimisticAssign(
       state,
       action: PayloadAction<{
@@ -715,7 +751,7 @@ const indicatorSlice = createSlice({
         indicator.assigneeId = assigneeId;
         indicator.assignee = assigneeId;
         indicator.assigneeDisplayName = assigneeDisplayName;
-        indicator.status = "Pending";
+        indicator.status = derivePendingStatus(indicator);
         indicator.isMultiAssignee = false;
         indicator.allAssignees = [];
       }
@@ -884,7 +920,7 @@ const indicatorSlice = createSlice({
         console.error("[indicators] Failed to fetch counts:", payload);
       });
 
-    /* ── ✅ NEW: fetchPendingFinalApprovals ── */
+    /* ── fetchPendingFinalApprovals ── */
     builder
       .addCase(fetchPendingFinalApprovals.pending, (state) => {
         state.pendingFinalLoading = true;
@@ -1059,7 +1095,7 @@ const indicatorSlice = createSlice({
           (ind) => ind.id !== payload.id
         );
 
-        // ✅ Drop every pendingFinal row for this indicator — it just went
+        // Drop every pendingFinal row for this indicator — it just went
         // back to the admin, so nothing is pending super-admin signature.
         dropFromPendingFinal(state, payload.id);
       })
@@ -1095,7 +1131,7 @@ const indicatorSlice = createSlice({
           );
         }
 
-        // ✅ Optimistically drop the row from pendingFinal. If a partial
+        // Optimistically drop the row from pendingFinal. If a partial
         // approval leaves remaining target, the thunk's follow-up
         // fetchPendingFinalApprovals() will re-add it with fresh values.
         dropFromPendingFinal(state, payload.id);

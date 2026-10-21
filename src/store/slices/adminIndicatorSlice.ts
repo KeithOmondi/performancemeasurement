@@ -23,6 +23,8 @@ export interface IDocument {
   status?: "Accepted" | "Approved" | "Rejected" | "Pending" | "Resubmitted" | "Additional" | "Deleted";
   rejectionReason?: string;
   uploadedAt: string;
+  /** 'own' for submitter-uploaded evidence; 'spot-check' for linked library docs. */
+  source?: "own" | "spot-check";
 }
 
 export interface ISubmission {
@@ -41,6 +43,7 @@ export interface ISubmission {
   submittedById?: string;
   submittedByName?: string;
   previousRejectionReason?: string | null;
+  approvedAmount?: number;
 }
 
 export type ISubmissionsByPeriod = Record<string, ISubmission[]>;
@@ -103,6 +106,12 @@ export interface IReviewHistoryEntry {
   reviewerName?: string;
   reason: string;
   at: string;
+  /** Set by logReview; null when the event is indicator-level. */
+  submissionId?: string | null;
+  approvedAmount?: number | null;
+  isPartial?: boolean;
+  quarter?: number | null;
+  year?: number | null;
 }
 
 export interface IReopenPayload {
@@ -110,7 +119,17 @@ export interface IReopenPayload {
   reason?: string;
 }
 
+/**
+ * Indicator status union.
+ *
+ * The admin controller now maps `allVerified` to "Awaiting Super Admin" (it
+ * used to set "Completed"), so certification only reaches "Completed" after
+ * the super admin awards the target. "Verified" is still included because
+ * legacy indicators may hold it, and "Pending" is included because a freshly
+ * created indicator uses it.
+ */
 export type IndicatorStatus =
+  | "Pending"
   | "Assigned"
   | "Awaiting Admin Approval"
   | "Correction Needed"
@@ -119,7 +138,9 @@ export type IndicatorStatus =
   | "Awaiting Super Admin"
   | "Rejected by Super Admin"
   | "Verified"
-  | "Completed";
+  | "Completed"
+  | "Unassigned"
+  | "Sent Back to Admin";
 
 export interface IAdminIndicator {
   id: string;
@@ -142,6 +163,9 @@ export interface IAdminIndicator {
   updatedAt: string;
   adminOverallComments?: string;
   instructions?: string;
+  /** Certified units so far. Used by the UI to decide whether a target change
+   *  will trigger a recompute. Optional to stay compatible with older rows. */
+  currentTotalAchieved?: number;
 }
 
 /**
@@ -157,8 +181,8 @@ export type IQueueItem = Omit<IAdminIndicator, "submissions"> & {
 
 interface IAdminIndicatorState {
   allAssignments: IAdminIndicator[];
-  pendingQueue: IQueueItem[];               // ✅ NEW — flat review queue
-  pendingAdminReview: IAdminIndicator[];    // legacy (kept for other screens)
+  pendingQueue: IQueueItem[];
+  pendingAdminReview: IAdminIndicator[];
   resubmittedWork: IAdminIndicator[];
   approvedIndicators: IAdminIndicator[];
   sentBackIndicators: IAdminIndicator[];
@@ -173,7 +197,7 @@ interface IAdminIndicatorState {
 
 const initialState: IAdminIndicatorState = {
   allAssignments: [],
-  pendingQueue: [],                         // ✅ NEW
+  pendingQueue: [],
   pendingAdminReview: [],
   resubmittedWork: [],
   approvedIndicators: [],
@@ -196,13 +220,17 @@ const flattenSubmissions = (indicator: IAdminIndicator): ISubmission[] =>
  * Rebuilds the queue-derived views (pendingAdminReview / resubmittedWork)
  * from `allAssignments`. `pendingQueue` is intentionally NOT derived here —
  * it is populated directly by `fetchPendingQueue`.
+ *
+ * Note: `Partially Approved` is no longer an admin-pending state. Once a
+ * quarter is partially certified by a super admin, the admin queue is done
+ * with it. Rows that used to appear here because of that status would have
+ * come from legacy data only.
  */
 const refreshQueues = (state: IAdminIndicatorState) => {
   state.pendingAdminReview = state.allAssignments.filter(
     (ind) =>
       ind.status === "Awaiting Admin Approval" ||
-      ind.status === "Correction Needed" ||
-      ind.status === "Partially Approved"
+      ind.status === "Correction Needed"
   );
 
   state.resubmittedWork = state.allAssignments.filter((ind) =>
@@ -216,8 +244,12 @@ const refreshQueues = (state: IAdminIndicatorState) => {
 
 /**
  * After any review action, the queue may be stale. We patch the row in place
- * when possible (e.g. a comment was added) and otherwise drop it so the next
- * `fetchPendingQueue()` re-adds only genuinely-pending rows.
+ * when possible and otherwise drop it so the next `fetchPendingQueue()` re-adds
+ * only genuinely-pending rows.
+ *
+ * Only `Pending` qualifies. `Verified` and `Partially Approved` submissions
+ * are done from the admin's perspective, and `Correction Needed` rows belong
+ * in `returnedIndicators`, not the pending queue.
  */
 const syncQueueAfterUpdate = (
   state: IAdminIndicatorState,
@@ -228,14 +260,12 @@ const syncQueueAfterUpdate = (
   );
 
   if (!stillPending) {
-    // No pending submissions left for this indicator → drop all its rows.
     state.pendingQueue = state.pendingQueue.filter(
       (q) => q.id !== updated.id
     );
     return;
   }
 
-  // Otherwise patch every queue row belonging to this indicator.
   state.pendingQueue = state.pendingQueue.map((q) => {
     if (q.id !== updated.id) return q;
     const fresh = flattenSubmissions(updated).find(
@@ -348,6 +378,15 @@ export const getQuarterStatusSummary = (
   });
 };
 
+/**
+ * True when the indicator is at or past its target, matching the backend's
+ * certification rule (`target > 0 && current_total_achieved >= target`).
+ * Useful for showing/hiding certification controls.
+ */
+export const isFullyCertified = (indicator: IAdminIndicator): boolean =>
+  Number(indicator.target) > 0 &&
+  Number(indicator.currentTotalAchieved ?? 0) >= Number(indicator.target);
+
 // ─── Upsert Helpers ───────────────────────────────────────────────────────────
 
 const upsertIntoAssignments = (
@@ -389,7 +428,7 @@ const extractError = (error: unknown, fallback: string): string => {
 // ─── Thunks ───────────────────────────────────────────────────────────────────
 
 /**
- * ✅ The primary source of truth for the AdminPendingReviews table.
+ * Primary source of truth for the AdminPendingReviews table.
  * Returns one IQueueItem per PENDING submission (one row per quarter).
  */
 export const fetchPendingQueue = createAsyncThunk<
@@ -671,6 +710,16 @@ const adminIndicatorSlice = createSlice({
     clearQuarterStatuses: (state) => {
       state.quarterStatuses = [];
     },
+    /**
+     * Drop a single queue row by submissionId. Useful after the admin opens
+     * a row and takes an action through a non-thunk path, so the row doesn't
+     * linger until the next `fetchPendingQueue()`.
+     */
+    dropQueueRow: (state, action: PayloadAction<{ submissionId: string }>) => {
+      state.pendingQueue = state.pendingQueue.filter(
+        (q) => q.submission.id !== action.payload.submissionId
+      );
+    },
   },
   extraReducers: (builder) => {
     const setPending =
@@ -688,7 +737,7 @@ const adminIndicatorSlice = createSlice({
       };
 
     builder
-      // ✅ fetchPendingQueue
+      // fetchPendingQueue
       .addCase(fetchPendingQueue.pending, setPending("isLoading"))
       .addCase(fetchPendingQueue.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -845,6 +894,7 @@ export const {
   clearAdminError,
   resetAdminState,
   clearQuarterStatuses,
+  dropQueueRow,
 } = adminIndicatorSlice.actions;
 
 export default adminIndicatorSlice.reducer;
