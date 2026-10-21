@@ -110,12 +110,24 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
     )) {
       return;
     }
+
+    // ✅ FIX: Find the latest submission to pass its ID to the backend
+    const allSubs = getAllSubmissions();
+    const latestSub = allSubs.sort(
+      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+    )[0];
+
+    if (!latestSub) {
+      toast.error("No submission found to send back.");
+      return;
+    }
     
     setSendingBack(true);
     try {
       await dispatch(sendBackToAdmin({ 
         id: indicatorId, 
-        reason: sendBackReason.trim() || "Sent back to admin for verification" 
+        reason: sendBackReason.trim() || "Sent back to admin for verification",
+        submissionId: latestSub.id // ✅ Required by the backend patch
       })).unwrap();
       toast.success("Indicator sent back to admin queue");
       await dispatch(fetchIndicatorById(indicatorId));
