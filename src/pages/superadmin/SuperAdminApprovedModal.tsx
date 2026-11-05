@@ -244,10 +244,11 @@ const SuperAdminApprovedModal = ({ indicatorId, onClose }: SuperAdminApprovedMod
                   </div>
                   <div>
                     <span className="font-bold text-slate-400 uppercase block mb-1">
-                      Instructions
+                      Total Documents
                     </span>
-                    <span className="text-slate-700">
-                      {selectedIndicator.instructions || "—"}
+                    <span className="text-slate-700 font-bold flex items-center gap-1.5">
+                      <FileText size={14} className="text-emerald-600" />
+                      {allSubmissions.reduce((total, sub) => total + (sub.documents?.length || 0), 0)} Files
                     </span>
                   </div>
                 </div>
