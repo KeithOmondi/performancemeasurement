@@ -1,4 +1,4 @@
-import { X, Loader2, AlertCircle } from "lucide-react";
+import { X, Loader2, AlertCircle, Download, FileSpreadsheet } from "lucide-react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
@@ -44,12 +44,23 @@ const FilePreviewModal = ({ url, fileName, onClose }: PreviewModalProps) => {
           <h3 className="text-[11px] font-black text-[#1a3a32] uppercase tracking-widest truncate max-w-md">
             {fileName || "File Preview"}
           </h3>
-          <button
-            onClick={handleClose}
-            className="p-2 hover:bg-rose-100 hover:text-rose-500 rounded-full transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {blobUrl && !loading && !error && (
+              <a
+                href={blobUrl}
+                download={fileName || "document"}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white text-[#1a3a32] rounded-lg text-[9px] font-black uppercase hover:bg-slate-100 transition-colors"
+              >
+                <Download size={12} /> Download
+              </a>
+            )}
+            <button
+              onClick={handleClose}
+              className="p-2 hover:bg-rose-100 hover:text-rose-500 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Viewer */}
@@ -88,13 +99,21 @@ const FilePreviewModal = ({ url, fileName, onClose }: PreviewModalProps) => {
                 title="PDF Preview"
               />
             ) : (
-              <div className="flex flex-col items-center justify-center h-full gap-2 p-12 text-center">
+              <div className="flex flex-col items-center justify-center h-full gap-3 p-12 text-center">
+                <FileSpreadsheet size={40} className="text-slate-300" />
                 <p className="text-sm font-semibold text-slate-600">
-                  This file type cannot be previewed in the browser.
+                  This file type can't be shown in the browser.
                 </p>
                 <p className="text-xs text-slate-400">
-                  Supported previews: images and PDFs.
+                  Download it to open in Excel, Word or PowerPoint.
                 </p>
+                <a
+                  href={blobUrl}
+                  download={fileName || "document"}
+                  className="mt-2 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#1a3a32] text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-800 transition-colors"
+                >
+                  <Download size={14} /> Download file
+                </a>
               </div>
             )
           )}

@@ -45,6 +45,8 @@ export interface IIndicatorUI {
   perspective?: string;
   assignee_model?: string;
   assigneeName?: string;
+  /** Set only for the evidence uploader: false = someone else's indicator */
+  isOwn?: boolean;
   assignedByName?: string;
   reporting_cycle?: string;
   reportingCycle?: string;

@@ -5,7 +5,7 @@ import {
   ArrowLeft, Loader2, TrendingUp, FileText,
   ExternalLink, ShieldCheck, AlertCircle, Clock, Calendar,
   AlertTriangle, CheckCircle, XCircle, Edit2, Save, X, Trash2,
-  Plus, RefreshCw, FileX, MessageSquareWarning,
+  Plus, RefreshCw, FileX, MessageSquareWarning, UserCheck,
 } from "lucide-react";
 import {
   fetchIndicatorDetails,
@@ -605,6 +605,18 @@ const UserTaskIdPage = () => {
       <div className="max-w-7xl mx-auto space-y-8">
 
         {toast && <Toast message={toast.message} type={toast.type} onDismiss={dismissToast} />}
+
+        {/* ── Evidence uploader working on someone else's indicator ── */}
+        {currentIndicator.isOwn === false && (
+          <div className="flex items-center gap-3 px-5 py-3 rounded-2xl bg-violet-50 border border-violet-100 text-violet-800">
+            <UserCheck size={16} className="shrink-0" />
+            <p className="text-[11px] font-bold">
+              You are uploading evidence on behalf of{" "}
+              <span className="font-black">{currentIndicator.assigneeName || "the assigned team"}</span>.
+              Everything you submit here is recorded under your name.
+            </p>
+          </div>
+        )}
 
         {/* ── Nav bar ── */}
         <nav className="flex flex-col md:flex-row md:items-center justify-between gap-4">

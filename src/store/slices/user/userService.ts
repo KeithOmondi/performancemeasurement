@@ -8,6 +8,8 @@ export interface RawUser {
   name: string;
   email: string;
   role: "user" | "admin" | "superadmin" | "examiner" | "supervisor";
+  /** Super-admin-selected evidence uploader: may upload on every indicator */
+  canUploadForAll?: boolean;
   pjNumber: string;
   title: string;
   is_active?: boolean; 

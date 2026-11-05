@@ -8,6 +8,8 @@ export interface User {
   email: string;
   pjNumber: string;
   role: "user" | "admin" | "superadmin" | "examiner" | "supervisor";
+  /** Super-admin-selected evidence uploader: may upload on every indicator */
+  canUploadForAll?: boolean;
 }
 
 export interface AuthResponse {

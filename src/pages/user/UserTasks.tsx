@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppDispatch, useAppSelector } from "../../store/hooks";
 import { useNavigate } from "react-router-dom";
 import { fetchMyAssignments } from "../../store/slices/userIndicatorSlice";
@@ -6,7 +6,7 @@ import { fetchTeams } from "../../store/slices/teamSlice";
 import {
   ArrowUpRight, AlertCircle, CheckCircle2, PlayCircle,
   ShieldCheck, Clock, Activity, Hash, Loader2,
-  RotateCcw, Users, User, FileText
+  RotateCcw, Users, User, FileText, Search, UserCheck
 } from "lucide-react";
 import type { IIndicatorUI, ISubmissionUI } from "../../store/slices/userIndicatorSlice";
 
@@ -55,16 +55,37 @@ const UserTasks = () => {
     (state) => state.userIndicators,
   );
   const { teams } = useAppSelector((state) => state.teams);
+  const { user } = useAppSelector((state) => state.auth);
+
+  // Evidence uploader (selected by super admin) receives every indicator
+  const isUploader = !!user?.canUploadForAll;
+  const [scope, setScope] = useState<"mine" | "others" | "all">("all");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     dispatch(fetchMyAssignments());
     dispatch(fetchTeams());
   }, [dispatch]);
 
-  const filteredTasks = useMemo(
-    () => myIndicators.filter((item) => item.status !== "Completed"),
-    [myIndicators],
-  );
+  const filteredTasks = useMemo(() => {
+    const open = myIndicators.filter((item) => item.status !== "Completed");
+    if (!isUploader) return open;
+
+    const term = search.trim().toLowerCase();
+    return open.filter((item) => {
+      if (scope === "mine" && item.isOwn === false) return false;
+      if (scope === "others" && item.isOwn !== false) return false;
+      if (!term) return true;
+      return [
+        item.perspective,
+        item.objective?.title,
+        item.activity?.description,
+        item.assigneeName,
+        item.assignee_model === "Team" ? getTeamNameFor(item.assignee_id as string) : "",
+      ].some((v) => String(v ?? "").toLowerCase().includes(term));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myIndicators, isUploader, scope, search, teams]);
 
   const teamTasks = useMemo(
     () => filteredTasks.filter((i) => i.assignee_model === "Team"),
@@ -76,10 +97,11 @@ const UserTasks = () => {
     [filteredTasks],
   );
 
-  const getTeamName = (teamId: string) => {
+  function getTeamNameFor(teamId: string) {
     const team = teams.find((t) => t.id === teamId);
     return team ? team.name : "System Team";
-  };
+  }
+  const getTeamName = getTeamNameFor;
 
   const getLifecycleConfig = (
     status: string,
@@ -189,6 +211,46 @@ const UserTasks = () => {
             </div>
           </div>
         </header>
+
+        {isUploader && (
+          <div className="mb-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-violet-50 border border-violet-100 rounded-2xl p-4">
+            <div className="flex items-center gap-3 text-violet-800">
+              <UserCheck size={18} className="shrink-0" />
+              <p className="text-[11px] font-bold">
+                You are the <span className="font-black">evidence uploader</span> — you can upload
+                evidence on every indicator, including other officers'.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex bg-white rounded-xl border border-violet-100 p-1">
+                {([
+                  ["all", "All"],
+                  ["mine", "Mine"],
+                  ["others", "Others'"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setScope(key)}
+                    className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
+                      scope === key ? "bg-[#1a3a32] text-white" : "text-gray-400 hover:text-[#1a3a32]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search indicator or officer..."
+                  className="w-full sm:w-64 pl-8 pr-3 py-2 rounded-xl border border-violet-100 bg-white text-[11px] font-medium outline-none focus:border-[#1a3a32]"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <main className="bg-white rounded-[1.5rem] border border-gray-100 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
@@ -304,8 +366,15 @@ const UserTasks = () => {
                             )}
                             {indicator.assignee_model === "Team"
                               ? getTeamName(indicator.assignee_id as string)
-                              : "Personal"}
+                              : indicator.isOwn === false
+                                ? indicator.assigneeName || "Officer"
+                                : "Personal"}
                           </div>
+                          {indicator.isOwn === false && (
+                            <p className="mt-1 text-[8px] font-black uppercase tracking-widest text-violet-500">
+                              Uploading on behalf
+                            </p>
+                          )}
                         </td>
 
                         <td className="px-6 py-7">

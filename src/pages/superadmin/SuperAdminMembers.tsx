@@ -4,8 +4,10 @@ import {
   Loader2, ClipboardList, X, MessageSquare,
   Trash2, Edit3, Target, Search, Plus, UserPlus,
   Mail, ShieldCheck, AlertTriangle, Hash, CheckCircle2,
-  Clock, XCircle, RefreshCw, Users, Calendar,
+  Clock, XCircle, RefreshCw, Users, Calendar, UploadCloud,
 } from "lucide-react";
+import toast from "react-hot-toast";
+import { apiPrivate } from "../../api/axios";
 import {
   fetchAllUsers, registerUser, editUser, removeUser, clearUserMessages, type User
 } from "../../store/slices/user/userSlice";
@@ -128,6 +130,8 @@ const SuperAdminMembers = () => {
   const [formData, setFormData] = useState<FormState>({
     name: "", email: "", pjNumber: "", title: "", role: "user", password: "Password123!",
   });
+  // Universal evidence uploader toggle (only meaningful for standard users)
+  const [isUploader, setIsUploader] = useState(false);
 
   const { users, isLoading: usersLoading, isError, message } = useSelector((s: RootState) => s.users);
   const { indicators, loading: indicatorsLoading } = useSelector(
@@ -144,6 +148,8 @@ const SuperAdminMembers = () => {
     dispatch(getAllStrategicPlans());
     dispatch(fetchTeams());
   }, [dispatch]);
+
+  const currentUploader = useMemo(() => users.find((u) => u.canUploadForAll) ?? null, [users]);
 
   const filteredUsers = useMemo(() =>
     users.filter((u) =>
@@ -219,6 +225,7 @@ const SuperAdminMembers = () => {
   const handleOpenAddModal = () => {
     setIsEditing(false);
     setFormData({ name: "", email: "", pjNumber: "", title: "", role: "user", password: "Password123!" });
+    setIsUploader(false);
     setIsFormModalOpen(true);
   };
 
@@ -233,6 +240,7 @@ const SuperAdminMembers = () => {
       role: selectedMember.role,
       password: "",
     });
+    setIsUploader(!!selectedMember.canUploadForAll);
     setIsFormModalOpen(true);
   };
 
@@ -245,6 +253,24 @@ const SuperAdminMembers = () => {
       result = await dispatch(registerUser(formData as Partial<User>));
     }
     if (registerUser.fulfilled.match(result) || editUser.fulfilled.match(result)) {
+      // Apply the universal-uploader toggle (a separate, single-holder setting)
+      const memberId = editUser.fulfilled.match(result) ? selectedMember?._id : result.payload?.id;
+      const wasUploader = isEditing && !!selectedMember?.canUploadForAll;
+      const wantUploader = formData.role === "user" && isUploader;
+      if (memberId && wantUploader !== wasUploader) {
+        try {
+          const res = await apiPrivate.put<{ message: string }>("/users/evidence-uploader", {
+            userId: wantUploader ? memberId : null,
+          });
+          toast.success(res.data.message);
+        } catch (err) {
+          toast.error(
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+              "Saved, but the evidence uploader setting could not be updated."
+          );
+        }
+      }
+      dispatch(fetchAllUsers());
       setIsFormModalOpen(false);
       setSelectedMember(null);
     }
@@ -320,8 +346,15 @@ const SuperAdminMembers = () => {
                   <div className="w-12 h-12 rounded-full bg-[#1d3331] text-white flex items-center justify-center font-bold text-lg shadow-inner">
                     {getInitials(member.name)}
                   </div>
-                  <div className={`px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-tighter ${getRoleColor(member.role)}`}>
-                    {member.role}
+                  <div className="flex flex-col items-end gap-1">
+                    <div className={`px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-tighter ${getRoleColor(member.role)}`}>
+                      {member.role}
+                    </div>
+                    {member.canUploadForAll && (
+                      <div className="flex items-center gap-1 px-2 py-1 rounded-lg border border-violet-200 bg-violet-100 text-violet-700 text-[9px] font-black uppercase tracking-tighter">
+                        <UploadCloud size={10} /> Universal uploader
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -452,6 +485,31 @@ const SuperAdminMembers = () => {
                   </select>
                 </div>
               </div>
+
+              {/* Universal evidence uploader — a permission on a standard user, not a role */}
+              {formData.role === "user" && (
+                <label className="flex items-start gap-3 p-4 rounded-2xl border border-violet-100 bg-violet-50/60 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isUploader}
+                    onChange={(e) => setIsUploader(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-[#1d3331] cursor-pointer"
+                  />
+                  <span>
+                    <span className="flex items-center gap-1.5 text-[11px] font-black text-[#1d3331] uppercase tracking-wide">
+                      <UploadCloud size={13} className="text-violet-600" /> Universal evidence uploader
+                    </span>
+                    <span className="block text-[11px] text-slate-500 mt-1">
+                      Can upload evidence on every officer's indicators, not just their own.
+                    </span>
+                    {isUploader && currentUploader && currentUploader._id !== selectedMember?._id && (
+                      <span className="block text-[11px] font-bold text-amber-700 mt-1">
+                        Currently held by {currentUploader.name} — saving will move it to this person.
+                      </span>
+                    )}
+                  </span>
+                </label>
+              )}
               <button
                 type="submit"
                 disabled={usersLoading}

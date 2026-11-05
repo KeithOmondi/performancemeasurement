@@ -84,7 +84,30 @@ type EvidenceTab = "upload" | "spotcheck";
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
 const MAX_FILE_SIZE      = 10 * 1024 * 1024;      // 10 MB
 const MAX_DESC_LENGTH    = 500;
-const ALLOWED_FILE_TYPES = ["image/jpeg", "image/png", "image/gif", "application/pdf", "video/mp4"];
+// Keep in sync with server/src/middleware/upload.ts
+const ALLOWED_FILE_TYPES: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  odt: "application/vnd.oasis.opendocument.text",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
+  odp: "application/vnd.oasis.opendocument.presentation",
+  txt: "text/plain",
+  mp4: "video/mp4",
+};
+// Extensions + MIME types for the file picker. Extensions matter: Windows often reports
+// Office files with an empty or generic MIME type when Office isn't installed.
+const FILE_INPUT_ACCEPT = [
+  ...Object.keys(ALLOWED_FILE_TYPES).map((ext) => "." + ext),
+  ...new Set(Object.values(ALLOWED_FILE_TYPES)),
+].join(",");
+const ALLOWED_LABEL = "PDF, Word, Excel, PowerPoint, CSV, images, MP4";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -218,8 +241,10 @@ const SubmissionModal = ({
   // ─── File handling ───────────────────────────────────────────────────────────
 
   const validateFile = useCallback((file: File): string | null => {
-    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-      return `File type not allowed. Allowed: ${ALLOWED_FILE_TYPES.join(", ")}`;
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const knownMime = Object.values(ALLOWED_FILE_TYPES).includes(file.type);
+    if (!(ext in ALLOWED_FILE_TYPES) && !knownMime) {
+      return `File type not allowed. Supported: ${ALLOWED_LABEL}`;
     }
     if (file.size > MAX_FILE_SIZE) {
       return `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB limit`;
@@ -833,7 +858,7 @@ const SubmissionModal = ({
                         multiple
                         disabled={isAccepted}
                         onChange={handleFileChange}
-                        accept={ALLOWED_FILE_TYPES.join(",")}
+                        accept={FILE_INPUT_ACCEPT}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
                       />
                       <div
@@ -850,7 +875,7 @@ const SubmissionModal = ({
                           {isAccepted ? "Registry Certified" : "Select Evidence Batch"}
                         </p>
                         <p className="text-[7px] text-slate-400 mt-1">
-                          Max 50 files, 10 MB each. Supported: JPG, PNG, GIF, PDF, MP4
+                          Max 50 files, 10 MB each. Supported: {ALLOWED_LABEL}
                         </p>
                       </div>
                     </div>
