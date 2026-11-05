@@ -298,7 +298,7 @@ const UserDashboard: React.FC = () => {
                 <p className="text-[9px] font-black text-[#C69214] uppercase">Protocol Notice</p>
               </div>
               <p className="text-[10px] text-white/80 leading-relaxed font-medium">
-                Evidence uploads must be in PDF or Image format. Once "In Review", records are
+                Evidence can be uploaded as PDF, Word, Excel, PowerPoint, CSV or image files. Once "In Review", records are
                 locked from further editing unless a correction is requested.
               </p>
             </div>

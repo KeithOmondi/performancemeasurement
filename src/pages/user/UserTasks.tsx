@@ -76,13 +76,13 @@ const statusKeyOf = (status?: string): StatusKey => {
 };
 
 const STATUS_OPTIONS: { value: "open" | "all" | StatusKey; label: string }[] = [
-  { value: "open", label: "All open (not certified)" },
+  { value: "all", label: "All statuses" },
+  { value: "open", label: "Open (not certified)" },
   { value: "filing", label: "Filing open" },
   { value: "audit", label: "Registry audit" },
   { value: "certification", label: "Final certification" },
   { value: "revision", label: "Revision required" },
   { value: "certified", label: "Certified" },
-  { value: "all", label: "Everything (incl. certified)" },
 ];
 
 const getLifecycleConfig = (status: string, activeQuarter: number, cycle: "Quarterly" | "Annual") => {
@@ -120,7 +120,7 @@ const UserTasks = () => {
   /* Filters */
   const [search, setSearch] = useState("");
   const [perspectiveFilter, setPerspectiveFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_OPTIONS)[number]["value"]>("open");
+  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
   const [cycleFilter, setCycleFilter] = useState<"all" | "Quarterly" | "Annual">("all");
   const [assignmentFilter, setAssignmentFilter] = useState<"all" | "User" | "Team">("all");
   const [scope, setScope] = useState<"all" | "mine" | "others">("all");
@@ -214,11 +214,11 @@ const UserTasks = () => {
   const individualCount = filteredTasks.length - teamCount;
 
   const filtersActive =
-    !!search || perspectiveFilter !== "all" || statusFilter !== "open" ||
+    !!search || perspectiveFilter !== "all" || statusFilter !== "all" ||
     cycleFilter !== "all" || assignmentFilter !== "all" || scope !== "all";
 
   const clearFilters = () => {
-    setSearch(""); setPerspectiveFilter("all"); setStatusFilter("open");
+    setSearch(""); setPerspectiveFilter("all"); setStatusFilter("all");
     setCycleFilter("all"); setAssignmentFilter("all"); setScope("all");
   };
 
