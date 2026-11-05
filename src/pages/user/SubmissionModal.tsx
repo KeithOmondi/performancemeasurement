@@ -82,6 +82,7 @@ type EvidenceTab = "upload" | "spotcheck";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"] as const;
+const REOPENABLE_STATUSES = ["Accepted", "Verified", "Partially Approved"];
 const MAX_FILE_SIZE      = 10 * 1024 * 1024;      // 10 MB
 const MAX_DESC_LENGTH    = 500;
 // Keep in sync with server/src/middleware/upload.ts
@@ -187,13 +188,16 @@ const SubmissionModal = ({
     if (!currentPeriodSubmission)                            return "new";
     if (currentPeriodSubmission.reviewStatus === "Rejected") return "resubmit";
     if (currentPeriodSubmission.reviewStatus === "Pending")  return "addDocuments";
-    if (currentPeriodSubmission.reviewStatus === "Accepted") return "locked";
+    // Certified / verified / partially-approved periods are no longer locked: new evidence
+    // is added and the submission goes back to the admin for review.
+    if (REOPENABLE_STATUSES.includes(currentPeriodSubmission.reviewStatus as string)) return "reopen";
     return "new";
   }, [currentPeriodSubmission]);
 
   const isRejected = submissionType === "resubmit";
-  const isPending  = submissionType === "addDocuments";
-  const isAccepted = submissionType === "locked";
+  const isReopen   = submissionType === "reopen";
+  const isPending  = submissionType === "addDocuments" || isReopen;
+  const isAccepted = false; // nothing is locked any more — see "reopen" above
   const isNew      = submissionType === "new";
 
   const showModeSwitcher = !!currentPeriodSubmission && !isAccepted && !isPending && !isNew;
@@ -514,7 +518,8 @@ const SubmissionModal = ({
       if (!sub) return null;
       return { 
         status: sub.reviewStatus, 
-        isLocked: sub.reviewStatus === "Accepted",
+        isLocked: false,
+        isCertified: sub.reviewStatus === "Accepted",
         hasSubmission: true,
         documents: sub.documents?.length || 0,
       };
@@ -777,7 +782,7 @@ const SubmissionModal = ({
                               className="absolute -top-1 -right-1 text-rose-500"
                             />
                           )}
-                          {locked && (
+                          {qs?.isCertified && (
                             <CheckCircle2
                               size={10}
                               className="absolute -top-1 -right-1 text-emerald-500"
@@ -851,6 +856,16 @@ const SubmissionModal = ({
                   </div>
 
                   {/* Upload tab: existing drop zone */}
+                  {isReopen && !viewOnly && (
+                    <div className="mb-3 flex items-start gap-2 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800">
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                      <p className="text-[11px] font-medium">
+                        This period is <span className="font-black">{currentPeriodSubmission?.reviewStatus === "Accepted" ? "certified" : "already under final review"}</span>.
+                        Adding evidence reopens it and sends it back to the admin for review.
+                      </p>
+                    </div>
+                  )}
+
                   {evidenceTab === "upload" && (
                     <div className="relative group">
                       <input
